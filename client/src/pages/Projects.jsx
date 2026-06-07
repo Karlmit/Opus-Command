@@ -179,6 +179,7 @@ export default function Projects() {
               role="button"
               tabIndex={0}
               onKeyDown={e => e.key === 'Enter' && navigate(`/project/${project.id}`)}
+
             >
               <div className="project-card-header">
                 <span className="project-card-name truncate">{project.name}</span>

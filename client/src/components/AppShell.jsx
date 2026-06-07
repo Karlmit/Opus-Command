@@ -4,12 +4,12 @@ import StatusBar from './StatusBar';
 import MobileNav from './MobileNav';
 import './AppShell.css';
 
-export default function AppShell({ projectName, workspaceStatus, gitBranch, changedFiles, aiCount, aiWaiting, terminalCount }) {
+export default function AppShell({ projectId, projectName, workspaceStatus, gitBranch, changedFiles, aiCount, aiWaiting, terminalCount }) {
   return (
     <div className="app-shell">
       {/* Desktop: sidebar (hidden on mobile) */}
       <div className="app-sidebar-area">
-        <Sidebar projectName={projectName} />
+        <Sidebar projectId={projectId} projectName={projectName} />
       </div>
 
       {/* Content area */}

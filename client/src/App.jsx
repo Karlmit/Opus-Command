@@ -1,11 +1,12 @@
 import { useEffect } from 'react';
-import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import AppShell from './components/AppShell';
 import Setup from './pages/Setup';
 import Login from './pages/Login';
 import Projects from './pages/Projects';
 import ProjectDashboard from './pages/ProjectDashboard';
+import TerminalPage from './pages/Terminal';
 
 function LoadingScreen() {
   return (
@@ -53,6 +54,15 @@ function AuthGuard({ children }) {
   return children;
 }
 
+// Project shell — wraps AppShell with project-specific nav (sidebar links scoped to project ID)
+function ProjectShell() {
+  const { id } = useParams();
+
+  return (
+    <AppShell projectId={id} workspaceStatus="stopped" />
+  );
+}
+
 export default function App() {
   const { user, setupComplete, loading } = useAuth();
 
@@ -69,6 +79,7 @@ export default function App() {
         element={user ? <Navigate to="/" replace /> : <Login />}
       />
 
+      {/* Root: Projects list + Settings */}
       <Route
         path="/"
         element={
@@ -78,11 +89,23 @@ export default function App() {
         }
       >
         <Route index element={<Projects />} />
-        <Route path="files/*" element={<PlaceholderPage title="Files" />} />
-        <Route path="terminal/*" element={<PlaceholderPage title="Terminal" />} />
-        <Route path="git/*" element={<PlaceholderPage title="Git" />} />
         <Route path="settings/*" element={<PlaceholderPage title="Settings" />} />
-        <Route path="project/:id/*" element={<ProjectDashboard />} />
+      </Route>
+
+      {/* Project workspace cockpit */}
+      <Route
+        path="/project/:id"
+        element={
+          <AuthGuard>
+            <ProjectShell />
+          </AuthGuard>
+        }
+      >
+        <Route index element={<ProjectDashboard />} />
+        <Route path="terminal" element={<TerminalPage />} />
+        <Route path="files/*" element={<PlaceholderPage title="Files" />} />
+        <Route path="git/*" element={<PlaceholderPage title="Git" />} />
+        <Route path="settings/*" element={<PlaceholderPage title="Workspace Settings" />} />
       </Route>
     </Routes>
   );

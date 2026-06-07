@@ -86,7 +86,8 @@ const LIFECYCLE_ACTIONS = [
 ];
 
 export default function ProjectDashboard() {
-  const { id } = useParams();
+  const params = useParams();
+  const id = params.id;
   const navigate = useNavigate();
   const { csrfToken } = useAuth();
 
@@ -181,7 +182,7 @@ export default function ProjectDashboard() {
       {/* Header */}
       <div className="project-header">
         <div className="project-header-left">
-          <button className="btn btn-ghost project-back" onClick={() => navigate('/')}>←</button>
+          <button className="btn btn-ghost project-back" onClick={() => navigate(-1)}>←</button>
           <h1 className="project-title">{project.name}</h1>
           <StatusPill status={project.status} />
         </div>

@@ -15,7 +15,7 @@ RUN npm install --omit=dev
 
 # Stage 3: Production runtime
 FROM node:20-alpine AS runtime
-RUN apk add --no-cache libstdc++ git
+RUN apk add --no-cache libstdc++ git docker-cli
 
 WORKDIR /app
 

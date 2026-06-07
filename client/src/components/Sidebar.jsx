@@ -2,11 +2,11 @@ import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import './Sidebar.css';
 
-const NAV_ITEMS = [
-  { id: 'files', label: 'Files', path: '/files', icon: FilesIcon },
-  { id: 'terminal', label: 'Terminal', path: '/terminal', icon: TerminalIcon },
-  { id: 'git', label: 'Git', path: '/git', icon: GitIcon },
-  { id: 'settings', label: 'Settings', path: '/settings', icon: SettingsIcon },
+const BASE_NAV_ITEMS = [
+  { id: 'files', label: 'Files', path: 'files', icon: FilesIcon },
+  { id: 'terminal', label: 'Terminal', path: 'terminal', icon: TerminalIcon },
+  { id: 'git', label: 'Git', path: 'git', icon: GitIcon },
+  { id: 'settings', label: 'Settings', path: 'settings', icon: SettingsIcon },
 ];
 
 function FilesIcon() {
@@ -54,13 +54,18 @@ function CollapseIcon({ expanded }) {
   );
 }
 
-export default function Sidebar({ projectName }) {
+export default function Sidebar({ projectId, projectName }) {
   const [expanded, setExpanded] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
 
-  function isActive(path) {
-    return location.pathname.startsWith(path);
+  const navItems = BASE_NAV_ITEMS.map(item => ({
+    ...item,
+    fullPath: projectId ? `/project/${projectId}/${item.path}` : `/${item.path}`,
+  }));
+
+  function isActive(fullPath) {
+    return location.pathname.startsWith(fullPath);
   }
 
   return (
@@ -73,13 +78,13 @@ export default function Sidebar({ projectName }) {
       </div>
 
       <div className="sidebar-nav">
-        {NAV_ITEMS.map(item => {
-          const active = isActive(item.path);
+        {navItems.map(item => {
+          const active = isActive(item.fullPath);
           return (
             <button
               key={item.id}
               className={`sidebar-nav-item${active ? ' active' : ''}`}
-              onClick={() => navigate(item.path)}
+              onClick={() => navigate(item.fullPath)}
               title={!expanded ? item.label : undefined}
               aria-current={active ? 'page' : undefined}
             >

@@ -97,6 +97,8 @@ async function main() {
     console.log('[dev] No public/ dir — expecting Vite dev server on :5173');
   }
 
+  const terminal = require('./services/terminal.service');
+
   io.on('connection', (socket) => {
     const session = socket.request.session;
     if (!session?.userId) {
@@ -104,6 +106,32 @@ async function main() {
       return;
     }
     console.log(`[socket] Client connected: ${socket.id}`);
+
+    // Terminal: join a session room to receive output
+    socket.on('terminal:join', ({ sessionId }) => {
+      socket.join(`session:${sessionId}`);
+      terminal.clientJoinSession(sessionId, socket.id);
+      // Send scrollback
+      const scrollback = terminal.getSessionScrollback(sessionId);
+      if (scrollback) socket.emit('terminal:scrollback', { sessionId, data: scrollback });
+    });
+
+    // Terminal: leave session room
+    socket.on('terminal:leave', ({ sessionId }) => {
+      socket.leave(`session:${sessionId}`);
+      terminal.clientLeaveSession(sessionId, socket.id);
+    });
+
+    // Terminal: write input to PTY
+    socket.on('terminal:input', ({ sessionId, data }) => {
+      terminal.writeToSession(sessionId, data);
+    });
+
+    // Terminal: resize PTY
+    socket.on('terminal:resize', ({ sessionId, cols, rows }) => {
+      terminal.resizeSession(sessionId, cols, rows);
+    });
+
     socket.on('disconnect', () => {
       console.log(`[socket] Client disconnected: ${socket.id}`);
     });
