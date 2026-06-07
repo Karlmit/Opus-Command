@@ -144,11 +144,15 @@ function FileNode({ node, depth, projectId, csrfToken, onOpenFile, activeFilePat
 }
 
 /* ── Terminal instance ─────────────────────────── */
+let _xtermInstanceCounter = 0;
+
 function TerminalInstance({ sessionId, active, termRefs }) {
   const divRef = useRef(null);
 
   useEffect(() => {
     if (!divRef.current || termRefs.current[sessionId]) return;
+    const instanceId = ++_xtermInstanceCounter;
+    console.log(`[xterm:${instanceId}] Opening for session ${sessionId.slice(0,8)}`);
 
     const term = new XTerm({
       // Font — Cascadia Mono matches Windows Terminal exactly
@@ -232,6 +236,7 @@ function TerminalInstance({ sessionId, active, termRefs }) {
     };
 
     return () => {
+      console.log(`[xterm:${instanceId}] Disposing for session ${sessionId.slice(0,8)}`);
       ro?.disconnect();
       window.removeEventListener('resize', onWinResize);
       term.dispose();
@@ -490,8 +495,14 @@ export default function ProjectCockpit() {
   const [showDelete, setShowDelete] = useState(false);
   const [treeCollapsed, setTreeCollapsed] = useState(false);
 
-  const termRefs   = useRef({});
-  const activeRef  = useRef(null);
+  const termRefs         = useRef({});
+  const activeRef        = useRef(null);
+  // Track which sessions this socket client has already joined (and received scrollback for).
+  // Cleared on socket reconnect because the server treats it as a brand-new client.
+  const joinedSessions   = useRef(new Set());
+  // Guard: scrollback can only be written once per xterm instance.
+  // Cleared alongside joinedSessions so a reconnect gets a fresh replay.
+  const historyReplayed  = useRef(new Set());
 
   // Handle ?tab= from context menu
   useEffect(() => {
@@ -508,16 +519,74 @@ export default function ProjectCockpit() {
 
   useEffect(() => {
     const sock = getSocket();
-    const onConnect = () => { setRecon(false); if (activeRef.current?.startsWith('term-')) { const sid = activeRef.current.slice(5); sock.emit('terminal:join', { sessionId: sid }); } };
-    const onDisconnect = () => { setRecon(true); setReconSecs(0); };
-    const onData = ({ sessionId, data }) => termRefs.current[sessionId]?.write(data);
-    const onScrollback = ({ sessionId, data }) => { termRefs.current[sessionId]?.clear(); termRefs.current[sessionId]?.write(data); };
-    const onExit = ({ sessionId }) => setTermTabs(p => p.filter(t => t.id !== sessionId));
-    const onAi = ({ sessionId, state }) => setTermTabs(p => p.map(t => t.id === sessionId ? { ...t, aiState: state } : t));
-    sock.on('connect', onConnect); sock.on('disconnect', onDisconnect);
-    sock.on('terminal:data', onData); sock.on('terminal:scrollback', onScrollback);
-    sock.on('terminal:exit', onExit); sock.on('terminal:ai-state', onAi);
-    return () => { sock.off('connect', onConnect); sock.off('disconnect', onDisconnect); sock.off('terminal:data', onData); sock.off('terminal:scrollback', onScrollback); sock.off('terminal:exit', onExit); sock.off('terminal:ai-state', onAi); };
+
+    function onConnect() {
+      setRecon(false);
+      // New socket connection → server has no record of us. Clear client-side join
+      // tracking so activateTerm will re-emit terminal:join (with scrollback).
+      joinedSessions.current.clear();
+      historyReplayed.current.clear();
+      console.log('[socket] Connected/reconnected — cleared join & history state');
+
+      // Re-join active session with scrollback (server sees this as a new client)
+      if (activeRef.current?.startsWith('term-')) {
+        const sid = activeRef.current.slice(5);
+        console.log(`[socket] Re-joining session ${sid.slice(0,8)} after reconnect`);
+        sock.emit('terminal:join', { sessionId: sid });
+        joinedSessions.current.add(sid);
+        // historyReplayed stays clear so onScrollback will accept the replay
+      }
+    }
+
+    function onDisconnect() {
+      setRecon(true);
+      setReconSecs(0);
+      console.log('[socket] Disconnected');
+    }
+
+    function onData({ sessionId, data }) {
+      termRefs.current[sessionId]?.write(data);
+    }
+
+    function onScrollback({ sessionId, data }) {
+      if (historyReplayed.current.has(sessionId)) {
+        console.log(`[terminal] SKIPPED duplicate scrollback for session ${sessionId.slice(0,8)}`);
+        return;
+      }
+      historyReplayed.current.add(sessionId);
+      const bytes = typeof data === 'string' ? data.length : 0;
+      console.log(`[terminal] Replaying ${bytes} bytes history for session ${sessionId.slice(0,8)}`);
+      const ref = termRefs.current[sessionId];
+      if (ref) { ref.clear(); ref.write(data); }
+    }
+
+    function onExit({ sessionId }) {
+      joinedSessions.current.delete(sessionId);
+      historyReplayed.current.delete(sessionId);
+      setTermTabs(p => p.filter(t => t.id !== sessionId));
+    }
+
+    function onAi({ sessionId, state }) {
+      setTermTabs(p => p.map(t => t.id === sessionId ? { ...t, aiState: state } : t));
+    }
+
+    console.log(`[socket] Attaching listeners for project ${projectId}`);
+    sock.on('connect',           onConnect);
+    sock.on('disconnect',        onDisconnect);
+    sock.on('terminal:data',     onData);
+    sock.on('terminal:scrollback', onScrollback);
+    sock.on('terminal:exit',     onExit);
+    sock.on('terminal:ai-state', onAi);
+
+    return () => {
+      console.log(`[socket] Removing listeners for project ${projectId}`);
+      sock.off('connect',           onConnect);
+      sock.off('disconnect',        onDisconnect);
+      sock.off('terminal:data',     onData);
+      sock.off('terminal:scrollback', onScrollback);
+      sock.off('terminal:exit',     onExit);
+      sock.off('terminal:ai-state', onAi);
+    };
   }, [projectId]);
 
   useEffect(() => { if (!reconnecting) return; const t = setInterval(() => setReconSecs(n=>n+1), 1000); return () => clearInterval(t); }, [reconnecting]);
@@ -541,14 +610,47 @@ export default function ProjectCockpit() {
     activeRef.current = tabId;
     setActiveTab(tabId);
     const sock = getSocket();
-    const join = () => {
-      sock.emit('terminal:join', { sessionId });
+
+    function doFitFocus() {
       requestAnimationFrame(() => requestAnimationFrame(() => {
         const ref = termRefs.current[sessionId];
-        if (ref) { ref.fit(); const s = ref.getSize(); if (s) sock.emit('terminal:resize', { sessionId, ...s }); ref.focus(); }
+        if (!ref) return;
+        ref.fit();
+        const s = ref.getSize();
+        if (s && sock.connected) sock.emit('terminal:resize', { sessionId, ...s });
+        ref.focus();
       }));
-    };
-    sock.connected ? join() : sock.once('connect', join);
+    }
+
+    function doJoin() {
+      const alreadyJoined = joinedSessions.current.has(sessionId);
+
+      if (!alreadyJoined) {
+        // First time joining this session — server will send scrollback
+        joinedSessions.current.add(sessionId);
+        console.log(`[terminal] terminal:join session ${sessionId.slice(0,8)} (will receive scrollback)`);
+        sock.emit('terminal:join', { sessionId });
+      } else {
+        // Already joined this session in this browser session — reattach to live
+        // output stream but do NOT replay scrollback (xterm already has the content)
+        console.log(`[terminal] terminal:reattach session ${sessionId.slice(0,8)} (no scrollback)`);
+        sock.emit('terminal:reattach', { sessionId });
+      }
+      doFitFocus();
+    }
+
+    // Queue until connected if socket isn't ready yet.
+    // Do NOT use sock.once('connect', doJoin) in addition to the general onConnect
+    // handler — that would cause double joins. Instead, rely solely on the onConnect
+    // handler for reconnection, and call doJoin directly when already connected.
+    if (sock.connected) {
+      doJoin();
+    } else {
+      // Socket not yet connected on first load. onConnect will fire and call
+      // activateTerm for the active session, but we also register once here
+      // so the FIRST connection is handled even if activeRef hasn't propagated.
+      sock.once('connect', doJoin);
+    }
   }
 
   async function createTerminal() {
