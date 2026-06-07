@@ -19,4 +19,9 @@ RUN node --version && npm --version && npx --version && claude --version
 
 WORKDIR /workspace
 
+# Make bare `cd` always return to the project root (/workspace),
+# not to the home volume (/root). Claude Code config still lives in /root.
+# /etc/bash.bashrc is sourced by every interactive bash session.
+RUN echo 'cd() { builtin cd "${@:-/workspace}"; }' >> /etc/bash.bashrc
+
 CMD ["/bin/bash"]
