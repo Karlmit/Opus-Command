@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="120" viewBox="0 0 480 120" role="img">
+  <title>Opus Command</title>
+  <desc>Opus Command horizontal logo, white ink, transparent background</desc>
+  <g transform="translate(60,60)">
+    <path d="M -8 -52 A 53 53 0 1 1 -8 52" fill="none" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" opacity="0.25"/>
+    <path d="M 9 -34 A 36 36 0 0 0 9 34" fill="none" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" opacity="0.38"/>
+    <line x1="0" y1="-22" x2="0" y2="-46" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" opacity="0.5"/>
+    <line x1="19" y1="-12" x2="43" y2="-27" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" opacity="0.38"/>
+    <line x1="19" y1="12" x2="43" y2="27" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" opacity="0.38"/>
+    <circle cx="0" cy="-53" r="6.5" fill="#3B82F6"/>
+    <circle cx="49" cy="-31" r="4.5" fill="#ffffff" opacity="0.6"/>
+    <circle cx="49" cy="31" r="4.5" fill="#ffffff" opacity="0.38"/>
+    <circle cx="0" cy="0" r="19" fill="#ffffff"/>
+  </g>
+  <text x="136" y="47" font-family="'Inter', ui-sans-serif, sans-serif" font-size="34" font-weight="400" letter-spacing="-0.5" fill="#ffffff">OPUS</text>
+  <text x="136" y="83" font-family="'Inter', ui-sans-serif, sans-serif" font-size="34" font-weight="600" letter-spacing="-0.5" fill="#ffffff">COMMAND</text>
+</svg>

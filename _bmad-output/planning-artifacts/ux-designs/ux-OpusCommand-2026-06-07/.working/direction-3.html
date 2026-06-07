@@ -1,0 +1,975 @@
+<!--
+  DIRECTION 3: TERMINAL NATIVE
+  Personality: The interface itself is barely distinguishable from the tools it hosts.
+  Flat panels with ruled hairlines only, monospaced UI labels, no icons (except SVG logo mark),
+  no shadows, no rounded corners (2px max). The chrome recedes entirely so the terminal
+  surface dominates. Accent #3B82F6 appears only for live AI state — nothing else.
+  Inspired by the actual discipline of terminal UI craft: tmux, htop, Emacs.
+  Typeface: Berkeley Mono fallback to Iosevka/Courier New for labels; system-ui for
+  non-code chrome — but system-ui is constrained to weight 400/600 only for spareness.
+
+  Palette:
+  --bg:        #1A1C22  (true base)
+  --bg-panel:  #1E2026  (panel fill — barely distinguishable)
+  --bg-sel:    #252830  (selected/hover row)
+  --bg-term:   #131519  (terminal deeper)
+  --rule:      #2E3040  (hairline separators)
+  --rule-hi:   #3A3E54  (prominent rules — tab bar, top bar)
+  --tx-hi:     #D8DBE8  (text primary — opacity 1.0)
+  --tx-mid:    #7B7F96  (text secondary — opacity 0.6ish)
+  --tx-low:    #4A4E66  (text tertiary — 0.38ish)
+  --tx-faint:  #2C2F42  (text dim — 0.22ish)
+  --blue:      #3B82F6  (accent — AI state only)
+  --blue-dim:  rgba(59,130,246,0.15)
+  --green:     #3EC97A
+  --amber:     #E5B93A
+  --red:       #E05A5A
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1280">
+<title>Opus Command — Direction 3: Terminal Native</title>
+<style>
+/* ============================================================
+   DIRECTION 3: TERMINAL NATIVE
+   Palette documented above in file comment
+   ============================================================ */
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #1A1C22;
+  --bg-panel:  #1E2026;
+  --bg-sel:    #252830;
+  --bg-term:   #131519;
+  --rule:      #2E3040;
+  --rule-hi:   #3A3E54;
+  --tx-hi:     #D8DBE8;
+  --tx-mid:    #7B7F96;
+  --tx-low:    #4A4E66;
+  --tx-faint:  #2C2F42;
+  --blue:      #3B82F6;
+  --blue-dim:  rgba(59,130,246,0.15);
+  --green:     #3EC97A;
+  --amber:     #E5B93A;
+  --red:       #E05A5A;
+
+  --sp1: 4px; --sp2: 8px; --sp3: 12px; --sp4: 16px;
+  --sp5: 20px; --sp6: 24px;
+
+  /* Typefaces — monospace for almost everything */
+  --fn:   'Berkeley Mono', 'Iosevka', 'Courier New', ui-monospace, monospace;
+  --fs:   system-ui, ui-sans-serif, sans-serif;
+
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+html, body {
+  width: 1280px;
+  min-height: 900px;
+  background: var(--bg);
+  color: var(--tx-hi);
+  font-family: var(--fn);
+  overflow-x: hidden;
+}
+
+/* ── APP SHELL ── */
+.shell {
+  display: grid;
+  grid-template-rows: 26px 1fr;
+  height: 900px;
+  width: 1280px;
+}
+
+/* ── TOP BAR ── */
+.topbar {
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--rule-hi);
+  display: flex;
+  align-items: center;
+  height: 26px;
+  gap: 0;
+}
+
+/* Logo section */
+.tb-logo {
+  display: flex;
+  align-items: center;
+  gap: var(--sp2);
+  padding: 0 var(--sp3);
+  border-right: 1px solid var(--rule);
+  height: 100%;
+}
+
+.tb-logo-text {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.10em;
+  color: var(--tx-hi);
+  text-transform: uppercase;
+  font-family: var(--fs);
+}
+
+.tb-section {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 var(--sp3);
+  border-right: 1px solid var(--rule);
+  gap: var(--sp2);
+  font-size: 11px;
+}
+
+.tb-label {
+  color: var(--tx-low);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.10em;
+  font-family: var(--fs);
+}
+
+.tb-val { color: var(--tx-hi); }
+
+.tb-status-tag {
+  font-size: 10px;
+  color: var(--green);
+  text-transform: uppercase;
+  letter-spacing: 0.10em;
+  font-family: var(--fs);
+}
+
+.tb-ai-tag {
+  font-size: 10px;
+  color: var(--blue);
+  text-transform: uppercase;
+  letter-spacing: 0.10em;
+  font-family: var(--fs);
+  animation: blink-text 2s step-end infinite;
+}
+
+@keyframes blink-text {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.tb-spacer { flex: 1; }
+
+.tb-time {
+  padding: 0 var(--sp3);
+  font-size: 10.5px;
+  color: var(--tx-low);
+  font-family: var(--fn);
+  border-left: 1px solid var(--rule);
+}
+
+/* ── WORKSPACE ── */
+.workspace {
+  display: grid;
+  grid-template-columns: 168px 204px 1fr 204px;
+  height: calc(900px - 26px);
+  gap: 0;
+}
+
+/* ── SIDEBAR ── */
+.sidebar {
+  background: var(--bg-panel);
+  border-right: 1px solid var(--rule-hi);
+  display: flex;
+  flex-direction: column;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--sp3);
+  height: 22px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.ph-label {
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--tx-low);
+  font-family: var(--fs);
+  font-weight: 600;
+}
+
+.ph-action {
+  font-size: 9.5px;
+  color: var(--blue);
+  cursor: pointer;
+  letter-spacing: 0.06em;
+  font-family: var(--fs);
+}
+
+/* Project rows */
+.proj-rows {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.proj-row {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  height: 22px;
+  cursor: pointer;
+  position: relative;
+  border-bottom: 1px solid var(--rule);
+}
+
+.proj-row:hover { background: var(--bg-sel); }
+
+.proj-row.active {
+  background: var(--bg-sel);
+}
+
+/* Active indicator — full-width top hairline in blue rather than side stripe */
+.proj-row.active::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--blue);
+}
+
+.proj-sigil {
+  width: 28px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--fn);
+}
+
+.proj-sigil.s-active { color: var(--blue); }
+.proj-sigil.s-idle { color: var(--tx-low); }
+
+.proj-name-cell {
+  flex: 1;
+  font-size: 12px;
+  font-family: var(--fn);
+}
+
+.active .proj-name-cell { color: var(--tx-hi); }
+.proj-row:not(.active) .proj-name-cell { color: var(--tx-mid); }
+
+.proj-ai-tag {
+  padding: 0 var(--sp2);
+  font-size: 9px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--blue);
+  font-family: var(--fn);
+  animation: blink-text 2.2s step-end infinite;
+}
+
+/* Nav links */
+.sidebar-nav {
+  border-top: 1px solid var(--rule-hi);
+}
+
+.nav-row {
+  display: flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 var(--sp3);
+  font-size: 11px;
+  color: var(--tx-mid);
+  font-family: var(--fn);
+  cursor: pointer;
+  border-bottom: 1px solid var(--rule);
+}
+
+.nav-row:hover { background: var(--bg-sel); color: var(--tx-hi); }
+
+.nav-row-key {
+  color: var(--tx-low);
+  font-size: 9.5px;
+  margin-left: auto;
+}
+
+/* ── FILE TREE ── */
+.filetree {
+  background: var(--bg-panel);
+  border-right: 1px solid var(--rule-hi);
+  display: flex;
+  flex-direction: column;
+}
+
+.ft-rows {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.ft-row {
+  display: flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 var(--sp2);
+  cursor: pointer;
+  font-family: var(--fn);
+  font-size: 11.5px;
+  color: var(--tx-mid);
+  border-bottom: 1px solid var(--rule);
+  gap: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.ft-row:hover { background: var(--bg-sel); color: var(--tx-hi); }
+.ft-row.ft-active {
+  background: var(--bg-sel);
+  color: var(--tx-hi);
+}
+
+.ft-ind { width: 12px; flex-shrink: 0; }
+.ft-arr {
+  width: 10px;
+  flex-shrink: 0;
+  font-size: 8px;
+  color: var(--tx-low);
+  text-align: center;
+}
+.ft-n { overflow: hidden; text-overflow: ellipsis; }
+.ft-n.dir { color: var(--tx-hi); }
+.ft-n.ts  { color: #60A5FA; }
+.ft-n.json { color: var(--amber); }
+.ft-n.md  { color: var(--tx-mid); }
+.ft-n.env { color: var(--red); }
+.ft-n.misc { color: var(--tx-low); }
+
+/* ── MAIN ── */
+.main-area {
+  display: grid;
+  grid-template-rows: 22px 1fr;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+/* Tab strip */
+.tab-strip {
+  display: flex;
+  align-items: flex-end;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--rule-hi);
+  height: 22px;
+  gap: 0;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: var(--sp2);
+  padding: 0 var(--sp3);
+  height: 100%;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: var(--fn);
+  color: var(--tx-mid);
+  border-right: 1px solid var(--rule);
+  position: relative;
+}
+
+.tab.active {
+  background: var(--bg);
+  color: var(--tx-hi);
+}
+
+/* Active tab: full-width top rule in blue */
+.tab.active::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--blue);
+}
+
+.tab-ai {
+  font-size: 9px;
+  color: var(--blue);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  animation: blink-text 2s step-end infinite;
+}
+
+/* Terminal surface */
+.term {
+  background: var(--bg-term);
+  color: #BFC2D4;
+  font-family: var(--fn);
+  font-size: 12.5px;
+  line-height: 1.58;
+  padding: var(--sp4);
+  overflow-y: auto;
+}
+
+.ln { display: flex; align-items: flex-start; gap: var(--sp2); }
+.ln + .ln { margin-top: 1px; }
+.gap { height: var(--sp3); }
+.gap-s { height: var(--sp2); }
+
+/* terminal colors */
+.p  { color: var(--blue); font-weight: 700; }     /* prompt */
+.c  { color: #D8DBE8; }                            /* command */
+.m  { color: #4A4E66; }                            /* dim/muted */
+.ok { color: var(--green); }
+.wn { color: var(--amber); }
+.er { color: var(--red); }
+.hi { color: #D8DBE8; font-weight: 600; }          /* highlight */
+.info { color: #60A5FA; }
+
+/* The prompt interaction block — monospace rules only */
+.ask-block {
+  margin-top: var(--sp3);
+  padding: var(--sp3);
+  background: #161820;
+  border: 1px solid var(--rule-hi);
+}
+
+.ask-q {
+  color: var(--amber);
+  font-weight: 600;
+  margin-bottom: var(--sp2);
+  font-size: 12.5px;
+}
+
+.ask-opts {
+  display: flex;
+  gap: var(--sp5);
+}
+
+.ask-opt {
+  display: flex;
+  align-items: center;
+  gap: var(--sp1);
+  font-size: 12.5px;
+}
+
+.ask-opt.sel { color: #D8DBE8; }
+.ask-opt.unsel { color: var(--tx-low); }
+
+/* radio done with text chars */
+.radio-char {
+  font-size: 12px;
+  color: var(--blue);
+}
+
+.ask-cursor {
+  display: inline-block;
+  width: 7px;
+  height: 13px;
+  background: var(--blue);
+  vertical-align: text-bottom;
+  animation: blink-block 1.1s step-end infinite;
+}
+
+@keyframes blink-block {
+  0%, 100% { opacity: 0.9; }
+  50% { opacity: 0; }
+}
+
+/* ── RIGHT PANEL ── */
+.right-panel {
+  background: var(--bg-panel);
+  border-left: 1px solid var(--rule-hi);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Each sub-panel */
+.rp-section {
+  border-bottom: 1px solid var(--rule-hi);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.rp-section.grow {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.rp-body {
+  padding: var(--sp2) var(--sp3);
+}
+
+/* AI status rows */
+.ai-row {
+  display: flex;
+  align-items: center;
+  height: 22px;
+  gap: var(--sp2);
+  font-family: var(--fn);
+  font-size: 11.5px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.ai-row:last-child { border-bottom: none; }
+
+.ai-state {
+  font-size: 9.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.ai-state.wait { color: var(--blue); animation: blink-text 2.4s step-end infinite; }
+.ai-state.idle { color: var(--tx-low); }
+
+.ai-name {
+  flex: 1;
+  color: var(--tx-mid);
+}
+
+.ai-name.live { color: var(--tx-hi); }
+
+/* Stats table */
+.stat-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  font-family: var(--fn);
+}
+
+.stat-table tr { border-bottom: 1px solid var(--rule); }
+.stat-table tr:last-child { border-bottom: none; }
+.stat-table td {
+  padding: 3px 0;
+  color: var(--tx-mid);
+}
+
+.stat-table td.stat-val {
+  text-align: right;
+  color: var(--tx-hi);
+}
+
+.stat-table td.stat-val.blue { color: var(--blue); }
+.stat-table td.stat-val.green { color: var(--green); }
+
+/* Git panel */
+.git-branch-line {
+  display: flex;
+  align-items: center;
+  gap: var(--sp2);
+  font-family: var(--fn);
+  font-size: 11.5px;
+  color: var(--tx-mid);
+  padding: var(--sp1) 0;
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: var(--sp1);
+}
+
+.git-branch-line .br-name { color: var(--tx-hi); }
+
+.git-file-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp2);
+  height: 20px;
+  font-family: var(--fn);
+  font-size: 11px;
+  color: var(--tx-mid);
+  border-bottom: 1px solid var(--rule);
+}
+
+.git-file-row:last-child { border-bottom: none; }
+
+.gf-type {
+  font-size: 9.5px;
+  font-weight: 700;
+  min-width: 14px;
+  text-align: center;
+}
+
+.gf-type.M { color: var(--amber); }
+.gf-type.A { color: var(--green); }
+.gf-type.D { color: var(--red); }
+
+/* Log rows */
+.log-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp2);
+  padding: 3px 0;
+  font-size: 10.5px;
+  font-family: var(--fn);
+  color: var(--tx-low);
+  border-bottom: 1px solid var(--rule);
+}
+
+.log-row:last-child { border-bottom: none; }
+
+.log-ts {
+  color: var(--tx-faint);
+  flex-shrink: 0;
+  font-size: 10px;
+  padding-top: 1px;
+}
+
+.log-msg { color: var(--tx-low); line-height: 1.4; }
+.log-msg.info { color: var(--tx-mid); }
+.log-msg.ok { color: var(--green); }
+.log-msg.warn { color: var(--amber); }
+.log-msg.blue { color: var(--blue); }
+
+/* scrollbars */
+::-webkit-scrollbar { width: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--rule-hi); }
+</style>
+</head>
+<body>
+
+<div class="shell">
+
+  <!-- TOP BAR -->
+  <header class="topbar">
+    <!-- Logo -->
+    <div class="tb-logo">
+      <svg width="18" height="18" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <ellipse cx="18" cy="18" rx="14" ry="14" stroke="rgba(255,255,255,0.10)" stroke-width="0.8" fill="none" stroke-dasharray="3 2.5"/>
+        <ellipse cx="18" cy="18" rx="8" ry="8" stroke="rgba(255,255,255,0.06)" stroke-width="0.8" fill="none" stroke-dasharray="2 3"/>
+        <line x1="18" y1="18" x2="18" y2="5" stroke="rgba(255,255,255,0.18)" stroke-width="0.8"/>
+        <line x1="18" y1="18" x2="30" y2="26" stroke="rgba(255,255,255,0.12)" stroke-width="0.8"/>
+        <line x1="18" y1="18" x2="6" y2="27" stroke="rgba(255,255,255,0.07)" stroke-width="0.8"/>
+        <circle cx="18" cy="5" r="3.2" fill="#3B82F6"/>
+        <circle cx="30" cy="26" r="2.5" fill="rgba(255,255,255,0.6)"/>
+        <circle cx="6" cy="27" r="2" fill="rgba(255,255,255,0.38)"/>
+        <circle cx="18" cy="18" r="5.5" fill="white"/>
+      </svg>
+      <span class="tb-logo-text">OPUS COMMAND</span>
+    </div>
+    <div class="tb-section">
+      <span class="tb-label">PROJECT</span>
+      <span class="tb-val">BLAM</span>
+    </div>
+    <div class="tb-section">
+      <span class="tb-label">STATUS</span>
+      <span class="tb-status-tag">RUNNING</span>
+    </div>
+    <div class="tb-section">
+      <span class="tb-label">AI</span>
+      <span class="tb-ai-tag">WAITING INPUT</span>
+    </div>
+    <div class="tb-section">
+      <span class="tb-label">BRANCH</span>
+      <span class="tb-val">feat/terminal-sessions</span>
+    </div>
+    <div class="tb-spacer"></div>
+    <div class="tb-time">2026-06-07 14:32:19</div>
+  </header>
+
+  <!-- WORKSPACE -->
+  <div class="workspace">
+
+    <!-- SIDEBAR -->
+    <div class="sidebar">
+      <div class="panel-head">
+        <span class="ph-label">PROJECTS</span>
+        <span class="ph-action">[new]</span>
+      </div>
+      <div class="proj-rows">
+        <div class="proj-row active">
+          <span class="proj-sigil s-active">[B]</span>
+          <span class="proj-name-cell">BLAM</span>
+          <span class="proj-ai-tag">●WAIT</span>
+        </div>
+        <div class="proj-row">
+          <span class="proj-sigil s-idle">[H]</span>
+          <span class="proj-name-cell">Helpy</span>
+        </div>
+        <div class="proj-row">
+          <span class="proj-sigil s-idle">[N]</span>
+          <span class="proj-name-cell">Nordskift</span>
+        </div>
+      </div>
+      <div class="sidebar-nav">
+        <div class="nav-row">terminals<span class="nav-row-key">^T</span></div>
+        <div class="nav-row">ai sessions<span class="nav-row-key">^A</span></div>
+        <div class="nav-row">git<span class="nav-row-key">^G</span></div>
+        <div class="nav-row">history<span class="nav-row-key">^H</span></div>
+        <div class="nav-row">settings<span class="nav-row-key">^,</span></div>
+      </div>
+    </div>
+
+    <!-- FILE TREE -->
+    <div class="filetree">
+      <div class="panel-head">
+        <span class="ph-label">blam/</span>
+        <span class="ph-action">[r]</span>
+      </div>
+      <div class="ft-rows">
+        <div class="ft-row">
+          <div class="ft-arr" style="transform:rotate(90deg)">▶</div>
+          <span class="ft-n dir">blam/</span>
+        </div>
+        <div class="ft-row">
+          <div class="ft-ind"></div>
+          <div class="ft-arr" style="transform:rotate(90deg)">▶</div>
+          <span class="ft-n dir">src/</span>
+        </div>
+        <div class="ft-row">
+          <div class="ft-ind"></div>
+          <div class="ft-ind"></div>
+          <div class="ft-arr" style="transform:rotate(90deg)">▶</div>
+          <span class="ft-n dir">components/</span>
+        </div>
+        <div class="ft-row">
+          <div class="ft-ind"></div>
+          <div class="ft-ind"></div>
+          <div class="ft-ind"></div>
+          <div class="ft-arr"></div>
+          <span class="ft-n ts">Button.tsx</span>
+        </div>
+        <div class="ft-row ft-active">
+          <div class="ft-ind"></div>
+          <div class="ft-ind"></div>
+          <div class="ft-ind"></div>
+          <div class="ft-arr"></div>
+          <span class="ft-n ts">Terminal.tsx</span>
+        </div>
+        <div class="ft-row">
+          <div class="ft-ind"></div>
+          <div class="ft-ind"></div>
+          <div class="ft-arr">▶</div>
+          <span class="ft-n dir">hooks/</span>
+        </div>
+        <div class="ft-row">
+          <div class="ft-ind"></div>
+          <div class="ft-ind"></div>
+          <div class="ft-arr">▶</div>
+          <span class="ft-n dir">lib/</span>
+        </div>
+        <div class="ft-row">
+          <div class="ft-ind"></div>
+          <div class="ft-ind"></div>
+          <div class="ft-arr"></div>
+          <span class="ft-n ts">App.tsx</span>
+        </div>
+        <div class="ft-row">
+          <div class="ft-ind"></div>
+          <div class="ft-ind"></div>
+          <div class="ft-arr"></div>
+          <span class="ft-n ts">index.ts</span>
+        </div>
+        <div class="ft-row">
+          <div class="ft-ind"></div>
+          <div class="ft-arr">▶</div>
+          <span class="ft-n dir">public/</span>
+        </div>
+        <div class="ft-row">
+          <div class="ft-ind"></div>
+          <div class="ft-arr">▶</div>
+          <span class="ft-n dir">tests/</span>
+        </div>
+        <div class="ft-row">
+          <div class="ft-ind"></div>
+          <div class="ft-arr"></div>
+          <span class="ft-n json">package.json</span>
+        </div>
+        <div class="ft-row">
+          <div class="ft-ind"></div>
+          <div class="ft-arr"></div>
+          <span class="ft-n json">tsconfig.json</span>
+        </div>
+        <div class="ft-row">
+          <div class="ft-ind"></div>
+          <div class="ft-arr"></div>
+          <span class="ft-n json">vite.config.ts</span>
+        </div>
+        <div class="ft-row">
+          <div class="ft-ind"></div>
+          <div class="ft-arr"></div>
+          <span class="ft-n md">README.md</span>
+        </div>
+        <div class="ft-row">
+          <div class="ft-ind"></div>
+          <div class="ft-arr"></div>
+          <span class="ft-n env">.env.local</span>
+        </div>
+        <div class="ft-row">
+          <div class="ft-ind"></div>
+          <div class="ft-arr"></div>
+          <span class="ft-n misc">.gitignore</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- MAIN -->
+    <div class="main-area">
+      <div class="tab-strip">
+        <div class="tab active">
+          [1] terminal
+          <span class="tab-ai">●AI</span>
+        </div>
+        <div class="tab">
+          [2] terminal
+        </div>
+        <div class="tab" style="margin-left:auto; color: var(--tx-low); padding: 0 var(--sp3);">[+]</div>
+      </div>
+
+      <div class="term">
+        <div class="ln"><span class="m">──────── claude-code · blam · 2026-06-07 14:28:41 ────────</span></div>
+        <div class="gap"></div>
+        <div class="ln"><span class="p">$</span><span class="c"> claude</span></div>
+        <div class="gap-s"></div>
+        <div class="ln"><span class="info">  Claude Code v1.8.3</span></div>
+        <div class="gap"></div>
+        <div class="ln"><span class="m">  ·</span>&nbsp;<span>Reading project context...</span></div>
+        <div class="ln"><span class="m">  ·</span>&nbsp;<span>Analyzing </span><span class="hi">src/components/Terminal.tsx</span></div>
+        <div class="ln"><span class="ok">  ✓</span>&nbsp;<span>3 component files found</span></div>
+        <div class="ln"><span class="ok">  ✓</span>&nbsp;<span>TypeScript config valid</span></div>
+        <div class="gap"></div>
+        <div class="ln"><span class="info">  ⟩ Task</span></div>
+        <div class="ln"><span style="padding-left:16px">Refactor terminal component to support multiple concurrent sessions</span></div>
+        <div class="ln"><span style="padding-left:16px">with independent state management.</span></div>
+        <div class="gap"></div>
+        <div class="ln"><span class="m">  ·</span>&nbsp;<span>Writing </span><span class="hi">src/hooks/useTerminalSession.ts</span>&nbsp;<span class="m">(new)</span></div>
+        <div class="ln"><span class="m">  ·</span>&nbsp;<span>Updating </span><span class="hi">src/components/Terminal.tsx</span></div>
+        <div class="ln"><span class="ok">  ✓</span>&nbsp;<span>Files written successfully</span></div>
+        <div class="gap-s"></div>
+        <div class="ln"><span class="m">  ·</span>&nbsp;<span>Running </span><span class="hi">npx tsc --noEmit</span></div>
+        <div class="ln"><span class="ok">  ✓</span>&nbsp;<span>No TypeScript errors</span></div>
+        <div class="ln"><span class="m">  ·</span>&nbsp;<span>Running </span><span class="hi">npm test -- --watchAll=false</span></div>
+        <div class="ln"><span class="ok">  ✓</span>&nbsp;<span>14 tests passed</span></div>
+        <div class="gap"></div>
+        <div class="ln"><span class="wn">  !</span>&nbsp;<span>localStorage migration required for </span><span class="hi">3 existing sessions</span></div>
+        <div class="ln"><span style="padding-left:16px">Previous session history will be cleared.</span></div>
+        <div class="gap-s"></div>
+
+        <!-- Interactive prompt -->
+        <div class="ask-block">
+          <div class="ask-q">? Do you want to proceed?</div>
+          <div class="ask-opts">
+            <div class="ask-opt sel">
+              <span class="radio-char">◉</span>
+              Yes
+            </div>
+            <div class="ask-opt unsel">
+              <span style="color: var(--tx-low)">○</span>
+              No
+            </div>
+          </div>
+        </div>
+
+        <div class="gap-s"></div>
+        <div class="ln"><span class="p">›</span>&nbsp;<span class="ask-cursor"></span></div>
+      </div>
+    </div>
+
+    <!-- RIGHT PANEL -->
+    <div class="right-panel">
+      <!-- AI status -->
+      <div class="rp-section">
+        <div class="panel-head">
+          <span class="ph-label">AI AGENTS</span>
+        </div>
+        <div class="rp-body" style="padding: 0 var(--sp3);">
+          <div class="ai-row">
+            <span class="ai-state wait">●WAIT</span>
+            <span class="ai-name live">claude-code</span>
+          </div>
+          <div class="ai-row">
+            <span class="ai-state idle">○idle</span>
+            <span class="ai-name">codex-cli</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Session stats -->
+      <div class="rp-section">
+        <div class="panel-head">
+          <span class="ph-label">SESSION</span>
+        </div>
+        <div class="rp-body">
+          <table class="stat-table">
+            <tr><td>files read</td><td class="stat-val">14</td></tr>
+            <tr><td>files written</td><td class="stat-val green">3</td></tr>
+            <tr><td>cost</td><td class="stat-val">$0.18</td></tr>
+            <tr><td>runtime</td><td class="stat-val">4m 12s</td></tr>
+            <tr><td>tokens in</td><td class="stat-val">48.2k</td></tr>
+            <tr><td>tokens out</td><td class="stat-val">3.1k</td></tr>
+          </table>
+        </div>
+      </div>
+
+      <!-- Git -->
+      <div class="rp-section">
+        <div class="panel-head">
+          <span class="ph-label">GIT</span>
+          <span class="ph-action">[commit]</span>
+        </div>
+        <div class="rp-body">
+          <div class="git-branch-line">
+            <span>branch:</span>
+            <span class="br-name">feat/terminal-sessions</span>
+            <span style="margin-left:auto; color:var(--tx-low); font-size:10px">↑2</span>
+          </div>
+          <div class="git-file-row">
+            <span class="gf-type M">M</span>
+            <span>Terminal.tsx</span>
+          </div>
+          <div class="git-file-row">
+            <span class="gf-type A">A</span>
+            <span>useTerminalSession.ts</span>
+          </div>
+          <div class="git-file-row">
+            <span class="gf-type M">M</span>
+            <span>useTerminal.ts</span>
+          </div>
+          <div class="git-file-row">
+            <span class="gf-type M">M</span>
+            <span>package.json</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Event log -->
+      <div class="rp-section grow">
+        <div class="panel-head">
+          <span class="ph-label">LOG</span>
+        </div>
+        <div class="rp-body">
+          <div class="log-row">
+            <span class="log-ts">14:32:18</span>
+            <span class="log-msg blue">● agent awaiting input</span>
+          </div>
+          <div class="log-row">
+            <span class="log-ts">14:32:14</span>
+            <span class="log-msg ok">✓ 14 tests passed</span>
+          </div>
+          <div class="log-row">
+            <span class="log-ts">14:32:09</span>
+            <span class="log-msg ok">✓ tsc: no errors</span>
+          </div>
+          <div class="log-row">
+            <span class="log-ts">14:31:52</span>
+            <span class="log-msg info">3 files modified</span>
+          </div>
+          <div class="log-row">
+            <span class="log-ts">14:31:40</span>
+            <span class="log-msg">new file: useTerminalSession.ts</span>
+          </div>
+          <div class="log-row">
+            <span class="log-ts">14:28:41</span>
+            <span class="log-msg">session started</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /workspace -->
+
+</div><!-- /shell -->
+
+</body>
+</html>

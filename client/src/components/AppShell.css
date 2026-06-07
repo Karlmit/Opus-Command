@@ -1,0 +1,69 @@
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  overflow: hidden;
+  background: var(--color-background);
+}
+
+/* On desktop, sidebar is a flex child of a row layout */
+@media (min-width: 600px) {
+  .app-shell {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .app-sidebar-area {
+    display: flex;
+    height: 100%;
+    z-index: 10;
+  }
+
+  .app-content {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  .app-main-area {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .app-statusbar-area {
+    flex-shrink: 0;
+  }
+}
+
+/* Mobile: sidebar hidden, bottom nav visible */
+@media (max-width: 599px) {
+  .app-shell {
+    flex-direction: column;
+  }
+
+  .app-sidebar-area {
+    display: none;
+  }
+
+  .app-content {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .app-main-area {
+    flex: 1;
+    overflow: hidden;
+  }
+
+  .app-statusbar-area {
+    display: none;
+  }
+}

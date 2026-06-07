@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img">
+  <title>Opus Command mark 128</title>
+  <g transform="translate(64,64)">
+    <path d="M -6 -38 A 38 38 0 1 1 -6 38" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" opacity="0.22"/>
+    <path d="M 6 -25 A 26 26 0 0 0 6 25" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" opacity="0.34"/>
+    <line x1="0" y1="-16" x2="0" y2="-32" stroke="#ffffff" stroke-width="2" stroke-linecap="round" opacity="0.5"/>
+    <line x1="13" y1="-8" x2="29" y2="-18" stroke="#ffffff" stroke-width="2" stroke-linecap="round" opacity="0.36"/>
+    <line x1="13" y1="8" x2="29" y2="18" stroke="#ffffff" stroke-width="2" stroke-linecap="round" opacity="0.36"/>
+    <circle cx="0" cy="-38" r="5.5" fill="#3B82F6"/>
+    <circle cx="33" cy="-21" r="4" fill="#ffffff" opacity="0.58"/>
+    <circle cx="33" cy="21" r="4" fill="#ffffff" opacity="0.36"/>
+    <circle cx="0" cy="0" r="15" fill="#ffffff"/>
+  </g>
+</svg>
