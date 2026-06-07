@@ -259,7 +259,7 @@ export default function GitPage() {
   const [fetching, setFetching] = useState(false);
   const [pulling, setPulling] = useState(false);
   const [pushing, setPushing] = useState(false);
-  const [rightPanel, setRightPanel] = useState('diff');
+  const [rightPanel, setRightPanel] = useState('history');
   const [snapshotsOpen, setSnapshotsOpen] = useState(false);
 
   useEffect(() => {
