@@ -161,11 +161,12 @@ Open **http://localhost:3000**. First startup shows a setup screen to create you
 
 #### Mobile
 - Full app accessible on iOS Safari and Android Chrome
-- Bottom navigation bar (Dashboard | Terminal | Files | Git)
-- Terminal fills `calc(100dvh - 56px)`, touch-scrollable, `overscroll-behavior: none`
-- Mobile terminal toolbar: session name, Paste, Keyboard, Sessions buttons
-- Session switcher bottom sheet
-- Minimum 44×44px touch targets
+- Bottom navigation bar (Terminal | Files | Git | Workspace)
+- Files, Git, and Workspace panels work correctly on mobile
+- Device-type detection (touch vs. mouse) keeps desktop layout stable when a browser window is narrowed
+- Interface mode override in Settings (Auto / Force desktop / Force mobile)
+
+> **Note — mobile terminal:** The terminal view on mobile uses a plain log viewer (read-only scrollable output + command input bar) rather than a full xterm.js emulator. This works for simple commands but does **not** work correctly with full-screen TUI programs like **Claude Code**, which rely on cursor positioning, screen redraws, and precise terminal dimensions. The mobile terminal is not recommended for Claude Code sessions at this time. A future release will add push notifications so you can monitor Claude Code from your phone without needing a working terminal view.
 
 #### Distribution & CI/CD
 - Docker image: `ghcr.io/karlmit/opus-command:latest` and `:vX.Y.Z`
@@ -188,6 +189,7 @@ Open **http://localhost:3000**. First startup shows a setup screen to create you
 | **Git** | No push/pull — remote operations must be done in the terminal |
 | **Terminal** | No split-pane view within a single session |
 | **Notifications** | Badge + sound only when the browser tab is open — no background push notifications |
+| **Mobile terminal** | Log viewer works for simple commands but not full-screen TUIs (Claude Code, htop, vim). Mobile terminal is read-only with command input; it does not render cursor-addressed output correctly |
 | **Bundle size** | JS bundle is ~560 KB (xterm.js is the main contributor) — loads fast on LAN |
 
 ---
@@ -198,6 +200,7 @@ Open **http://localhost:3000**. First startup shows a setup screen to create you
 - **File copy and move** — drag-and-drop within the file tree
 - **Git push / pull** — remote operations from the Git panel (requires credential management in home volume)
 - **Multi-terminal split view** — side-by-side terminal panes
+- **Push notifications** — notify your phone when Claude Code is waiting for input, without needing the browser open
 - **Opus Connector** — companion product for cross-device background AI notifications (see `OpusConnector_ProjectSpec.md`)
 - **Additional workspace templates** — community-contributed templates for Rust, Go, Java, etc.
 - **AI session timeline** — history of AI sessions per project with diffs at each checkpoint
