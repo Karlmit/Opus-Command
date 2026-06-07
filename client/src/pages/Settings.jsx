@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../components/Toast';
+import { useDevice } from '../context/DeviceContext';
 import { io } from 'socket.io-client';
 import './Settings.css';
 import './ClaudeSettings.css';
@@ -563,6 +564,43 @@ function GitHubSection({ csrfToken, addToast }) {
   );
 }
 
+function DeviceSection() {
+  const { isMobile, override, setOverride, nativeMobile } = useDevice();
+  const detected = nativeMobile ? 'touch/mobile' : 'mouse/desktop';
+
+  return (
+    <div className="settings-section">
+      <h2 className="settings-section-title">INTERFACE MODE</h2>
+      <p className="panel-hint" style={{ marginBottom: 12 }}>
+        Auto-detected: <strong>{detected}</strong> — currently using{' '}
+        <strong>{isMobile ? 'mobile log viewer' : 'desktop terminal (xterm)'}</strong>.
+      </p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {[
+          { value: null, label: 'Auto', desc: 'Detect from pointer type (touch = mobile, mouse = desktop)' },
+          { value: 'desktop', label: 'Force desktop', desc: 'Always use full xterm terminal, even on touch devices' },
+          { value: 'mobile', label: 'Force mobile', desc: 'Always use read-only log viewer with command input' },
+        ].map(opt => (
+          <label key={String(opt.value)} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
+            <input
+              type="radio"
+              name="device-mode"
+              checked={override === opt.value}
+              onChange={() => setOverride(opt.value)}
+              style={{ marginTop: 3, flexShrink: 0 }}
+            />
+            <span>
+              <span style={{ color: 'var(--color-text-primary)', fontWeight: 500, fontSize: 'var(--font-size-sm)' }}>{opt.label}</span>
+              <br />
+              <span style={{ color: 'var(--color-text-dim)', fontSize: 'var(--font-size-xs)' }}>{opt.desc}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function Settings() {
   const { csrfToken } = useAuth();
   const { addToast } = useToast();
@@ -577,6 +615,7 @@ export default function Settings() {
         <ClaudeSection csrfToken={csrfToken} addToast={addToast} />
         <AccountSection csrfToken={csrfToken} addToast={addToast} />
         <AppearanceSection csrfToken={csrfToken} addToast={addToast} />
+        <DeviceSection />
         <SoundSection csrfToken={csrfToken} />
         <UpdatesSection csrfToken={csrfToken} />
       </div>

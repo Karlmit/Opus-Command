@@ -15,9 +15,7 @@
   transform: translateZ(0);
 }
 
-@media (max-width: 768px) {
-  .mobile-nav { display: flex; }
-}
+body.mobile-device .mobile-nav { display: flex; }
 
 /* ── Project button ────────────────────────────── */
 .mnav-project-btn {

@@ -1,4 +1,5 @@
 import { Outlet } from 'react-router-dom';
+import { DeviceProvider } from '../context/DeviceContext';
 import { MobileUIProvider } from '../context/MobileUIContext';
 import ProjectsSidebar from './ProjectsSidebar';
 import StatusBar from './StatusBar';
@@ -7,17 +8,19 @@ import './AppShell.css';
 
 export default function AppShell() {
   return (
-    <MobileUIProvider>
-      <div className="app-shell">
-        <ProjectsSidebar />
-        <div className="app-body">
-          <div className="app-main">
-            <Outlet />
+    <DeviceProvider>
+      <MobileUIProvider>
+        <div className="app-shell">
+          <ProjectsSidebar />
+          <div className="app-body">
+            <div className="app-main">
+              <Outlet />
+            </div>
+            <StatusBar />
           </div>
-          <StatusBar />
+          <MobileNav />
         </div>
-        <MobileNav />
-      </div>
-    </MobileUIProvider>
+      </MobileUIProvider>
+    </DeviceProvider>
   );
 }

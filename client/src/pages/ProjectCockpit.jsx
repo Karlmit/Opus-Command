@@ -3,19 +3,15 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
-import { io } from 'socket.io-client';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../components/Toast';
 import { ProjectAvatar } from '../components/ProjectsSidebar';
 import { useMobileUI } from '../context/MobileUIContext';
+import { useDevice } from '../context/DeviceContext';
+import { getSocket } from '../lib/socket';
+import MobileTerminalView from '../components/MobileTerminalView';
 import '@xterm/xterm/css/xterm.css';
 import './ProjectCockpit.css';
-
-let socket = null;
-function getSocket() {
-  if (!socket) socket = io({ autoConnect: true, reconnection: true, reconnectionDelay: 1000 });
-  return socket;
-}
 
 /* ── File tree ─────────────────────────────────── */
 const FILE_COLORS = {
@@ -187,11 +183,11 @@ function TerminalInstance({ sessionId, active, termRefs }) {
     term.loadAddon(new WebLinksAddon());
 
     let ro = null;
-    const isMobile = () => window.innerWidth <= 768;
+    // TerminalInstance is never rendered on mobile devices; this guard is defensive.
+    const isDeviceMobile = () => document.body.classList.contains('mobile-device');
     const onWinResize = () => {
       try { fit.fit(); } catch (_) {}
-      // Don't resize PTY from mobile — would wrap PC terminal output at phone width
-      if (!isMobile()) doResizeEmit();
+      if (!isDeviceMobile()) doResizeEmit();
     };
 
     const doResizeEmit = () => {
@@ -203,7 +199,7 @@ function TerminalInstance({ sessionId, active, termRefs }) {
 
     const doFit = () => {
       try { fit.fit(); } catch (_) {}
-      if (!isMobile()) doResizeEmit();
+      if (!isDeviceMobile()) doResizeEmit();
     };
 
     // Open terminal — wait for font so glyph width is measured correctly
@@ -516,6 +512,7 @@ export default function ProjectCockpit() {
 
   // Mobile tab context
   const { mobileTab, setMobileTab } = useMobileUI();
+  const { isMobile } = useDevice();
   const prevMobileTab = useRef(null);
 
   // Handle ?tab= from context menu (desktop right-click)
@@ -525,11 +522,11 @@ export default function ProjectCockpit() {
     else if (tab === 'git') { setActiveTab('git'); activeRef.current = 'git'; setSearchParams({}); }
   }, [searchParams]);
 
-  // Sync mobile tab → cockpit activeTab (only on mobile viewport)
+  // Sync mobile tab → cockpit activeTab (only on mobile devices)
   useEffect(() => {
     if (prevMobileTab.current === mobileTab) return;
     prevMobileTab.current = mobileTab;
-    if (window.innerWidth > 768) return;
+    if (!isMobile) return;
     if (mobileTab === 'terminal') {
       const first = termTabs[0];
       if (first) activateTerm(first.id);
@@ -712,7 +709,7 @@ export default function ProjectCockpit() {
       } catch { addToast('Could not open file.', 'error'); return; }
     }
     setActiveTab(`file-${node.path}`); activeRef.current = `file-${node.path}`;
-    if (window.innerWidth <= 768) setMobileTab('terminal');
+    if (isMobile) setMobileTab('terminal');
   }
 
   async function saveFile(path) {
@@ -740,6 +737,8 @@ export default function ProjectCockpit() {
 
   const activeFileTab = fileTabs.find(t => `file-${t.path}` === activeTab);
   const showOverlay = activeFileTab || activeTab === 'settings' || activeTab === 'git';
+  // On mobile, show the active terminal session in the log viewer
+  const activeTermId = termTabs.find(t => activeTab === `term-${t.id}`)?.id ?? termTabs[0]?.id ?? null;
 
   return (
     <div className="cockpit" data-mobile-tab={mobileTab}>
@@ -809,13 +808,27 @@ export default function ProjectCockpit() {
             This keeps terminal dims stable so FitAddon never measures 0×0.
           */}
           <div className="terminals-layer">
-            {termTabs.map(t => (
-              <TerminalInstance key={t.id} sessionId={t.id} active={activeTab === `term-${t.id}`} termRefs={termRefs} />
-            ))}
-            {termTabs.length === 0 && !showOverlay && (
-              <div className="cockpit-empty">
-                <button className="btn btn-primary" onClick={createTerminal}>Open Terminal</button>
-              </div>
+            {isMobile ? (
+              /* Mobile: read-only log viewer — never mounts xterm, never resizes PTY */
+              activeTermId ? (
+                <MobileTerminalView key={activeTermId} sessionId={activeTermId} />
+              ) : (
+                <div className="cockpit-empty">
+                  <button className="btn btn-primary" onClick={createTerminal}>Open Terminal</button>
+                </div>
+              )
+            ) : (
+              /* Desktop: full interactive xterm — owns PTY resize */
+              <>
+                {termTabs.map(t => (
+                  <TerminalInstance key={t.id} sessionId={t.id} active={activeTab === `term-${t.id}`} termRefs={termRefs} />
+                ))}
+                {termTabs.length === 0 && !showOverlay && (
+                  <div className="cockpit-empty">
+                    <button className="btn btn-primary" onClick={createTerminal}>Open Terminal</button>
+                  </div>
+                )}
+              </>
             )}
             {reconnecting && (
               <div className="terminal-reconnect-overlay">
@@ -831,7 +844,7 @@ export default function ProjectCockpit() {
               {activeFileTab?.type === 'text' && (
                 <div className="file-editor" onKeyDown={e => { if ((e.ctrlKey||e.metaKey) && e.key==='s') { e.preventDefault(); saveFile(activeFileTab.path); } }}>
                   <div className="file-editor-toolbar">
-                    <button className="btn btn-ghost" onClick={() => { const t = termTabs[0]; if (t) activateTerm(t.id); else setActiveTab(null); if (window.innerWidth <= 768) setMobileTab('files'); }}>← Files</button>
+                    <button className="btn btn-ghost" onClick={() => { const t = termTabs[0]; if (t) activateTerm(t.id); else setActiveTab(null); if (isMobile) setMobileTab('files'); }}>← Files</button>
                     <span className="file-editor-name">{activeFileTab.name}</span>
                     <button className="btn btn-primary" onClick={() => saveFile(activeFileTab.path)}>Save</button>
                   </div>
@@ -845,7 +858,7 @@ export default function ProjectCockpit() {
               {activeFileTab?.type === 'image' && (
                 <div className="file-editor">
                   <div className="file-editor-toolbar">
-                    <button className="btn btn-ghost" onClick={() => { const t = termTabs[0]; if (t) activateTerm(t.id); if (window.innerWidth <= 768) setMobileTab('files'); }}>← Files</button>
+                    <button className="btn btn-ghost" onClick={() => { const t = termTabs[0]; if (t) activateTerm(t.id); if (isMobile) setMobileTab('files'); }}>← Files</button>
                     <span className="file-editor-name">{activeFileTab.name}</span>
                   </div>
                   <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center', background:'var(--color-surface-elevated)', overflow:'auto', padding:'var(--spacing-lg)' }}>
