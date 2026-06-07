@@ -20,6 +20,7 @@ const projects = sqliteTable('projects', {
   containerId: text('container_id'),
   homeVolume: text('home_volume'),
   status: text('status').default('stopped'),
+  avatar: text('avatar').default(''),
   createdAt: integer('created_at').notNull(),
 });
 
