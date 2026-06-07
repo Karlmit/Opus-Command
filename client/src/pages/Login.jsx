@@ -36,7 +36,8 @@ export default function Login() {
     <div className="auth-screen">
       <div className="auth-card">
         <div className="auth-wordmark">
-          <span className="auth-wordmark-text">OPUS COMMAND</span>
+          <img src="/mark-dark.svg" alt="Opus Command" width="48" height="48" style={{ marginBottom: '8px' }} />
+          <img src="/wordmark-dark.svg" alt="Opus Command" width="200" height="60" />
         </div>
         <p className="auth-subtitle">Sign in to your account.</p>
 

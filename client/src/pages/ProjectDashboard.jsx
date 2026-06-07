@@ -1,23 +1,23 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../components/Toast';
 import './ProjectDashboard.css';
 
-function StatusPill({ status }) {
-  const label = { running: 'Running', starting: 'Starting', stopped: 'Stopped', error: 'Error' }[status] || status;
-  return (
-    <span className={`badge-status status-${status}`} aria-label={`Workspace status: ${label}`}>
-      <span className="badge-status-dot" aria-hidden="true" />
-      {label}
-    </span>
-  );
-}
+const LIFECYCLE_ACTIONS = [
+  { id: 'start',   label: 'Start',            danger: false, desc: 'Start the stopped workspace container. Nothing is deleted.' },
+  { id: 'stop',    label: 'Stop',             danger: false, desc: 'Stop the running container. Sessions will be unavailable until restarted.' },
+  { id: 'restart', label: 'Restart',          danger: false, desc: 'Stop and start the container. Nothing is deleted.' },
+  { id: 'recreate',label: 'Recreate',         danger: true,  desc: 'Delete and recreate container from current image (no pull). Home volume (~) and project files are preserved.' },
+  { id: 'rebuild', label: 'Rebuild',          danger: true,  desc: 'Pull latest template image then recreate. Home volume (~) and project files are preserved.' },
+  { id: 'reset',   label: 'Reset Environment',danger: true,  desc: 'Wipe and recreate the home volume. Project files in /workspace are NOT touched.' },
+];
 
-function ConfirmModal({ title, description, confirmLabel = 'Confirm', onConfirm, onCancel, danger = true }) {
+function ConfirmModal({ title, description, confirmLabel, danger, onConfirm, onCancel }) {
   useEffect(() => {
-    const handler = (e) => { if (e.key === 'Escape') onCancel(); };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
+    const h = (e) => e.key === 'Escape' && onCancel();
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
   }, [onCancel]);
 
   return (
@@ -27,7 +27,9 @@ function ConfirmModal({ title, description, confirmLabel = 'Confirm', onConfirm,
           <h2 id="confirm-title" className="modal-title">{title}</h2>
         </div>
         <div className="modal-body">
-          <p className="confirm-description">{description}</p>
+          <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-secondary)', lineHeight: 'var(--leading-normal)' }}>
+            {description}
+          </p>
         </div>
         <div className="modal-footer">
           <button className="btn btn-ghost" onClick={onCancel}>Cancel</button>
@@ -40,248 +42,207 @@ function ConfirmModal({ title, description, confirmLabel = 'Confirm', onConfirm,
   );
 }
 
-const LIFECYCLE_ACTIONS = [
-  {
-    id: 'start',
-    label: 'Start',
-    description: 'Start the stopped workspace container.',
-    destroys: 'Nothing is deleted.',
-    danger: false,
-  },
-  {
-    id: 'stop',
-    label: 'Stop',
-    description: 'Stop the running workspace container.',
-    destroys: 'Nothing is deleted. Sessions will be unavailable until restarted.',
-    danger: false,
-  },
-  {
-    id: 'restart',
-    label: 'Restart',
-    description: 'Stop and start the workspace container.',
-    destroys: 'Nothing is deleted.',
-    danger: false,
-  },
-  {
-    id: 'recreate',
-    label: 'Recreate',
-    description: 'Delete and recreate the container from the current image (no new image pull).',
-    destroys: 'Container only. Home volume (~) and project files are preserved.',
-    danger: true,
-  },
-  {
-    id: 'rebuild',
-    label: 'Rebuild',
-    description: 'Pull the latest workspace template image and recreate the container.',
-    destroys: 'Container only. Home volume (~) and project files are preserved.',
-    danger: true,
-  },
-  {
-    id: 'reset',
-    label: 'Reset Environment',
-    description: 'Wipe and recreate the home volume (~). All installed tools and configurations will be lost.',
-    destroys: 'Home volume (~). Project files in /workspace are NOT touched.',
-    danger: true,
-  },
-];
-
 export default function ProjectDashboard() {
-  const params = useParams();
-  const id = params.id;
+  const { id } = useParams();
   const navigate = useNavigate();
   const { csrfToken } = useAuth();
+  const { addToast } = useToast();
 
-  const [project, setProject] = useState(null);
-  const [logs, setLogs] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [actionInFlight, setActionInFlight] = useState(null);
-  const [pendingAction, setPendingAction] = useState(null);
-  const [showLogs, setShowLogs] = useState(false);
+  const [project, setProject]       = useState(null);
+  const [logs, setLogs]             = useState('');
+  const [showLogs, setShowLogs]     = useState(false);
+  const [loading, setLoading]       = useState(true);
+  const [pendingAction, setPending] = useState(null);
+  const [actionBusy, setActionBusy] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
-  const [error, setError] = useState('');
 
   useEffect(() => {
-    fetchProject();
-    const interval = setInterval(fetchProject, 5000);
-    return () => clearInterval(interval);
+    load();
+    const t = setInterval(load, 5000);
+    return () => clearInterval(t);
   }, [id]);
 
-  async function fetchProject() {
+  async function load() {
     try {
-      const res = await fetch(`/api/projects/${id}`);
-      if (!res.ok) { navigate('/'); return; }
-      const data = await res.json();
-      setProject(data);
-    } catch {
-      setError('Could not connect to workspace container. Check that Docker is running.');
-    } finally {
-      setLoading(false);
-    }
+      const r = await fetch(`/api/projects/${id}`);
+      if (r.ok) setProject(await r.json());
+      else navigate('/');
+    } catch { /* ignore */ }
+    finally { setLoading(false); }
   }
 
-  async function fetchLogs() {
+  async function runAction(actionId) {
+    setPending(null);
+    setActionBusy(actionId);
     try {
-      const res = await fetch(`/api/projects/${id}/logs`);
-      const data = await res.json();
-      setLogs(data.logs || 'No logs yet.');
-    } catch {
-      setLogs('Failed to fetch logs.');
-    }
-  }
-
-  async function performAction(actionId) {
-    setPendingAction(null);
-    setActionInFlight(actionId);
-    setError('');
-    try {
-      const res = await fetch(`/api/projects/${id}/lifecycle`, {
+      const r = await fetch(`/api/projects/${id}/lifecycle`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
         body: JSON.stringify({ action: actionId }),
       });
-      const data = await res.json();
-      if (data.success) {
-        await fetchProject();
-      } else {
-        setError(data.error || 'Action failed.');
-      }
-    } catch (err) {
-      setError(`Docker operation failed: ${err.message}`);
-    } finally {
-      setActionInFlight(null);
-    }
+      const d = await r.json();
+      if (d.success) { addToast(`${actionId.charAt(0).toUpperCase() + actionId.slice(1)} complete.`); load(); }
+      else addToast(d.error || 'Action failed.', 'error');
+    } catch (e) {
+      addToast(`Docker operation failed: ${e.message}`, 'error');
+    } finally { setActionBusy(false); }
   }
 
   async function deleteProject() {
     setShowDelete(false);
     try {
-      const res = await fetch(`/api/projects/${id}`, {
+      const r = await fetch(`/api/projects/${id}`, {
         method: 'DELETE',
         headers: { 'X-CSRF-Token': csrfToken },
       });
-      if (res.ok) navigate('/');
-      else {
-        const data = await res.json();
-        setError(data.error || 'Delete failed.');
-      }
-    } catch (err) {
-      setError(`Failed to delete project: ${err.message}`);
-    }
+      if (r.ok) navigate('/');
+      else addToast('Delete failed.', 'error');
+    } catch { addToast('Delete failed.', 'error'); }
   }
 
-  if (loading) return (
-    <div className="project-loading">Loading…</div>
-  );
+  async function loadLogs() {
+    try {
+      const r = await fetch(`/api/projects/${id}/logs`);
+      const d = await r.json();
+      setLogs(d.logs || 'No logs yet.');
+    } catch { setLogs('Failed to fetch logs.'); }
+  }
 
-  if (!project) return (
-    <div className="project-loading">Project not found.</div>
-  );
+  if (loading) return <div className="dash-loading">Loading…</div>;
+  if (!project) return null;
+
+  const isRunning = project.status === 'running';
 
   return (
     <div className="project-dashboard">
-      {/* Header */}
-      <div className="project-header">
-        <div className="project-header-left">
-          <button className="btn btn-ghost project-back" onClick={() => navigate(-1)}>←</button>
-          <h1 className="project-title">{project.name}</h1>
-          <StatusPill status={project.status} />
-        </div>
-        <button className="btn btn-danger" onClick={() => setShowDelete(true)}>Delete Project</button>
+      {/* Quick-action cards */}
+      <div className="dash-actions">
+        <button
+          className="dash-action-card primary"
+          onClick={() => navigate(`/project/${id}/terminal`)}
+          disabled={!isRunning}
+          title={isRunning ? 'Open terminal' : 'Start the workspace first'}
+        >
+          <span className="dash-action-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
+            </svg>
+          </span>
+          <span className="dash-action-label">Open Terminal</span>
+          {!isRunning && <span className="dash-action-hint">Start workspace first</span>}
+        </button>
+
+        <button
+          className="dash-action-card"
+          onClick={() => navigate(`/project/${id}/files`)}
+        >
+          <span className="dash-action-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>
+              <polyline points="13 2 13 9 20 9"/>
+            </svg>
+          </span>
+          <span className="dash-action-label">Browse Files</span>
+        </button>
+
+        <button
+          className="dash-action-card"
+          onClick={() => navigate(`/project/${id}/git`)}
+        >
+          <span className="dash-action-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="6" y1="3" x2="6" y2="15"/>
+              <circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/>
+              <path d="M18 9a9 9 0 0 1-9 9"/>
+            </svg>
+          </span>
+          <span className="dash-action-label">Git</span>
+          {project.gitBranch && (
+            <span className="dash-action-hint">{project.gitBranch}{project.changedFiles > 0 ? ` · ${project.changedFiles} changed` : ''}</span>
+          )}
+        </button>
       </div>
 
-      {error && <div className="project-error" role="alert">{error}</div>}
-
-      <div className="project-content">
-        {/* Overview */}
-        <div className="project-panel">
-          <div className="project-panel-title">OVERVIEW</div>
-          <div className="project-stats">
-            <div className="stat">
-              <span className="stat-label">Template</span>
-              <span className="stat-value">{project.template}</span>
-            </div>
-            <div className="stat">
-              <span className="stat-label">Folder</span>
-              <span className="stat-value font-mono">/projects/{project.folderPath}</span>
-            </div>
-            <div className="stat">
-              <span className="stat-label">Git Branch</span>
-              <span className="stat-value font-mono">{project.gitBranch || '—'}</span>
-            </div>
-            <div className="stat">
-              <span className="stat-label">Changed Files</span>
-              <span className="stat-value">{project.changedFiles || 0}</span>
-            </div>
-            <div className="stat">
-              <span className="stat-label">Terminals</span>
-              <span className="stat-value">{project.terminalCount || 0}</span>
-            </div>
-          </div>
+      {/* Stats row */}
+      <div className="dash-stats">
+        <div className="dash-stat">
+          <span className="dash-stat-label">Folder</span>
+          <span className="dash-stat-value mono">/projects/{project.folderPath}</span>
         </div>
-
-        {/* Workspace Lifecycle */}
-        <div className="project-panel">
-          <div className="project-panel-title">WORKSPACE</div>
-          <div className="lifecycle-actions">
-            {LIFECYCLE_ACTIONS.map(action => (
-              <button
-                key={action.id}
-                className={`btn ${action.danger ? 'btn-ghost lifecycle-danger' : 'btn-ghost'}`}
-                onClick={() => setPendingAction(action)}
-                disabled={!!actionInFlight}
-              >
-                {actionInFlight === action.id ? `${action.label}ing…` : action.label}
-              </button>
-            ))}
-          </div>
+        <div className="dash-stat">
+          <span className="dash-stat-label">Template</span>
+          <span className="dash-stat-value">{project.template}</span>
         </div>
+        <div className="dash-stat">
+          <span className="dash-stat-label">Terminals</span>
+          <span className="dash-stat-value">{project.terminalCount || 0}</span>
+        </div>
+      </div>
 
-        {/* Container Logs */}
-        <div className="project-panel">
-          <div className="project-panel-header">
-            <div className="project-panel-title">CONTAINER LOGS</div>
+      {/* Workspace controls */}
+      <div className="dash-section">
+        <div className="dash-section-title">WORKSPACE</div>
+        <div className="dash-lifecycle">
+          {LIFECYCLE_ACTIONS.map(a => (
             <button
-              className="btn btn-ghost"
-              onClick={() => { setShowLogs(s => !s); if (!showLogs) fetchLogs(); }}
+              key={a.id}
+              className={`btn btn-ghost${a.danger ? ' dash-danger' : ''}`}
+              onClick={() => setPending(a)}
+              disabled={!!actionBusy}
             >
-              {showLogs ? 'Hide' : 'Show'}
+              {actionBusy === a.id ? `${a.label}ing…` : a.label}
             </button>
-          </div>
-          {showLogs && (
-            <div className="container-logs">
-              <pre className="logs-content">{logs || 'No logs yet.'}</pre>
-            </div>
-          )}
+          ))}
         </div>
+      </div>
 
-        {/* Recent Activity */}
-        {project.activity && project.activity.length > 0 && (
-          <div className="project-panel">
-            <div className="project-panel-title">RECENT ACTIVITY</div>
-            <div className="activity-list">
-              {project.activity.map((item, i) => (
-                <div key={i} className="activity-item">
-                  <span className="activity-message">{item.message}</span>
-                  <span className="activity-time">{new Date(item.createdAt).toLocaleTimeString()}</span>
-                </div>
-              ))}
-            </div>
+      {/* Container logs */}
+      <div className="dash-section">
+        <div className="dash-section-header">
+          <div className="dash-section-title">CONTAINER LOGS</div>
+          <button className="btn btn-ghost" onClick={() => { setShowLogs(s => !s); if (!showLogs) loadLogs(); }}>
+            {showLogs ? 'Hide' : 'Show'}
+          </button>
+        </div>
+        {showLogs && (
+          <div className="dash-logs">
+            <pre>{logs}</pre>
           </div>
         )}
       </div>
 
-      {/* Confirmation modals */}
+      {/* Recent activity */}
+      {project.activity?.length > 0 && (
+        <div className="dash-section">
+          <div className="dash-section-title">RECENT ACTIVITY</div>
+          <div className="dash-activity">
+            {project.activity.map((item, i) => (
+              <div key={i} className="dash-activity-row">
+                <span className="dash-activity-msg">{item.message}</span>
+                <span className="dash-activity-time">{new Date(item.createdAt).toLocaleTimeString()}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Delete */}
+      <div className="dash-section">
+        <button className="btn btn-danger" onClick={() => setShowDelete(true)}>Delete Project</button>
+        <p className="dash-delete-hint">Removes the workspace container. Project files on disk are not deleted.</p>
+      </div>
+
+      {/* Modals */}
       {pendingAction && (
         <ConfirmModal
           title={pendingAction.label}
-          description={`${pendingAction.description}\n\n${pendingAction.destroys}`}
+          description={pendingAction.desc}
           confirmLabel={pendingAction.label}
           danger={pendingAction.danger}
-          onConfirm={() => performAction(pendingAction.id)}
-          onCancel={() => setPendingAction(null)}
+          onConfirm={() => runAction(pendingAction.id)}
+          onCancel={() => setPending(null)}
         />
       )}
-
       {showDelete && (
         <ConfirmModal
           title="Delete Project"

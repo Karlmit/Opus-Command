@@ -369,6 +369,19 @@ export default function FilesPage() {
     }
   }
 
+  async function createNew(type) {
+    const name = prompt(type === 'dir' ? 'Folder name:' : 'File name:');
+    if (!name || !name.trim()) return;
+    const res = await fetch(`/api/projects/${projectId}/files/create`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      body: JSON.stringify({ filePath: name.trim(), type }),
+    });
+    const data = await res.json();
+    if (data.success) { addToast(`${type === 'dir' ? 'Folder' : 'File'} created.`); loadTree(); }
+    else addToast(data.error || 'Create failed.', 'error');
+  }
+
   return (
     <div className="files-page">
       {/* File tree panel */}
@@ -379,6 +392,13 @@ export default function FilesPage() {
         onDrop={handleDrop}
       >
         {dragOver && <div className="drop-overlay">Drop files to upload</div>}
+
+        {/* Toolbar */}
+        <div className="file-tree-toolbar">
+          <span className="file-tree-toolbar-title">FILES</span>
+          <button className="btn btn-ghost file-tree-btn" onClick={() => createNew('file')} title="New file">+ File</button>
+          <button className="btn btn-ghost file-tree-btn" onClick={() => createNew('dir')}  title="New folder">+ Folder</button>
+        </div>
 
         <div className="file-tree-search">
           <input
@@ -404,7 +424,13 @@ export default function FilesPage() {
         ) : (
           <div className="file-tree-scroll">
             {loading && <div className="file-tree-loading">Loading…</div>}
-            {!loading && tree.length === 0 && <div className="file-tree-loading">Empty project folder.</div>}
+            {!loading && tree.length === 0 && (
+              <div className="file-tree-empty-state">
+                <p>Empty folder</p>
+                <button className="btn btn-ghost" style={{fontSize:'var(--font-size-xs)'}} onClick={() => createNew('file')}>+ New file</button>
+                <button className="btn btn-ghost" style={{fontSize:'var(--font-size-xs)'}} onClick={() => createNew('dir')}>+ New folder</button>
+              </div>
+            )}
             {tree.map(node => (
               <FileTreeNode
                 key={node.path}

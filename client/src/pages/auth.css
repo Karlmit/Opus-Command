@@ -21,15 +21,10 @@
 }
 
 .auth-wordmark {
-  text-align: center;
-}
-
-.auth-wordmark-text {
-  font-size: var(--font-size-2xl);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: var(--tracking-wide);
-  color: var(--color-text-primary);
-  line-height: var(--leading-tight);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
 }
 
 .auth-subtitle {
