@@ -1,3 +1,19 @@
+.claude-section-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.claude-section-badge {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-accent);
+  background: var(--color-accent-subtle);
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  letter-spacing: 0.03em;
+}
+
 .claude-section-desc {
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);

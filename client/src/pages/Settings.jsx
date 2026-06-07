@@ -336,58 +336,57 @@ function UpdatesSection({ csrfToken }) {
 
 // ── Claude Code / Azure AI Foundry settings ──────────────────────────────────
 
+// Keys that are no longer used — silently dropped when saving
+const LEGACY_KEYS = new Set(['ANTHROPIC_BASE_URL', 'ANTHROPIC_API_KEY']);
+
 const AZURE_FIELDS = [
   {
     key: 'ANTHROPIC_FOUNDRY_RESOURCE',
-    label: 'Azure AI Foundry resource name',
-    placeholder: 'my-resource-name',
-    hint: 'The subdomain part only — e.g. "bl-ai-claudecode" from bl-ai-claudecode.services.ai.azure.com',
+    label: 'Resource name',
+    placeholder: 'bl-ai-claudecode',
+    hint: 'The subdomain of your Azure AI Foundry endpoint.',
     secret: false,
   },
   {
     key: 'ANTHROPIC_FOUNDRY_API_KEY',
     label: 'API key',
-    placeholder: 'Azure AI Foundry key…',
-    hint: 'Found in Azure AI Foundry → your deployment → Keys and Endpoint. Stored in /app/data.',
+    placeholder: 'Your Azure AI Foundry key…',
+    hint: 'Found in Azure AI Foundry → Keys and Endpoint.',
     secret: true,
   },
   {
     key: 'ANTHROPIC_DEFAULT_SONNET_MODEL',
     label: 'Model',
     placeholder: 'claude-sonnet-4-6',
-    hint: 'The Claude model deployed in your Azure AI Foundry resource.',
+    hint: 'The Claude model name deployed in your resource.',
     secret: false,
   },
 ];
 
 function ClaudeSection({ csrfToken, addToast }) {
-  const [vars, setVars]         = useState({}); // { KEY: value }
-  const [extra, setExtra]       = useState([]); // [{key, value}] — custom vars
-  const [saving, setSaving]     = useState(false);
-  const [showSecrets, setShow]  = useState({});
+  const [vars, setVars]        = useState({});
+  const [saving, setSaving]    = useState(false);
+  const [showSecrets, setShow] = useState({});
 
   useEffect(() => {
     fetch('/api/settings/workspace-env')
       .then(r => r.json())
       .then(data => {
         const map = {};
-        const ext = [];
         (data.vars || []).forEach(({ key, value }) => {
           if (AZURE_FIELDS.some(f => f.key === key)) map[key] = value;
-          else ext.push({ key, value });
+          // Legacy keys and unrecognised keys are silently dropped
         });
         setVars(map);
-        setExtra(ext);
       })
       .catch(() => {});
   }, []);
 
   async function save() {
     setSaving(true);
-    const allVars = [
-      ...AZURE_FIELDS.map(f => ({ key: f.key, value: vars[f.key] || '' })).filter(v => v.value),
-      ...extra.filter(v => v.key.trim()),
-    ];
+    const allVars = AZURE_FIELDS
+      .map(f => ({ key: f.key, value: vars[f.key] || '' }))
+      .filter(v => v.value);
     try {
       const res = await fetch('/api/settings/workspace-env', {
         method: 'POST',
@@ -395,32 +394,21 @@ function ClaudeSection({ csrfToken, addToast }) {
         body: JSON.stringify({ vars: allVars }),
       });
       const data = await res.json();
-      if (data.success) addToast(`Saved ${data.count} environment variable${data.count !== 1 ? 's' : ''}.`);
+      if (data.success) addToast('Claude Code settings saved.');
       else addToast(data.error || 'Save failed.', 'error');
     } catch { addToast('Save failed.', 'error'); }
     finally { setSaving(false); }
   }
 
-  function addExtra() {
-    setExtra(prev => [...prev, { key: '', value: '' }]);
-  }
-
-  function updateExtra(i, field, val) {
-    setExtra(prev => prev.map((e, idx) => idx === i ? { ...e, [field]: val } : e));
-  }
-
-  function removeExtra(i) {
-    setExtra(prev => prev.filter((_, idx) => idx !== i));
-  }
-
   return (
     <div className="settings-section">
-      <h2 className="settings-section-title">CLAUDE CODE — AZURE AI FOUNDRY</h2>
+      <div className="claude-section-header">
+        <h2 className="settings-section-title">CLAUDE CODE</h2>
+        <span className="claude-section-badge">Azure AI Foundry</span>
+      </div>
       <p className="claude-section-desc">
-        These environment variables are injected into every workspace container so Claude Code
-        can connect to Azure AI Foundry automatically.
-        Existing projects need a <strong>Recreate</strong> (Workspace tab → Recreate) to pick up changes —
-        no need to delete the project, just the container.
+        Injected into every workspace container so Claude Code connects to your Azure deployment automatically.
+        After saving, open your project → <strong>Workspace</strong> tab → <strong>Recreate</strong> to apply.
       </p>
 
       <div className="claude-fields">
@@ -437,57 +425,21 @@ function ClaudeSection({ csrfToken, addToast }) {
                 autoComplete="off"
               />
               {field.secret && (
-                <button
-                  className="btn btn-ghost claude-reveal"
-                  type="button"
+                <button className="btn btn-ghost claude-reveal" type="button"
                   onClick={() => setShow(s => ({ ...s, [field.key]: !s[field.key] }))}
-                  aria-label={showSecrets[field.key] ? 'Hide' : 'Show'}
-                >
+                  aria-label={showSecrets[field.key] ? 'Hide' : 'Show'}>
                   {showSecrets[field.key] ? '🙈' : '👁'}
                 </button>
               )}
             </div>
-            <p className="form-hint">{field.hint} Variable name: <code>{field.key}</code></p>
+            <p className="form-hint">{field.hint}</p>
           </div>
         ))}
       </div>
 
-      {/* Additional custom env vars */}
-      {extra.length > 0 && (
-        <div className="claude-extra">
-          <div className="claude-extra-title">Additional variables</div>
-          {extra.map((ev, i) => (
-            <div key={i} className="claude-extra-row">
-              <input
-                className="input claude-extra-key"
-                value={ev.key}
-                onChange={e => updateExtra(i, 'key', e.target.value)}
-                placeholder="VARIABLE_NAME"
-              />
-              <input
-                className="input claude-extra-value"
-                value={ev.value}
-                onChange={e => updateExtra(i, 'value', e.target.value)}
-                placeholder="value"
-              />
-              <button className="btn btn-ghost" onClick={() => removeExtra(i)} aria-label="Remove">×</button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div className="claude-actions">
-        <button className="btn btn-ghost" onClick={addExtra}>+ Add variable</button>
-        <button className="btn btn-primary" onClick={save} disabled={saving}>
-          {saving ? 'Saving…' : 'Save'}
-        </button>
-      </div>
-
-      <div className="claude-note">
-        <strong>Note:</strong> Variables are stored in <code>/app/data</code> and visible via{' '}
-        <code>docker inspect</code> on workspace containers. Do not use highly sensitive secrets
-        that could cause harm if exposed on your local network.
-      </div>
+      <button className="btn btn-primary" onClick={save} disabled={saving} style={{ alignSelf: 'flex-start' }}>
+        {saving ? 'Saving…' : 'Save'}
+      </button>
     </div>
   );
 }
