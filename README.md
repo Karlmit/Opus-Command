@@ -10,6 +10,7 @@ Replace tmux, SSH, and fragmented tooling with a unified interface for directing
 [![Build](https://github.com/Karlmit/Opus-Command/actions/workflows/docker.yml/badge.svg)](https://github.com/Karlmit/Opus-Command/actions/workflows/docker.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![ghcr.io](https://img.shields.io/badge/ghcr.io-karlmit%2Fopus--command-blue?logo=github)](https://github.com/Karlmit/Opus-Command/pkgs/container/opus-command)
+[![Roadmap](https://img.shields.io/badge/Roadmap-view-green)](ROADMAP.md)
 
 </div>
 
@@ -234,6 +235,10 @@ docker compose pull && docker compose up -d
 ```
 
 All data in `/app/data` is preserved across updates.
+
+## Roadmap
+
+See [`ROADMAP.md`](ROADMAP.md) for the full feature status — what's done, what's planned for V1, and the post-V1 **Opus Connector** (remote execution environments for Windows, macOS, Android and more).
 
 ## License
 
