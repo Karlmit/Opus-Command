@@ -338,18 +338,25 @@ function UpdatesSection({ csrfToken }) {
 
 const AZURE_FIELDS = [
   {
-    key: 'ANTHROPIC_BASE_URL',
-    label: 'Azure AI Foundry endpoint',
-    placeholder: 'https://<resource>.services.ai.azure.com/models',
-    hint: 'The endpoint URL from your Azure AI Foundry deployment.',
+    key: 'ANTHROPIC_FOUNDRY_RESOURCE',
+    label: 'Azure AI Foundry resource name',
+    placeholder: 'my-resource-name',
+    hint: 'The subdomain part only — e.g. "bl-ai-claudecode" from bl-ai-claudecode.services.ai.azure.com',
     secret: false,
   },
   {
-    key: 'ANTHROPIC_API_KEY',
+    key: 'ANTHROPIC_FOUNDRY_API_KEY',
     label: 'API key',
-    placeholder: 'sk-...',
-    hint: 'Your Azure AI Foundry API key. Stored in /app/data.',
+    placeholder: 'Azure AI Foundry key…',
+    hint: 'Found in Azure AI Foundry → your deployment → Keys and Endpoint. Stored in /app/data.',
     secret: true,
+  },
+  {
+    key: 'ANTHROPIC_DEFAULT_SONNET_MODEL',
+    label: 'Model',
+    placeholder: 'claude-sonnet-4-6',
+    hint: 'The Claude model deployed in your Azure AI Foundry resource.',
+    secret: false,
   },
 ];
 
@@ -410,9 +417,10 @@ function ClaudeSection({ csrfToken, addToast }) {
     <div className="settings-section">
       <h2 className="settings-section-title">CLAUDE CODE — AZURE AI FOUNDRY</h2>
       <p className="claude-section-desc">
-        These environment variables are injected into every workspace container.
-        New projects and recreated workspaces pick them up automatically.
-        Existing running containers need a <strong>Restart</strong> or <strong>Recreate</strong> to apply changes.
+        These environment variables are injected into every workspace container so Claude Code
+        can connect to Azure AI Foundry automatically.
+        Existing projects need a <strong>Recreate</strong> (Workspace tab → Recreate) to pick up changes —
+        no need to delete the project, just the container.
       </p>
 
       <div className="claude-fields">
