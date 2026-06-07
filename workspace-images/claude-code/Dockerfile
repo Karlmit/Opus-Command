@@ -8,6 +8,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     wget \
     ca-certificates \
+    python3 \
+    make \
+    g++ \
     && rm -rf /var/lib/apt/lists/*
 
 # Install the latest Claude Code CLI
@@ -15,6 +18,11 @@ RUN npm install -g @anthropic-ai/claude-code
 
 # Smoke-test node/npm — skip claude --version as it can fail non-interactively
 RUN node --version && npm --version && npx --version
+
+# Install terminal-agent — owns PTY sessions so they survive Opus Command restarts
+COPY terminal-agent.js /opt/terminal-agent/index.js
+COPY terminal-agent-package.json /opt/terminal-agent/package.json
+RUN cd /opt/terminal-agent && npm install --omit=dev
 
 # Workspace shell config — applied to every interactive bash session via /etc/bash.bashrc
 # 1. PATH: home volume bin dirs always take precedence over system dirs

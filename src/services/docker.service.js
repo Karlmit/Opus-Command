@@ -1,8 +1,14 @@
 const Dockerode = require('dockerode');
 const { PROJECTS_DIR, HOST_PROJECTS_DIR } = require('../config');
 const path = require('path');
+const os   = require('os');
 
 const docker = new Dockerode({ socketPath: '/var/run/docker.sock' });
+
+// User-defined bridge network so container names resolve as hostnames.
+// Opus Command and all workspace containers join this network so the
+// terminal-agent can be reached at opus-workspace-{id}:7681.
+const INTERNAL_NETWORK = 'opus-internal';
 
 // Single workspace template — Claude Code with Node.js/npm/npx
 const WORKSPACE_IMAGE = 'ghcr.io/karlmit/opus-command-workspace-claude-code:latest';
@@ -76,8 +82,61 @@ function buildWorkspaceCmd(image) {
       'cd() { builtin cd "${@:-/workspace}"; }\\n\' >> /etc/bash.bashrc; '
     : '';
 
-  return ['bash', '-c', fallbackInit + initScript + '; while true; do sleep 60; done'];
+  // Start the terminal-agent in the background if it's present in the image.
+  // The agent owns PTY sessions so they survive Opus Command restarts.
+  const agentStart =
+    '[ -f /opt/terminal-agent/index.js ] && node /opt/terminal-agent/index.js &';
+
+  return ['bash', '-c', fallbackInit + initScript + '; ' + agentStart + '; while true; do sleep 60; done'];
 }
+
+// ── Internal network management ──────────────────────────────────────────────
+
+/**
+ * Ensure the opus-internal Docker network exists and that the opus-command
+ * container itself is connected to it. Called once at startup.
+ * Silently no-ops when not running in Docker (development mode).
+ */
+async function ensureInternalNetwork() {
+  try {
+    await docker.createNetwork({
+      Name: INTERNAL_NETWORK,
+      Driver: 'bridge',
+      CheckDuplicate: true,
+    });
+    console.log(`[docker] Created internal network ${INTERNAL_NETWORK}`);
+  } catch (err) {
+    // 409 = already exists — fine
+    if (!err.message?.includes('already exists') && err.statusCode !== 409) {
+      console.warn('[docker] Network create warning:', err.message);
+    }
+  }
+
+  // Connect the opus-command container to the network so workspace containers
+  // can be addressed by their container name (Docker user-defined network DNS).
+  const selfId = os.hostname(); // Docker sets hostname to short container ID
+  try {
+    await docker.getNetwork(INTERNAL_NETWORK).connect({ Container: selfId });
+    console.log(`[docker] Connected self (${selfId.slice(0, 12)}) to ${INTERNAL_NETWORK}`);
+  } catch (err) {
+    if (!err.message?.includes('already exists') && !err.message?.includes('already connected')) {
+      // Not fatal — we might be in dev mode outside Docker
+      console.warn('[docker] Self network connect warning:', err.message);
+    }
+  }
+}
+
+async function _connectToInternalNetwork(containerId) {
+  try {
+    await docker.getNetwork(INTERNAL_NETWORK).connect({ Container: containerId });
+  } catch (err) {
+    if (!err.message?.includes('already exists') && !err.message?.includes('already connected')) {
+      console.warn('[docker] Container network connect warning:', err.message);
+    }
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 
 async function createWorkspaceContainer(projectId, folderPath) {
   const image = await getWorkspaceImage();
@@ -111,6 +170,9 @@ async function createWorkspaceContainer(projectId, folderPath) {
     },
     WorkingDir: '/workspace',
   });
+
+  // Connect to internal network so opus-command can reach the terminal-agent by name
+  await _connectToInternalNetwork(container.id);
 
   return { containerId: container.id, homeVolume: homeVol };
 }
@@ -160,6 +222,7 @@ async function recreateContainer(projectId, folderPath) {
     WorkingDir: '/workspace',
   });
 
+  await _connectToInternalNetwork(container.id);
   await container.start();
   return { containerId: container.id };
 }
@@ -270,7 +333,6 @@ function streamContainerLogs(projectId, onData, onEnd) {
  * container ID. We inspect self to get the full HostConfig so the new
  * container is created with identical mounts, ports, and env.
  * ─────────────────────────────────────────────────────────────────────── */
-const os = require('os');
 const APP_IMAGE = 'ghcr.io/karlmit/opus-command:latest';
 
 async function selfUpdate(onProgress) {
@@ -379,6 +441,7 @@ async function selfUpdate(onProgress) {
 module.exports = {
   docker,
   selfUpdate,
+  ensureInternalNetwork,
   createWorkspaceContainer,
   startContainer,
   stopContainer,

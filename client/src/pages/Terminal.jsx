@@ -278,7 +278,7 @@ export default function TerminalPage() {
         setSessionDead(true);
         if (xtermRef.current) {
           xtermRef.current.options.cursorBlink = false;
-          xtermRef.current.write('\r\n\x1b[31m[Session ended — Opus Command restarted. Open a new terminal to continue.]\x1b[0m\r\n');
+          xtermRef.current.write('\r\n\x1b[31m[Session ended — workspace container stopped. Open a new terminal to continue.]\x1b[0m\r\n');
         }
       }
     }
@@ -438,7 +438,7 @@ export default function TerminalPage() {
           <div className="terminal-dead-overlay" role="alert">
             <div className="terminal-dead-content">
               <span className="terminal-dead-icon">&#9888;</span>
-              <p className="terminal-dead-message">Session ended because Opus Command restarted.</p>
+              <p className="terminal-dead-message">Session ended — workspace container stopped.</p>
               <p className="terminal-dead-sub">Open a new terminal to continue.</p>
               <button className="btn btn-primary" onClick={createSession}>New Terminal</button>
             </div>

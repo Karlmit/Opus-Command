@@ -6,9 +6,8 @@ RUN npm ci
 COPY client/ ./
 RUN npm run build
 
-# Stage 2: Build server deps (Debian slim = better pre-built binary support for arm64)
+# Stage 2: Build server deps (node-pty removed — no native build tools needed)
 FROM node:20-slim AS server-deps
-RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
 COPY package*.json ./
 RUN npm install --omit=dev

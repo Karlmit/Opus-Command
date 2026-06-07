@@ -1,83 +1,81 @@
-const pty = require('node-pty');
+/**
+ * terminal.service.js — Opus Command proxy layer.
+ *
+ * Each workspace container runs a terminal-agent process (port 7681) that owns
+ * all PTY sessions for that workspace. This service:
+ *   - Creates sessions on the terminal-agent via HTTP
+ *   - Maintains a WebSocket connection per session to stream output
+ *   - Proxies I/O between Socket.io browser clients and the terminal-agent
+ *   - Persists session metadata and scrollback to SQLite
+ *   - On startup, reconnects to any sessions that survived in a running agent
+ *
+ * Because PTYs live inside the workspace container, they survive Opus Command
+ * restarts. If the workspace container itself restarts, sessions die (expected).
+ */
+
+const WebSocket = require('ws');
 const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../db');
 const { terminalSessions } = require('../db/schema');
 const { eq } = require('drizzle-orm');
-const { docker } = require('./docker.service');
+const { containerName } = require('./docker.service');
 
-const MAX_SCROLLBACK_LINES = 5000;
+const AGENT_PORT   = parseInt(process.env.TERMINAL_AGENT_PORT || '7681', 10);
+const MAX_BUFFER   = 500_000; // bytes
+const CONNECT_TIMEOUT_MS = 5_000;
 
-// In-memory registry of active PTY processes
-// Map<sessionId, { pty: IPty, projectId: number, buffer: string[] }>
-const activePTYs = new Map();
-
-// Map<sessionId, Set<socketId>> for client tracking
+// Map<sessionId, ProxyEntry>
+const activeProxies = new Map();
+// Map<sessionId, Set<socketId>>
 const sessionClients = new Map();
 
-function getDB_local() {
-  return getDB();
+let _io = null; // set on first createSession / reconnectOnStartup call
+
+// ── URL helpers ──────────────────────────────────────────────────────────────
+
+function agentHttp(projectId) {
+  return `http://${containerName(projectId)}:${AGENT_PORT}`;
 }
 
-function truncateScrollback(lines) {
-  if (lines.length > MAX_SCROLLBACK_LINES) {
-    return lines.slice(lines.length - MAX_SCROLLBACK_LINES);
-  }
-  return lines;
+function agentWs(projectId, sessionId) {
+  return `ws://${containerName(projectId)}:${AGENT_PORT}/sessions/${sessionId}`;
 }
+
+// ── Session lifecycle ────────────────────────────────────────────────────────
 
 async function createSession(projectId, io) {
-  const db = getDB_local();
+  if (!_io) _io = io;
+
+  const db = getDB();
   const sessionId = uuidv4();
   const sessionCount = db.select().from(terminalSessions)
     .where(eq(terminalSessions.projectId, projectId))
     .all().length;
   const name = `Terminal ${sessionCount + 1}`;
 
-  // Get the container name for this project
-  const { containerName } = require('./docker.service');
-  const contName = containerName(projectId);
-
-  let ptyProcess;
+  // Ask the workspace terminal-agent to create the PTY session
+  let response;
   try {
-    // Use -it so Docker allocates a real PTY inside the container.
-    // Without -t, bash sees no TTY, warns about job control, and behaves oddly.
-    // node-pty wraps docker exec in a host PTY (master side); docker exec -t
-    // creates a PTY inside the container (slave side) — the chain works correctly.
-    ptyProcess = pty.spawn('docker', ['exec', '-it', '-w', '/workspace', '-e', 'TERM=xterm-256color', contName, '/bin/bash'], {
-      name: 'xterm-256color',
-      cols: 80,
-      rows: 24,
-      env: {
-        ...process.env,
-        TERM: 'xterm-256color',
-      },
+    response = await fetch(`${agentHttp(projectId)}/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, name, cols: 80, rows: 24 }),
+      signal: AbortSignal.timeout(CONNECT_TIMEOUT_MS),
     });
   } catch (err) {
-    // Fallback: create a local shell if docker exec fails (development)
-    console.warn(`[terminal] docker exec failed for ${contName}, using local shell:`, err.message);
-    ptyProcess = pty.spawn('/bin/bash', [], {
-      name: 'xterm-256color',
-      cols: 80,
-      rows: 24,
-      env: {
-        ...process.env,
-        TERM: 'xterm-256color',
-        PS1: '\\w$ ',
-      },
-    });
+    throw new Error(
+      `Cannot reach workspace terminal-agent. ` +
+      `Make sure the workspace container is running and rebuilt with the latest image. ` +
+      `(${err.message})`
+    );
   }
 
-  const sessionData = {
-    pty: ptyProcess,
-    projectId,
-    buffer: [],
-    name,
-    aiState: 'none',
-    lastOutputTime: Date.now(),
-  };
-  activePTYs.set(sessionId, sessionData);
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(`terminal-agent responded ${response.status}: ${text}`);
+  }
 
-  // Save to DB
+  // Persist session record
   db.insert(terminalSessions).values({
     id: sessionId,
     projectId,
@@ -87,178 +85,187 @@ async function createSession(projectId, io) {
     createdAt: Date.now(),
   }).run();
 
-  // Stream output to connected clients
-  ptyProcess.onData(data => {
-    const session = activePTYs.get(sessionId);
-    if (!session) return;
-
-    session.lastOutputTime = Date.now();
-
-    // Append to scrollback buffer
-    session.buffer.push(data);
-    // Keep buffer manageable (we store raw terminal sequences, not lines)
-    if (session.buffer.join('').length > 500000) {
-      // Trim old data
-      const full = session.buffer.join('');
-      session.buffer = [full.slice(full.length - 250000)];
-    }
-
-    // Persist scrollback periodically
-    persistScrollback(sessionId, session);
-
-    // Broadcast to all connected clients watching this session
-    const clients = sessionClients.get(sessionId);
-    if (clients && clients.size > 0) {
-      io.to(`session:${sessionId}`).emit('terminal:data', { sessionId, data });
-    }
-
-    // AI detection
-    detectAIState(sessionId, data, io);
-  });
-
-  ptyProcess.onExit(({ exitCode }) => {
-    console.log(`[terminal] Session ${sessionId} exited with code ${exitCode}`);
-    // Clean up but keep DB record for reconnect
-    const session = activePTYs.get(sessionId);
-    if (session) {
-      persistScrollback(sessionId, session, true);
-    }
-    activePTYs.delete(sessionId);
-    sessionClients.delete(sessionId);
-    io.to(`session:${sessionId}`).emit('terminal:exit', { sessionId });
-  });
+  // Open proxy WebSocket
+  _connectProxy(projectId, sessionId, io);
 
   return { sessionId, name };
 }
 
-let persistTimer = {};
-function persistScrollback(sessionId, session, immediate = false) {
-  if (persistTimer[sessionId]) clearTimeout(persistTimer[sessionId]);
-  const delay = immediate ? 0 : 2000;
-  persistTimer[sessionId] = setTimeout(() => {
-    try {
-      const db = getDB_local();
-      const scrollback = session.buffer.join('');
-      db.update(terminalSessions)
-        .set({ scrollback: scrollback.slice(-250000) })
-        .where(eq(terminalSessions.id, sessionId))
-        .run();
-    } catch (e) {
-      console.error('[terminal] Scrollback persist error:', e.message);
-    }
-  }, delay);
-}
+// ── Proxy WebSocket management ───────────────────────────────────────────────
 
-// Pattern detection for AI agents
-let waitingTimers = {};
-function detectAIState(sessionId, data, io) {
-  const session = activePTYs.get(sessionId);
-  if (!session) return;
+function _connectProxy(projectId, sessionId, io) {
+  if (!_io && io) _io = io;
 
-  const { loadPatterns } = require('./patterns.service');
-  const patterns = loadPatterns();
-
-  const allActive = patterns.agents.flatMap(a => a.activePatterns || []);
-  const allWaiting = patterns.agents.flatMap(a => a.waitingPatterns || []);
-
-  let wasWaiting = session.aiState === 'waiting';
-
-  // Check for active AI patterns
-  if (allActive.some(p => data.includes(p))) {
-    if (session.aiState !== 'waiting') {
-      session.aiState = 'active';
-      updateAIState(sessionId, 'active', io);
-    }
-  }
-
-  // Check for waiting patterns — require 1s silence after
-  if (allWaiting.some(p => data.includes(p))) {
-    if (waitingTimers[sessionId]) clearTimeout(waitingTimers[sessionId]);
-    waitingTimers[sessionId] = setTimeout(() => {
-      const s = activePTYs.get(sessionId);
-      if (!s) return;
-      const silence = Date.now() - s.lastOutputTime;
-      if (silence >= 900) {
-        s.aiState = 'waiting';
-        updateAIState(sessionId, 'waiting', io);
-      }
-    }, 1000);
-  } else if (wasWaiting && data.trim()) {
-    // New output after waiting = agent resumed
-    session.aiState = 'active';
-    updateAIState(sessionId, 'active', io);
-    if (waitingTimers[sessionId]) {
-      clearTimeout(waitingTimers[sessionId]);
-      delete waitingTimers[sessionId];
-    }
-  }
-}
-
-function updateAIState(sessionId, state, io) {
+  const wsUrl = agentWs(projectId, sessionId);
+  let ws;
   try {
-    const db = getDB_local();
-    db.update(terminalSessions).set({ aiState: state }).where(eq(terminalSessions.id, sessionId)).run();
-    io.emit('terminal:ai-state', { sessionId, state });
-  } catch (_) {}
+    ws = new WebSocket(wsUrl);
+  } catch (err) {
+    console.error(`[terminal] Failed to open WS for ${sessionId.slice(0, 8)}:`, err.message);
+    return;
+  }
+
+  const entry = {
+    ws,
+    projectId,
+    buffer: '',
+    name: '',
+    aiState: 'none',
+    alive: false,
+    lastOutputTime: Date.now(),
+  };
+  activeProxies.set(sessionId, entry);
+
+  ws.on('open', () => {
+    console.log(`[terminal] proxy WS open for session ${sessionId.slice(0, 8)}`);
+  });
+
+  ws.on('message', raw => {
+    let msg;
+    try { msg = JSON.parse(raw); } catch { return; }
+    const ioRef = _io;
+
+    if (msg.type === 'scrollback') {
+      // Full buffer replay from agent — update our copy and persist
+      entry.buffer = msg.data || '';
+      _persistScrollback(sessionId, entry);
+
+    } else if (msg.type === 'attached') {
+      entry.alive = true;
+      ioRef?.to(`session:${sessionId}`).emit('terminal:session-attached', { sessionId });
+
+    } else if (msg.type === 'output') {
+      const { data } = msg;
+      entry.lastOutputTime = Date.now();
+
+      entry.buffer += data;
+      if (entry.buffer.length > MAX_BUFFER) {
+        entry.buffer = entry.buffer.slice(entry.buffer.length - MAX_BUFFER / 2);
+      }
+      _persistScrollback(sessionId, entry);
+
+      ioRef?.to(`session:${sessionId}`).emit('terminal:data', { sessionId, data });
+
+      _detectAIState(sessionId, data, ioRef);
+
+    } else if (msg.type === 'exit') {
+      console.log(`[terminal] session ${sessionId.slice(0, 8)} exited`);
+      entry.alive = false;
+      _persistScrollback(sessionId, entry, true);
+      activeProxies.delete(sessionId);
+      sessionClients.delete(sessionId);
+      ioRef?.to(`session:${sessionId}`).emit('terminal:exit', { sessionId });
+
+    } else if (msg.type === 'error') {
+      console.warn(`[terminal] agent error for ${sessionId.slice(0, 8)}:`, msg.message);
+    }
+  });
+
+  ws.on('close', (code, reason) => {
+    const proxy = activeProxies.get(sessionId);
+    if (!proxy) return;
+    const wasAlive = proxy.alive;
+    proxy.alive = false;
+    console.log(`[terminal] proxy WS closed for ${sessionId.slice(0, 8)} (code ${code})`);
+
+    // Only emit session-dead when we were confirmed alive — this avoids false
+    // alarms during the Opus Command startup reconnect window.
+    if (wasAlive) {
+      _io?.to(`session:${sessionId}`).emit('terminal:session-dead', { sessionId });
+    }
+  });
+
+  ws.on('error', err => {
+    const proxy = activeProxies.get(sessionId);
+    if (proxy) proxy.alive = false;
+    console.error(`[terminal] proxy WS error for ${sessionId.slice(0, 8)}:`, err.message);
+  });
 }
+
+// ── Reconnect on Opus Command restart ────────────────────────────────────────
+
+async function reconnectOnStartup(io) {
+  _io = io;
+
+  const db = getDB();
+  let dbSessions;
+  try {
+    dbSessions = db.select().from(terminalSessions).all();
+  } catch {
+    dbSessions = [];
+  }
+
+  console.log(`[terminal] startup: ${dbSessions.length} session(s) in DB — probing agents`);
+
+  // Run all reconnect probes in parallel so the startup window is as short as possible
+  await Promise.allSettled(dbSessions.map(s => _tryReconnect(s, io)));
+}
+
+async function _tryReconnect(session, io) {
+  const projId = session.projectId;
+  try {
+    const res = await fetch(`${agentHttp(projId)}/sessions`, {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!res.ok) return;
+
+    const { sessions: agentSessions } = await res.json();
+    const agentSession = agentSessions.find(s => s.id === session.id && s.alive);
+
+    if (agentSession) {
+      console.log(`[terminal] reconnecting to surviving session ${session.id.slice(0, 8)}`);
+      _connectProxy(projId, session.id, io);
+    } else {
+      console.log(`[terminal] session ${session.id.slice(0, 8)} not found in agent — dead`);
+    }
+  } catch {
+    // workspace container not running — session is dead, leave DB record for dead overlay
+  }
+}
+
+// ── I/O operations ───────────────────────────────────────────────────────────
 
 function writeToSession(sessionId, data) {
-  const session = activePTYs.get(sessionId);
-  if (session && session.pty) {
-    session.pty.write(data);
+  const proxy = activeProxies.get(sessionId);
+  if (proxy?.ws?.readyState === WebSocket.OPEN) {
+    proxy.ws.send(JSON.stringify({ type: 'input', data }));
   }
 }
 
 function resizeSession(sessionId, cols, rows) {
   if (!cols || !rows || cols < 1 || rows < 1) return;
-  const session = activePTYs.get(sessionId);
-  if (session && session.pty) {
-    session.pty.resize(cols, rows);
+  const proxy = activeProxies.get(sessionId);
+  if (proxy?.ws?.readyState === WebSocket.OPEN) {
+    proxy.ws.send(JSON.stringify({ type: 'resize', cols, rows }));
   }
 }
 
 function isSessionAlive(sessionId) {
-  const session = activePTYs.get(sessionId);
-  if (!session) return false;
-  try {
-    // Signal 0 checks existence without killing the process
-    process.kill(session.pty.pid, 0);
-    return true;
-  } catch {
-    // Process no longer exists — remove stale entry
-    activePTYs.delete(sessionId);
-    return false;
-  }
-}
-
-function logStartupState() {
-  const db = getDB_local();
-  let dbCount = 0;
-  try { dbCount = db.select().from(terminalSessions).all().length; } catch (_) {}
-  console.log(`[terminal] startup: ${dbCount} session(s) in DB, ${activePTYs.size} active PTY(s) — all pre-existing sessions are orphaned`);
+  const proxy = activeProxies.get(sessionId);
+  return proxy?.alive === true && proxy?.ws?.readyState === WebSocket.OPEN;
 }
 
 function killSession(sessionId) {
-  const session = activePTYs.get(sessionId);
-  if (session && session.pty) {
-    session.pty.kill();
+  const proxy = activeProxies.get(sessionId);
+  if (proxy) {
+    fetch(`${agentHttp(proxy.projectId)}/sessions/${sessionId}`, {
+      method: 'DELETE',
+    }).catch(() => {});
+    proxy.ws?.close();
+    activeProxies.delete(sessionId);
   }
-  activePTYs.delete(sessionId);
   sessionClients.delete(sessionId);
   try {
-    const db = getDB_local();
-    db.delete(terminalSessions).where(eq(terminalSessions.id, sessionId)).run();
+    getDB().delete(terminalSessions).where(eq(terminalSessions.id, sessionId)).run();
   } catch (_) {}
 }
 
 function getSessionScrollback(sessionId) {
-  const session = activePTYs.get(sessionId);
-  if (session) return session.buffer.join('');
-
-  // Load from DB
+  const proxy = activeProxies.get(sessionId);
+  if (proxy) return proxy.buffer;
   try {
-    const db = getDB_local();
-    const rows = db.select().from(terminalSessions).where(eq(terminalSessions.id, sessionId)).all();
+    const rows = getDB().select().from(terminalSessions)
+      .where(eq(terminalSessions.id, sessionId)).all();
     return rows[0]?.scrollback || '';
   } catch {
     return '';
@@ -266,33 +273,30 @@ function getSessionScrollback(sessionId) {
 }
 
 function renameSession(sessionId, name) {
-  const session = activePTYs.get(sessionId);
-  if (session) session.name = name;
+  const proxy = activeProxies.get(sessionId);
+  if (proxy) proxy.name = name;
   try {
-    const db = getDB_local();
-    db.update(terminalSessions).set({ name }).where(eq(terminalSessions.id, sessionId)).run();
+    getDB().update(terminalSessions).set({ name })
+      .where(eq(terminalSessions.id, sessionId)).run();
   } catch (_) {}
 }
 
 function listSessions(projectId) {
-  const db = getDB_local();
-  const dbSessions = db.select().from(terminalSessions)
-    .where(eq(terminalSessions.projectId, projectId))
-    .all();
+  const db = getDB();
+  const rows = db.select().from(terminalSessions)
+    .where(eq(terminalSessions.projectId, projectId)).all();
 
-  return dbSessions.map(s => ({
-    id: s.id,
-    name: activePTYs.get(s.id)?.name || s.name,
-    active: activePTYs.has(s.id),
-    aiState: activePTYs.get(s.id)?.aiState || s.aiState || 'none',
+  return rows.map(s => ({
+    id:       s.id,
+    name:     activeProxies.get(s.id)?.name || s.name,
+    active:   isSessionAlive(s.id),
+    aiState:  activeProxies.get(s.id)?.aiState || s.aiState || 'none',
     projectId: s.projectId,
   }));
 }
 
 function clientJoinSession(sessionId, socketId) {
-  if (!sessionClients.has(sessionId)) {
-    sessionClients.set(sessionId, new Set());
-  }
+  if (!sessionClients.has(sessionId)) sessionClients.set(sessionId, new Set());
   sessionClients.get(sessionId).add(socketId);
 }
 
@@ -303,6 +307,73 @@ function clientLeaveSession(sessionId, socketId) {
     if (clients.size === 0) sessionClients.delete(sessionId);
   }
 }
+
+// ── Scrollback persistence ───────────────────────────────────────────────────
+
+const _persistTimers = {};
+
+function _persistScrollback(sessionId, proxy, immediate = false) {
+  if (_persistTimers[sessionId]) clearTimeout(_persistTimers[sessionId]);
+  const delay = immediate ? 0 : 2000;
+  _persistTimers[sessionId] = setTimeout(() => {
+    try {
+      getDB().update(terminalSessions)
+        .set({ scrollback: proxy.buffer.slice(-250_000) })
+        .where(eq(terminalSessions.id, sessionId)).run();
+    } catch (_) {}
+  }, delay);
+}
+
+// ── AI state detection ───────────────────────────────────────────────────────
+
+const _waitingTimers = {};
+
+function _detectAIState(sessionId, data, io) {
+  const proxy = activeProxies.get(sessionId);
+  if (!proxy) return;
+
+  const { loadPatterns } = require('./patterns.service');
+  const patterns  = loadPatterns();
+  const allActive  = patterns.agents.flatMap(a => a.activePatterns  || []);
+  const allWaiting = patterns.agents.flatMap(a => a.waitingPatterns || []);
+  const wasWaiting = proxy.aiState === 'waiting';
+
+  if (allActive.some(p => data.includes(p))) {
+    if (proxy.aiState !== 'waiting') {
+      proxy.aiState = 'active';
+      _updateAIState(sessionId, 'active', io);
+    }
+  }
+
+  if (allWaiting.some(p => data.includes(p))) {
+    if (_waitingTimers[sessionId]) clearTimeout(_waitingTimers[sessionId]);
+    _waitingTimers[sessionId] = setTimeout(() => {
+      const px = activeProxies.get(sessionId);
+      if (!px) return;
+      if (Date.now() - px.lastOutputTime >= 900) {
+        px.aiState = 'waiting';
+        _updateAIState(sessionId, 'waiting', io || _io);
+      }
+    }, 1000);
+  } else if (wasWaiting && data.trim()) {
+    proxy.aiState = 'active';
+    _updateAIState(sessionId, 'active', io);
+    if (_waitingTimers[sessionId]) {
+      clearTimeout(_waitingTimers[sessionId]);
+      delete _waitingTimers[sessionId];
+    }
+  }
+}
+
+function _updateAIState(sessionId, state, io) {
+  try {
+    getDB().update(terminalSessions).set({ aiState: state })
+      .where(eq(terminalSessions.id, sessionId)).run();
+    (io || _io)?.emit('terminal:ai-state', { sessionId, state });
+  } catch (_) {}
+}
+
+// ── Exports ──────────────────────────────────────────────────────────────────
 
 module.exports = {
   createSession,
@@ -315,5 +386,5 @@ module.exports = {
   clientJoinSession,
   clientLeaveSession,
   isSessionAlive,
-  logStartupState,
+  reconnectOnStartup,
 };

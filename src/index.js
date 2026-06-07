@@ -39,6 +39,13 @@ async function main() {
 
   fs.mkdirSync(DATA_DIR, { recursive: true });
 
+  // Ensure the internal Docker network exists so workspace containers can be
+  // reached by name (e.g. opus-workspace-1:7681 for the terminal-agent).
+  const dockerService = require('./services/docker.service');
+  dockerService.ensureInternalNetwork().catch(err => {
+    console.warn('[startup] Internal network setup warning:', err.message);
+  });
+
   // Pre-pull the fallback workspace image in the background so it's
   // ready when the user creates their first project.
   const { docker: dockerClient } = require('./services/docker.service');
@@ -116,7 +123,6 @@ async function main() {
   }
 
   const terminal = require('./services/terminal.service');
-  terminal.logStartupState();
 
   io.on('connection', (socket) => {
     const session = socket.request.session;
@@ -195,6 +201,13 @@ async function main() {
       console.log(`[startup] WARNING: HOST_PROJECTS_DIR not set — workspace bind mounts use ${PROJECTS_DIR}`);
       console.log(`[startup] If running in Docker, set HOST_PROJECTS_DIR to the host-side projects path.`);
     }
+
+    // Reconnect to terminal-agents for any sessions that survived the restart.
+    // Run in parallel so the reconnect window is minimal before browser clients
+    // reattach (socket.io waits at least 1s to reconnect, giving us time).
+    terminal.reconnectOnStartup(io).catch(err => {
+      console.warn('[terminal] startup reconnect error:', err.message);
+    });
   });
 
   // Expose io for use by other modules
