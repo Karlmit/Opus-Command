@@ -5,6 +5,7 @@ import AppShell from './components/AppShell';
 import Setup from './pages/Setup';
 import Login from './pages/Login';
 import Projects from './pages/Projects';
+import ProjectDashboard from './pages/ProjectDashboard';
 
 function LoadingScreen() {
   return (
@@ -81,7 +82,7 @@ export default function App() {
         <Route path="terminal/*" element={<PlaceholderPage title="Terminal" />} />
         <Route path="git/*" element={<PlaceholderPage title="Git" />} />
         <Route path="settings/*" element={<PlaceholderPage title="Settings" />} />
-        <Route path="project/:id/*" element={<PlaceholderPage title="Project" />} />
+        <Route path="project/:id/*" element={<ProjectDashboard />} />
       </Route>
     </Routes>
   );
