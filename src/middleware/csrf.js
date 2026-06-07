@@ -11,8 +11,8 @@ function csrfMiddleware(req, res, next) {
     return next();
   }
 
-  // Skip CSRF for setup endpoint when no user exists yet (first-run)
-  if (req.path === '/api/setup' && !req.session.csrfToken) {
+  // Setup endpoint is self-protected (only works once, 403 after first run)
+  if (req.path === '/api/setup') {
     return next();
   }
 
