@@ -21,6 +21,9 @@
   flex-direction: column;
 }
 
-@media (max-width: 599px) {
+@media (max-width: 768px) {
   .app-shell { flex-direction: column; }
+
+  /* Hide the desktop status bar — info is in mobile nav */
+  .app-body > .status-bar { display: none; }
 }

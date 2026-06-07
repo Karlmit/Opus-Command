@@ -641,7 +641,83 @@
 .snapshot-tag { font-family: var(--font-mono); font-size: 10px; color: var(--color-text-primary); }
 .snapshot-label { font-size: 10px; color: var(--color-text-tertiary); }
 
-/* Mobile */
-@media (max-width: 700px) {
-  .cockpit-filetree { display: none; }
+/* Fix project footer class (used in JSX as cockpit-project-footer) */
+.cockpit-project-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-sm);
+  border-top: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+/* ── Mobile ─────────────────────────────────────── */
+@media (max-width: 768px) {
+  /* Hide desktop tab bar — mobile nav handles navigation */
+  .cockpit-tabs { display: none; }
+
+  /* ── Terminal view ── */
+  .cockpit[data-mobile-tab="terminal"] .cockpit-filetree,
+  .cockpit[data-mobile-tab="git"] .cockpit-filetree,
+  .cockpit[data-mobile-tab="settings"] .cockpit-filetree {
+    display: none;
+  }
+
+  /* ── Files view: tree expands to fill screen ── */
+  .cockpit[data-mobile-tab="files"] {
+    flex-direction: column;
+  }
+  .cockpit[data-mobile-tab="files"] .cockpit-filetree {
+    width: 100% !important;
+    min-width: 0 !important;
+    flex: 1;
+    border-right: none;
+  }
+  .cockpit[data-mobile-tab="files"] .cockpit-filetree.collapsed {
+    flex: none;
+    height: 36px;
+  }
+  .cockpit[data-mobile-tab="files"] .cockpit-main {
+    display: none;
+  }
+
+  /* Larger touch targets for file nodes */
+  .file-node {
+    height: 42px;
+    font-size: 14px;
+    padding-right: 16px;
+  }
+  .file-node-name { font-size: 14px; }
+
+  /* File tree header toolbar padding */
+  .filetree-header { height: 44px; padding: 0 12px; }
+
+  /* Slightly larger tap area for file tree buttons */
+  .ft-btn { padding: 4px 8px; font-size: 13px; }
+
+  /* Terminal padding smaller on mobile (more usable space) */
+  .terminal-instance { padding: 2px 4px; }
+
+  /* File editor toolbar taller for touch */
+  .file-editor-toolbar {
+    height: 52px;
+    padding: 0 var(--spacing-lg);
+    gap: var(--spacing-md);
+  }
+
+  /* Side panels fill fully on mobile */
+  .side-panel { width: 100% !important; }
+
+  /* Bigger workspace action buttons */
+  .ws-actions { gap: var(--spacing-sm); }
+  .ws-actions .btn { height: 40px; font-size: var(--font-size-base); }
+
+  /* Snapshot rows more tappable */
+  .snapshot-row { padding: 8px 0; }
+
+  /* Git file rows taller */
+  .git-file-row { height: 40px; padding: 0 8px; }
+
+  /* Cockpit project footer on mobile */
+  .cockpit-project-footer { padding: var(--spacing-md); }
 }

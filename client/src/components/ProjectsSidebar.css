@@ -10,7 +10,7 @@
   position: relative; /* needed for the resize handle */
 }
 
-@media (max-width: 700px) { .projects-sidebar { display: none; } }
+@media (max-width: 768px) { .projects-sidebar { display: none; } }
 
 /* ── Resize handle ─────────────────────────────── */
 .sidebar-resize-handle {

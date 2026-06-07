@@ -7,6 +7,7 @@ import { io } from 'socket.io-client';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../components/Toast';
 import { ProjectAvatar } from '../components/ProjectsSidebar';
+import { useMobileUI } from '../context/MobileUIContext';
 import '@xterm/xterm/css/xterm.css';
 import './ProjectCockpit.css';
 
@@ -504,12 +505,34 @@ export default function ProjectCockpit() {
   // Cleared alongside joinedSessions so a reconnect gets a fresh replay.
   const historyReplayed  = useRef(new Set());
 
-  // Handle ?tab= from context menu
+  // Mobile tab context
+  const { mobileTab, setMobileTab } = useMobileUI();
+  const prevMobileTab = useRef(null);
+
+  // Handle ?tab= from context menu (desktop right-click)
   useEffect(() => {
     const tab = searchParams.get('tab');
-    if (tab === 'settings') { setActiveTab('settings'); setSearchParams({}); }
-    else if (tab === 'git') { setActiveTab('git'); setSearchParams({}); }
+    if (tab === 'settings') { setActiveTab('settings'); activeRef.current = 'settings'; setSearchParams({}); }
+    else if (tab === 'git') { setActiveTab('git'); activeRef.current = 'git'; setSearchParams({}); }
   }, [searchParams]);
+
+  // Sync mobile tab → cockpit activeTab (only on mobile viewport)
+  useEffect(() => {
+    if (prevMobileTab.current === mobileTab) return;
+    prevMobileTab.current = mobileTab;
+    if (window.innerWidth > 768) return;
+    if (mobileTab === 'terminal') {
+      const first = termTabs[0];
+      if (first) activateTerm(first.id);
+    } else if (mobileTab === 'git') {
+      setActiveTab('git');
+      activeRef.current = 'git';
+    } else if (mobileTab === 'settings') {
+      setActiveTab('settings');
+      activeRef.current = 'settings';
+    }
+    // 'files' view is CSS-driven via data-mobile-tab attribute
+  }, [mobileTab, termTabs]);
 
   useEffect(() => { loadProject(); loadTree(); loadSessions();
     const t1 = setInterval(loadProject, 5000);
@@ -680,6 +703,7 @@ export default function ProjectCockpit() {
       } catch { addToast('Could not open file.', 'error'); return; }
     }
     setActiveTab(`file-${node.path}`); activeRef.current = `file-${node.path}`;
+    if (window.innerWidth <= 768) setMobileTab('terminal');
   }
 
   async function saveFile(path) {
@@ -709,7 +733,7 @@ export default function ProjectCockpit() {
   const showOverlay = activeFileTab || activeTab === 'settings' || activeTab === 'git';
 
   return (
-    <div className="cockpit">
+    <div className="cockpit" data-mobile-tab={mobileTab}>
       {/* File tree — collapsible */}
       <div className={`cockpit-filetree${treeCollapsed ? ' collapsed' : ''}`}>
         <div className="filetree-header">
@@ -798,7 +822,7 @@ export default function ProjectCockpit() {
               {activeFileTab?.type === 'text' && (
                 <div className="file-editor" onKeyDown={e => { if ((e.ctrlKey||e.metaKey) && e.key==='s') { e.preventDefault(); saveFile(activeFileTab.path); } }}>
                   <div className="file-editor-toolbar">
-                    <button className="btn btn-ghost" onClick={() => { const t = termTabs[0]; if (t) activateTerm(t.id); else setActiveTab(null); }}>← Terminal</button>
+                    <button className="btn btn-ghost" onClick={() => { const t = termTabs[0]; if (t) activateTerm(t.id); else setActiveTab(null); if (window.innerWidth <= 768) setMobileTab('files'); }}>← Files</button>
                     <span className="file-editor-name">{activeFileTab.name}</span>
                     <button className="btn btn-primary" onClick={() => saveFile(activeFileTab.path)}>Save</button>
                   </div>
@@ -812,7 +836,7 @@ export default function ProjectCockpit() {
               {activeFileTab?.type === 'image' && (
                 <div className="file-editor">
                   <div className="file-editor-toolbar">
-                    <button className="btn btn-ghost" onClick={() => { const t = termTabs[0]; if (t) activateTerm(t.id); }}>← Terminal</button>
+                    <button className="btn btn-ghost" onClick={() => { const t = termTabs[0]; if (t) activateTerm(t.id); if (window.innerWidth <= 768) setMobileTab('files'); }}>← Files</button>
                     <span className="file-editor-name">{activeFileTab.name}</span>
                   </div>
                   <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center', background:'var(--color-surface-elevated)', overflow:'auto', padding:'var(--spacing-lg)' }}>
