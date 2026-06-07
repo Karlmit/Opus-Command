@@ -108,6 +108,7 @@ export default function TerminalPage() {
   const [reconnecting, setReconnecting] = useState(false);
   const [reconnectTime, setReconnectTime] = useState(0);
   const [sessionDead, setSessionDead]   = useState(false);
+  const [proxyRestoring, setProxyRestoring] = useState(false);
 
   // xterm lives in refs — never re-created on re-render
   const terminalRef    = useRef(null); // DOM div
@@ -235,6 +236,7 @@ export default function TerminalPage() {
       terminalStateRef.current = 'detached';
       setReconnecting(true);
       setReconnectTime(0);
+      setProxyRestoring(false);
     }
 
     function onData({ sessionId, data }) {
@@ -261,10 +263,17 @@ export default function TerminalPage() {
       setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, aiState: state } : s));
     }
 
+    function onProxyRestoring({ sessionId }) {
+      if (sessionId === currentSession.current) {
+        setProxyRestoring(true);
+      }
+    }
+
     function onSessionAttached({ sessionId }) {
       if (sessionId === currentSession.current) {
         terminalStateRef.current = 'attached';
         setSessionDead(false);
+        setProxyRestoring(false);
         if (xtermRef.current) {
           xtermRef.current.options.cursorBlink = true;
         }
@@ -276,6 +285,7 @@ export default function TerminalPage() {
       if (sessionId === currentSession.current) {
         terminalStateRef.current = 'dead';
         setSessionDead(true);
+        setProxyRestoring(false);
         if (xtermRef.current) {
           xtermRef.current.options.cursorBlink = false;
           xtermRef.current.write('\r\n\x1b[31m[Session ended — workspace container stopped. Open a new terminal to continue.]\x1b[0m\r\n');
@@ -283,24 +293,26 @@ export default function TerminalPage() {
       }
     }
 
-    sock.on('connect',                onConnect);
-    sock.on('disconnect',             onDisconnect);
-    sock.on('terminal:data',          onData);
-    sock.on('terminal:scrollback',    onScrollback);
-    sock.on('terminal:exit',          onExit);
-    sock.on('terminal:ai-state',      onAiState);
+    sock.on('connect',                   onConnect);
+    sock.on('disconnect',                onDisconnect);
+    sock.on('terminal:data',             onData);
+    sock.on('terminal:scrollback',       onScrollback);
+    sock.on('terminal:exit',             onExit);
+    sock.on('terminal:ai-state',         onAiState);
+    sock.on('terminal:proxy-restoring',  onProxyRestoring);
     sock.on('terminal:session-attached', onSessionAttached);
-    sock.on('terminal:session-dead',  onSessionDead);
+    sock.on('terminal:session-dead',     onSessionDead);
 
     return () => {
-      sock.off('connect',                onConnect);
-      sock.off('disconnect',             onDisconnect);
-      sock.off('terminal:data',          onData);
-      sock.off('terminal:scrollback',    onScrollback);
-      sock.off('terminal:exit',          onExit);
-      sock.off('terminal:ai-state',      onAiState);
+      sock.off('connect',                   onConnect);
+      sock.off('disconnect',                onDisconnect);
+      sock.off('terminal:data',             onData);
+      sock.off('terminal:scrollback',       onScrollback);
+      sock.off('terminal:exit',             onExit);
+      sock.off('terminal:ai-state',         onAiState);
+      sock.off('terminal:proxy-restoring',  onProxyRestoring);
       sock.off('terminal:session-attached', onSessionAttached);
-      sock.off('terminal:session-dead',  onSessionDead);
+      sock.off('terminal:session-dead',     onSessionDead);
 
       if (currentSession.current) {
         sock.emit('terminal:leave', { sessionId: currentSession.current });
@@ -442,6 +454,12 @@ export default function TerminalPage() {
               <p className="terminal-dead-sub">Open a new terminal to continue.</p>
               <button className="btn btn-primary" onClick={createSession}>New Terminal</button>
             </div>
+          </div>
+        )}
+
+        {proxyRestoring && !sessionDead && (
+          <div className="terminal-reconnect-overlay">
+            <span className="terminal-reconnect-text">Restoring terminal connection…</span>
           </div>
         )}
 

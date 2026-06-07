@@ -31,6 +31,36 @@ const sessionClients = new Map();
 
 let _io = null; // set on first createSession / reconnectOnStartup call
 
+// ── Startup readiness gate ────────────────────────────────────────────────────
+// False until reconnectOnStartup() completes. join/reattach handlers in index.js
+// must await waitForProxyReady() before emitting session-dead or session-attached.
+
+let terminalProxyReady = false;
+const _proxyReadyResolvers = [];
+const _pendingInputQueue = []; // { type, sessionId, data?, cols?, rows? }
+
+function _markProxyReady() {
+  if (terminalProxyReady) return;
+  terminalProxyReady = true;
+  console.log('[terminal] proxy ready — flushing queued input/resize');
+  for (const item of _pendingInputQueue) {
+    if (item.type === 'input') _doWrite(item.sessionId, item.data);
+    else if (item.type === 'resize') _doResize(item.sessionId, item.cols, item.rows);
+  }
+  _pendingInputQueue.length = 0;
+  const resolvers = _proxyReadyResolvers.splice(0);
+  for (const resolve of resolvers) resolve();
+}
+
+function isProxyReady() {
+  return terminalProxyReady;
+}
+
+function waitForProxyReady() {
+  if (terminalProxyReady) return Promise.resolve();
+  return new Promise(resolve => _proxyReadyResolvers.push(resolve));
+}
+
 // ── URL helpers ──────────────────────────────────────────────────────────────
 
 function agentHttp(projectId) {
@@ -186,6 +216,7 @@ function _connectProxy(projectId, sessionId, io) {
 
 async function reconnectOnStartup(io) {
   _io = io;
+  console.log('[terminal] reconnectOnStartup: start');
 
   const db = getDB();
   let dbSessions;
@@ -197,47 +228,97 @@ async function reconnectOnStartup(io) {
 
   console.log(`[terminal] startup: ${dbSessions.length} session(s) in DB — probing agents`);
 
-  // Run all reconnect probes in parallel so the startup window is as short as possible
-  await Promise.allSettled(dbSessions.map(s => _tryReconnect(s, io)));
+  try {
+    // Run all reconnect probes in parallel so the startup window is as short as possible
+    await Promise.allSettled(dbSessions.map(s => _tryReconnect(s, io)));
+    console.log('[terminal] reconnectOnStartup: done');
+  } finally {
+    _markProxyReady();
+  }
 }
 
 async function _tryReconnect(session, io) {
   const projId = session.projectId;
-  try {
-    const res = await fetch(`${agentHttp(projId)}/sessions`, {
-      signal: AbortSignal.timeout(3000),
-    });
-    if (!res.ok) return;
+  const deadline = Date.now() + 25_000;
+  let attempt = 0;
 
-    const { sessions: agentSessions } = await res.json();
-    const agentSession = agentSessions.find(s => s.id === session.id && s.alive);
+  while (Date.now() < deadline) {
+    attempt++;
+    const remaining = Math.ceil((deadline - Date.now()) / 1000);
+    console.log(`[terminal] probe attempt ${attempt} for session ${session.id.slice(0, 8)} → ${agentHttp(projId)} (${remaining}s left)`);
 
-    if (agentSession) {
-      console.log(`[terminal] reconnecting to surviving session ${session.id.slice(0, 8)}`);
-      _connectProxy(projId, session.id, io);
-    } else {
-      console.log(`[terminal] session ${session.id.slice(0, 8)} not found in agent — dead`);
+    try {
+      const res = await fetch(`${agentHttp(projId)}/sessions`, {
+        signal: AbortSignal.timeout(3000),
+      });
+
+      if (!res.ok) {
+        console.log(`[terminal] probe ${session.id.slice(0, 8)}: HTTP ${res.status} — retrying`);
+        await _sleep(2000);
+        continue;
+      }
+
+      const { sessions: agentSessions } = await res.json();
+      const agentSession = agentSessions.find(s => s.id === session.id && s.alive);
+
+      if (agentSession) {
+        console.log(`[terminal] probe ${session.id.slice(0, 8)}: alive — connecting proxy`);
+        _connectProxy(projId, session.id, io);
+      } else {
+        console.log(`[terminal] probe ${session.id.slice(0, 8)}: not found alive in agent — session dead`);
+      }
+      return; // definitive answer — stop retrying
+    } catch (err) {
+      const rem = Math.ceil((deadline - Date.now()) / 1000);
+      console.log(`[terminal] probe ${session.id.slice(0, 8)}: ${err.message} — retrying (${rem}s left)`);
+      await _sleep(2000);
     }
-  } catch {
-    // workspace container not running — session is dead, leave DB record for dead overlay
   }
+
+  console.log(`[terminal] probe ${session.id.slice(0, 8)}: giving up after 25s`);
+}
+
+function _sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 // ── I/O operations ───────────────────────────────────────────────────────────
 
-function writeToSession(sessionId, data) {
+function _doWrite(sessionId, data) {
   const proxy = activeProxies.get(sessionId);
   if (proxy?.ws?.readyState === WebSocket.OPEN) {
     proxy.ws.send(JSON.stringify({ type: 'input', data }));
+  } else {
+    console.warn(`[terminal] INPUT DROPPED — no active proxy for session ${sessionId.slice(0, 8)}`);
   }
+}
+
+function _doResize(sessionId, cols, rows) {
+  const proxy = activeProxies.get(sessionId);
+  if (proxy?.ws?.readyState === WebSocket.OPEN) {
+    proxy.ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+  } else {
+    console.warn(`[terminal] RESIZE DROPPED — no active proxy for session ${sessionId.slice(0, 8)}`);
+  }
+}
+
+function writeToSession(sessionId, data) {
+  if (!terminalProxyReady) {
+    console.log(`[terminal] input queued (proxy not ready) for session ${sessionId.slice(0, 8)}`);
+    _pendingInputQueue.push({ type: 'input', sessionId, data });
+    return;
+  }
+  _doWrite(sessionId, data);
 }
 
 function resizeSession(sessionId, cols, rows) {
   if (!cols || !rows || cols < 1 || rows < 1) return;
-  const proxy = activeProxies.get(sessionId);
-  if (proxy?.ws?.readyState === WebSocket.OPEN) {
-    proxy.ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+  if (!terminalProxyReady) {
+    console.log(`[terminal] resize queued (proxy not ready) for session ${sessionId.slice(0, 8)}`);
+    _pendingInputQueue.push({ type: 'resize', sessionId, cols, rows });
+    return;
   }
+  _doResize(sessionId, cols, rows);
 }
 
 function isSessionAlive(sessionId) {
@@ -387,4 +468,6 @@ module.exports = {
   clientLeaveSession,
   isSessionAlive,
   reconnectOnStartup,
+  isProxyReady,
+  waitForProxyReady,
 };

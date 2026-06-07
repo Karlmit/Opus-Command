@@ -42,9 +42,6 @@ async function main() {
   // Ensure the internal Docker network exists so workspace containers can be
   // reached by name (e.g. opus-workspace-1:7681 for the terminal-agent).
   const dockerService = require('./services/docker.service');
-  dockerService.ensureInternalNetwork().catch(err => {
-    console.warn('[startup] Internal network setup warning:', err.message);
-  });
 
   // Pre-pull the fallback workspace image in the background so it's
   // ready when the user creates their first project.
@@ -133,9 +130,16 @@ async function main() {
     console.log(`[socket] client connected: ${socket.id}`);
 
     // terminal:join — client explicitly wants scrollback (fresh xterm, session switch, project nav).
-    socket.on('terminal:join', ({ sessionId }) => {
+    socket.on('terminal:join', async ({ sessionId }) => {
       socket.join(`session:${sessionId}`);
       terminal.clientJoinSession(sessionId, socket.id);
+
+      if (!terminal.isProxyReady()) {
+        console.log(`[socket] terminal:join before proxy ready — holding, session=${sessionId.slice(0,8)}`);
+        socket.emit('terminal:proxy-restoring', { sessionId });
+        await terminal.waitForProxyReady();
+        if (!socket.connected) return;
+      }
 
       const alive = terminal.isSessionAlive(sessionId);
       console.log(`[socket] join session=${sessionId.slice(0,8)} socket=${socket.id.slice(0,8)} pty_alive=${alive}`);
@@ -156,9 +160,16 @@ async function main() {
 
     // terminal:reattach — socket reconnect within same browser session.
     // Joins the room for live output but sends NO scrollback (xterm already has it).
-    socket.on('terminal:reattach', ({ sessionId }) => {
+    socket.on('terminal:reattach', async ({ sessionId }) => {
       socket.join(`session:${sessionId}`);
       terminal.clientJoinSession(sessionId, socket.id);
+
+      if (!terminal.isProxyReady()) {
+        console.log(`[socket] terminal:reattach before proxy ready — holding, session=${sessionId.slice(0,8)}`);
+        socket.emit('terminal:proxy-restoring', { sessionId });
+        await terminal.waitForProxyReady();
+        if (!socket.connected) return;
+      }
 
       const alive = terminal.isSessionAlive(sessionId);
       console.log(`[socket] reattach session=${sessionId.slice(0,8)} socket=${socket.id.slice(0,8)} pty_alive=${alive}`);
@@ -202,11 +213,24 @@ async function main() {
       console.log(`[startup] If running in Docker, set HOST_PROJECTS_DIR to the host-side projects path.`);
     }
 
-    // Reconnect to terminal-agents for any sessions that survived the restart.
-    // Run in parallel so the reconnect window is minimal before browser clients
-    // reattach (socket.io waits at least 1s to reconnect, giving us time).
-    terminal.reconnectOnStartup(io).catch(err => {
-      console.warn('[terminal] startup reconnect error:', err.message);
+    // Ensure the internal Docker network exists, then reconnect to surviving
+    // terminal-agent sessions. Both must complete before join/reattach handlers
+    // will respond with final status — browser sockets that arrive early receive
+    // terminal:proxy-restoring and wait via waitForProxyReady().
+    (async () => {
+      console.log('[startup] ensureInternalNetwork: start');
+      try {
+        await dockerService.ensureInternalNetwork();
+        console.log('[startup] ensureInternalNetwork: done');
+      } catch (err) {
+        console.warn('[startup] ensureInternalNetwork warning:', err.message);
+      }
+      await terminal.reconnectOnStartup(io);
+    })().catch(err => {
+      console.error('[startup] Startup sequence error:', err.message);
+      // reconnectOnStartup calls _markProxyReady() in its finally block,
+      // so this catch only fires if ensureInternalNetwork itself throws in a
+      // way that prevents reconnectOnStartup from running at all.
     });
   });
 
