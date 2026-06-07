@@ -330,7 +330,6 @@ export default function ProjectsSidebar() {
                 <ProjectAvatar
                   project={project}
                   size={34}
-                  onClick={isActive ? e => { e.stopPropagation(); setAvatar(project); } : null}
                 />
                 <span className={`sidebar-status-dot status-${project.status}`} />
                 {project.aiWaiting > 0 && <span className="sidebar-ai-dot" />}

@@ -17,27 +17,67 @@ function getSocket() {
 }
 
 /* ── File tree ─────────────────────────────────── */
-function FileIcon({ name, isDir }) {
-  if (isDir) return <span className="fi dir">›</span>;
-  const ext = name.split('.').pop()?.toLowerCase();
-  const map = { js:'js',ts:'ts',jsx:'jsx',tsx:'tsx',py:'py',json:'{}',md:'md',css:'css',html:'html',sh:'sh' };
-  return <span className="fi">{map[ext] || '·'}</span>;
+const FILE_COLORS = {
+  // Web
+  js:   '#f0db4f', mjs: '#f0db4f', cjs: '#f0db4f',
+  ts:   '#3178c6',
+  jsx:  '#61dafb', tsx: '#61dafb',
+  css:  '#6699ff', scss: '#cc6699', sass: '#cc6699',
+  html: '#e34c26', htm: '#e34c26',
+  // Data / config
+  json: '#f5a623', jsonc: '#f5a623',
+  yaml: '#cb171e', yml: '#cb171e',
+  toml: '#9c4221', ini: '#9c4221', env: '#5bb974',
+  xml:  '#d97706',
+  // Docs
+  md: '#4b9eff', mdx: '#4b9eff', txt: '#aaa',
+  // Scripts
+  sh: '#4eaa25', bash: '#4eaa25', zsh: '#4eaa25', ps1: '#0178d4',
+  // Languages
+  py: '#3572A5', rb: '#cc342d', go: '#00add8', rs: '#ce4a2e',
+  java: '#b07219', kt: '#A97BFF', swift: '#F05138',
+  c: '#55a1b7', cpp: '#f34b7d', h: '#55a1b7',
+  cs: '#178600', php: '#4F5D95',
+  sql: '#e38c00',
+  // Images (shown but not editable)
+  png: '#b088f0', jpg: '#b088f0', jpeg: '#b088f0',
+  gif: '#b088f0', svg: '#ffb13b', webp: '#b088f0',
+};
+
+function FileIcon({ name, isDir, open }) {
+  if (isDir) {
+    return (
+      <svg className="fi-icon fi-dir" viewBox="0 0 16 16" fill="currentColor">
+        {open
+          ? <path d="M1.5 3a.5.5 0 0 0-.5.5v9a.5.5 0 0 0 .5.5h13a.5.5 0 0 0 .5-.5V6a.5.5 0 0 0-.5-.5H7.621a.5.5 0 0 1-.44-.265L6.161 3.5H1.5z"/>
+          : <path d="M.54 3.87.5 3a2 2 0 0 1 2-2h3.672a2 2 0 0 1 1.414.586l.828.828A2 2 0 0 0 9.828 3h3.982a2 2 0 0 1 1.992 2.181L15.546 12a2 2 0 0 1-1.992 1.819H1.546a2 2 0 0 1-1.992-1.82L.54 3.87z"/>}
+      </svg>
+    );
+  }
+  const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
+  const color = FILE_COLORS[ext] || '#888';
+  return (
+    <svg className="fi-icon fi-file" viewBox="0 0 16 16" style={{ color }} fill="currentColor">
+      <path d="M4 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V4.707A1 1 0 0 0 13.707 4L10 .293A1 1 0 0 0 9.293 0H4zm5.5 1.5v2a1 1 0 0 0 1 1h2l-3-3z"/>
+    </svg>
+  );
 }
 
 function FileNode({ node, depth, projectId, csrfToken, onOpenFile, activeFilePath, onRefresh }) {
-  const [open, setOpen] = useState(depth === 0);
+  const [open, setOpen] = useState(depth < 1);
   const [menu, setMenu] = useState(null);
   const { addToast } = useToast();
   const isDir = node.type === 'dir';
+  const isActive = activeFilePath === node.path;
 
   async function create(type) {
     setMenu(null);
     const name = prompt(type === 'dir' ? 'Folder name:' : 'File name:');
     if (!name) return;
-    const path = node.type === 'dir' ? `${node.path}/${name}` : name;
+    const filePath = isDir ? `${node.path}/${name}` : name;
     const r = await fetch(`/api/projects/${projectId}/files/create`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-      body: JSON.stringify({ filePath: path, type }),
+      body: JSON.stringify({ filePath, type }),
     });
     if ((await r.json()).success) onRefresh(); else addToast('Create failed.', 'error');
   }
@@ -53,21 +93,40 @@ function FileNode({ node, depth, projectId, csrfToken, onOpenFile, activeFilePat
   }
 
   return (
-    <div>
+    <div className="file-node-wrap">
       <div
-        className={`file-node${activeFilePath === node.path ? ' active' : ''}`}
-        style={{ paddingLeft: depth * 14 + 8 }}
+        className={`file-node${isActive ? ' active' : ''}`}
+        style={{ paddingLeft: depth * 16 + 6 }}
         onClick={() => isDir ? setOpen(o => !o) : onOpenFile(node)}
-        onContextMenu={e => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY }); }}
+        onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setMenu({ x: e.clientX, y: e.clientY }); }}
       >
-        {isDir && <span className={`chevron${open ? ' open' : ''}`}>›</span>}
-        <FileIcon name={node.name} isDir={isDir} />
+        {isDir && (
+          <span className={`fn-chevron${open ? ' open' : ''}`}>
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
+              <path d="M3 2l4 3-4 3V2z"/>
+            </svg>
+          </span>
+        )}
+        {!isDir && <span className="fn-chevron-gap" />}
+        <FileIcon name={node.name} isDir={isDir} open={open} />
         <span className="file-node-name">{node.name}</span>
       </div>
-      {isDir && open && node.children?.map(c =>
-        <FileNode key={c.path} node={c} depth={depth+1} projectId={projectId} csrfToken={csrfToken}
-          onOpenFile={onOpenFile} activeFilePath={activeFilePath} onRefresh={onRefresh} />
+
+      {isDir && open && (
+        <div className="file-node-children">
+          {node.children?.length === 0 && (
+            <div className="file-node-empty" style={{ paddingLeft: (depth + 1) * 16 + 22 }}>
+              Empty
+            </div>
+          )}
+          {node.children?.map(c => (
+            <FileNode key={c.path} node={c} depth={depth + 1}
+              projectId={projectId} csrfToken={csrfToken}
+              onOpenFile={onOpenFile} activeFilePath={activeFilePath} onRefresh={onRefresh} />
+          ))}
+        </div>
       )}
+
       {menu && (
         <>
           <div className="context-backdrop" onClick={() => setMenu(null)} />
@@ -122,12 +181,38 @@ function TerminalInstance({ sessionId, active, termRefs }) {
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon());
 
-    // Wait for Cascadia Mono to load so xterm measures the correct glyph width.
-    // Wrong glyph width → wrong col count → box-drawing characters misalign.
+    let ro = null;
+    const onWinResize = () => { try { fit.fit(); } catch (_) {} };
+
+    const doFit = () => {
+      try { fit.fit(); } catch (_) {}
+      const sock = getSocket();
+      if (term.cols && term.rows && sock.connected) {
+        sock.emit('terminal:resize', { sessionId, cols: term.cols, rows: term.rows });
+      }
+    };
+
+    // Open terminal — wait for font so glyph width is measured correctly
     const open = () => {
       term.open(divRef.current);
-      requestAnimationFrame(() => { try { fit.fit(); } catch (_) {} });
+      // rAF: ensures the element is painted before measuring
+      requestAnimationFrame(() => {
+        doFit();
+
+        // ResizeObserver MUST be set up AFTER open() — before open, there
+        // is no canvas to resize, and fit.fit() would throw.
+        ro = new ResizeObserver(doFit);
+        ro.observe(divRef.current);
+
+        // Also observe the parent container — catches layout changes from
+        // sidebar resize and file tree collapse that reflow the flex tree
+        const parent = divRef.current?.parentElement;
+        if (parent) ro.observe(parent);
+
+        window.addEventListener('resize', onWinResize);
+      });
     };
+
     if (typeof document !== 'undefined' && document.fonts?.ready) {
       document.fonts.ready.then(open);
     } else {
@@ -138,20 +223,6 @@ function TerminalInstance({ sessionId, active, termRefs }) {
       if (getSocket().connected) getSocket().emit('terminal:input', { sessionId, data });
     });
 
-    // Refit on container resize (handles sidebar collapse, panel resize)
-    const ro = new ResizeObserver(() => {
-      try { fit.fit(); } catch (_) {}
-      const sock = getSocket();
-      if (term.cols && term.rows && sock.connected) {
-        sock.emit('terminal:resize', { sessionId, cols: term.cols, rows: term.rows });
-      }
-    });
-    ro.observe(divRef.current);
-
-    // Window resize fallback
-    const onWinResize = () => { try { fit.fit(); } catch (_) {} };
-    window.addEventListener('resize', onWinResize);
-
     termRefs.current[sessionId] = {
       write:   d  => term.write(d),
       clear:   () => term.clear(),
@@ -161,7 +232,7 @@ function TerminalInstance({ sessionId, active, termRefs }) {
     };
 
     return () => {
-      ro.disconnect();
+      ro?.disconnect();
       window.removeEventListener('resize', onWinResize);
       term.dispose();
       delete termRefs.current[sessionId];

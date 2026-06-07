@@ -92,45 +92,66 @@
 }
 
 /* File nodes */
+.file-node-wrap { position: relative; }
+
 .file-node {
   display: flex;
   align-items: center;
-  gap: 5px;
-  height: 26px;
+  gap: 4px;
+  height: 28px;
   cursor: pointer;
   color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
+  font-size: 13px;
   user-select: none;
-  transition: background 100ms;
-  padding-right: 8px;
+  transition: background 80ms;
+  padding-right: 10px;
+  border-radius: 4px;
+  margin: 0 3px;
 }
 
 .file-node:hover { background: var(--color-surface-elevated); color: var(--color-text-primary); }
-.file-node.active { background: var(--color-surface-elevated); color: var(--color-accent); }
+.file-node.active { background: rgba(59,130,246,0.12); color: var(--color-text-primary); }
 
-.chevron {
-  font-size: 12px;
-  color: var(--color-text-dim);
-  width: 12px;
-  transition: transform 150ms;
-  display: inline-block;
-}
-.chevron.open { transform: rotate(90deg); }
-
-.fi {
-  font-size: 11px;
-  width: 16px;
-  text-align: center;
+/* Chevron arrow for folders */
+.fn-chevron {
+  width: 14px;
+  min-width: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: var(--color-text-dim);
   flex-shrink: 0;
+  transition: transform 120ms ease;
 }
-.fi.dir { color: var(--color-warning); font-size: 8px; }
+.fn-chevron.open { transform: rotate(90deg); }
+.fn-chevron-gap { width: 14px; min-width: 14px; flex-shrink: 0; }
 
+/* SVG file / folder icon */
+.fi-icon {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+.fi-dir { color: #e8a838; }
+
+/* File name */
 .file-node-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.file-node-children { }
+
+.file-node-empty {
+  font-size: 11px;
+  color: var(--color-text-dim);
+  padding: 3px 0;
+  font-style: italic;
 }
 
 /* Project info strip at bottom of file tree */

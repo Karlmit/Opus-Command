@@ -37,7 +37,7 @@ function buildTree(dir, root, depth = 0) {
         const fullPath = path.join(dir, entry.name);
         const relativePath = path.relative(root, fullPath);
         if (entry.isDirectory()) {
-          return { name: entry.name, path: relativePath, type: 'dir', children: [] };
+          return { name: entry.name, path: relativePath, type: 'dir', children: buildTree(fullPath, root, depth + 1) };
         }
         return { name: entry.name, path: relativePath, type: 'file' };
       });
