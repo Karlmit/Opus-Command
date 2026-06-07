@@ -367,6 +367,29 @@
 .avatar-color-swatch:hover { transform: scale(1.1); }
 .avatar-color-swatch.selected { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 
+.color-wheel-btn {
+  background: conic-gradient(
+    hsl(0 100% 55%), hsl(45 100% 55%), hsl(90 100% 45%),
+    hsl(135 100% 45%), hsl(180 100% 45%), hsl(225 100% 55%),
+    hsl(270 100% 60%), hsl(315 100% 55%), hsl(360 100% 55%)
+  );
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.color-wheel-btn input[type="color"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+  border: none;
+  padding: 0;
+}
+
 .avatar-emoji-grid {
   display: flex;
   flex-wrap: wrap;

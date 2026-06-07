@@ -12,7 +12,12 @@ const MAX_WIDTH       = 360;
 
 /* ── Avatar helpers ─────────────────────────────── */
 const COLORS = ['#6366f1','#8b5cf6','#ec4899','#ef4444','#f59e0b','#22c55e','#06b6d4','#3b82f6','#64748b','#92400e'];
-const EMOJIS = ['🚀','💡','🔥','⚡','🎯','🛠️','🌊','🦋','🌙','⭐','💎','🎮','🧩','🔮','🐉','🌿','🎨','🤖'];
+const EMOJIS = [
+  '🚀','💡','🔥','⚡','🎯','🛠️','🌊','🦋','🌙','⭐',
+  '💎','🎮','🧩','🔮','🐉','🌿','🎨','🤖','🦄','🐙',
+  '🦊','🦁','🐸','🦝','🌸','🍕','👾','💀','🎸','🎲',
+  '🛸','🌋','🌈','☄️','🌀','🦈','🦅','⚔️','🎭','🔑',
+];
 function defaultColor(id) { return COLORS[(id - 1) % COLORS.length]; }
 
 // Parses avatar string into { emoji, color }.
@@ -152,6 +157,7 @@ function AvatarPickerForm({ project, csrfToken, onSaved, onClose }) {
   const parsed = parseAvatar(project.avatar, project.id);
   const [emoji, setEmoji] = useState(parsed.emoji);
   const [color, setColor] = useState(parsed.color);
+  const [customColor, setCustomColor] = useState('');
   const [saving, setSaving] = useState(false);
 
   const initials = project.name.slice(0, 2).toUpperCase();
@@ -188,9 +194,23 @@ function AvatarPickerForm({ project, csrfToken, onSaved, onClose }) {
       <div className="avatar-section-title">Color</div>
       <div className="avatar-color-grid">
         {COLORS.map(c => (
-          <button key={c} className={`avatar-color-swatch${color === c ? ' selected' : ''}`}
-            style={{ background: c }} onClick={() => setColor(c)} aria-label={c} />
+          <button key={c} className={`avatar-color-swatch${color === c && !customColor ? ' selected' : ''}`}
+            style={{ background: c }} onClick={() => { setColor(c); setCustomColor(''); }} aria-label={c} />
         ))}
+        <label
+          className={`avatar-color-swatch color-wheel-btn${customColor ? ' selected' : ''}`}
+          htmlFor="sidebar-custom-color"
+          aria-label="Custom color"
+          title="Custom color"
+        >
+          <input
+            id="sidebar-custom-color"
+            type="color"
+            value={customColor || color}
+            onChange={e => { setCustomColor(e.target.value); setColor(e.target.value); }}
+            tabIndex={-1}
+          />
+        </label>
       </div>
 
       <div className="avatar-section-title">Emoji</div>

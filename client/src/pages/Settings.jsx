@@ -266,7 +266,7 @@ function UpdatesSection({ csrfToken }) {
       <h2 className="settings-section-title">UPDATES</h2>
       <div className="settings-info-row">
         <span className="settings-label">Current version</span>
-        <span className="settings-value font-mono">v{version}</span>
+        <span className="settings-value font-mono">{version.startsWith('v') ? version : `v${version}`}</span>
       </div>
 
       <div style={{ display: 'flex', gap: 'var(--spacing-sm)', flexWrap: 'wrap', alignItems: 'center' }}>
