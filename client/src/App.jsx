@@ -10,6 +10,7 @@ import TerminalPage from './pages/Terminal';
 import Settings from './pages/Settings';
 import FilesPage from './pages/Files';
 import GitPage from './pages/Git';
+import MobileProjectStatus from './pages/MobileProjectStatus';
 
 function LoadingScreen() {
   return (
