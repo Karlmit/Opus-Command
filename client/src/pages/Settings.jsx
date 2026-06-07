@@ -287,15 +287,15 @@ function UpdatesSection({ csrfToken }) {
           ) : updateAvailable ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               <p className="update-available">
-                {checkResult.digestChanged && !isNewer(checkResult.current, checkResult.latest)
-                  ? 'New image available — same version, rebuilt on GHCR'
-                  : `Update available — v${semver(checkResult.current)} → v${checkResult.latest}`
+                {isNewer(checkResult.current, checkResult.latest)
+                  ? `Update available — v${semver(checkResult.current)} → v${checkResult.latest}`
+                  : 'New build available — updated code has been published'
                 }
-                {checkResult.url && <>{' '}<a href={checkResult.url} target="_blank" rel="noopener noreferrer" className="update-link">Release notes</a></>}
+                {checkResult.url && <>{' '}<a href={checkResult.url} target="_blank" rel="noopener noreferrer" className="update-link">What's new</a></>}
               </p>
               {checkResult.localHash && checkResult.remoteHash && (
                 <p style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--font-size-xs)', color: 'var(--color-text-dim)' }}>
-                  running: {checkResult.localHash} → latest: {checkResult.remoteHash}
+                  {checkResult.localHash} → {checkResult.remoteHash}
                 </p>
               )}
             </div>
