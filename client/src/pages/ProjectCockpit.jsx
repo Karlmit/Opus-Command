@@ -10,6 +10,7 @@ import { useMobileUI } from '../context/MobileUIContext';
 import { useDevice } from '../context/DeviceContext';
 import { getSocket } from '../lib/socket';
 import MobileTerminalView from '../components/MobileTerminalView';
+import GitPage from './Git';
 import '@xterm/xterm/css/xterm.css';
 import './ProjectCockpit.css';
 
@@ -879,12 +880,7 @@ export default function ProjectCockpit() {
               )}
 
               {/* Git panel */}
-              {activeTab === 'git' && (
-                <div className="side-panel">
-                  <div className="side-panel-header">GIT</div>
-                  <GitPanel projectId={projectId} csrfToken={csrfToken} addToast={addToast} />
-                </div>
-              )}
+              {activeTab === 'git' && <GitPage />}
             </div>
           )}
         </div>
