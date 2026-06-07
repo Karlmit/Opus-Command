@@ -11,17 +11,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install the latest Claude Code CLI
-# npm and npx are included with node:20-slim
 RUN npm install -g @anthropic-ai/claude-code
 
 # Smoke-test node/npm — skip claude --version as it can fail non-interactively
 RUN node --version && npm --version && npx --version
 
-WORKDIR /workspace
+# Workspace shell config — applied to every interactive bash session via /etc/bash.bashrc
+# 1. PATH: home volume bin dirs always take precedence over system dirs
+# 2. npm prefix: global installs land in ~/.npm-global (home volume) not /usr/local
+# 3. bare `cd` returns to /workspace (project root) not /root (home volume)
+RUN printf '\n# Opus Command workspace\n\
+export PATH="$HOME/bin:$HOME/.npm-global/bin:$HOME/.local/bin:$PATH"\n\
+export NPM_CONFIG_PREFIX="$HOME/.npm-global"\n\
+cd() { builtin cd "${@:-/workspace}"; }\n' >> /etc/bash.bashrc
 
-# Make bare `cd` always return to the project root (/workspace),
-# not to the home volume (/root). Claude Code config still lives in /root.
-# /etc/bash.bashrc is sourced by every interactive bash session.
-RUN echo 'cd() { builtin cd "${@:-/workspace}"; }' >> /etc/bash.bashrc
+# Bundle the CLAUDE.md template so the startup command can copy it to ~/.claude/
+COPY CLAUDE.md /etc/opus-command/CLAUDE.md
+
+WORKDIR /workspace
 
 CMD ["/bin/bash"]

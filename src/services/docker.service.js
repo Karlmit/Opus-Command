@@ -66,20 +66,25 @@ async function createWorkspaceContainer(projectId, folderPath) {
     await existing.remove();
   } catch (_) {}
 
+  // Build startup script — runs once on container start to initialise the home volume
+  const initScript = [
+    'mkdir -p ~/.claude ~/bin ~/.npm-global',
+    '[ -f ~/.claude/CLAUDE.md ] || cp /etc/opus-command/CLAUDE.md ~/.claude/CLAUDE.md 2>/dev/null || true',
+    '[ -f ~/.npmrc ] || echo "prefix=${HOME}/.npm-global" > ~/.npmrc',
+  ].join('; ');
+
+  const fallbackInit = image === FALLBACK_IMAGE
+    ? 'command -v claude || npm install -g @anthropic-ai/claude-code --quiet 2>&1 | tail -1 || true; ' +
+      'grep -q "Opus Command" /etc/bash.bashrc 2>/dev/null || ' +
+      'printf \'\\nexport PATH="$HOME/bin:$HOME/.npm-global/bin:$HOME/.local/bin:$PATH"\\n' +
+      'export NPM_CONFIG_PREFIX="$HOME/.npm-global"\\n' +
+      'cd() { builtin cd "${@:-/workspace}"; }\\n\' >> /etc/bash.bashrc; '
+    : '';
+
   const container = await docker.createContainer({
     name,
     Image: image,
-    // Always override CMD with a keepalive — bash exits immediately without
-    // a TTY attached, which would cause Docker to restart the container in a loop.
-    // For the fallback image, also install Claude Code on first start.
-    Cmd: ['bash', '-c',
-      image === FALLBACK_IMAGE
-        ? 'command -v claude || npm install -g @anthropic-ai/claude-code --quiet 2>&1 | tail -1 || true; ' +
-          'grep -q "Opus Command" /etc/bash.bashrc 2>/dev/null || ' +
-          'echo \'cd() { builtin cd "${@:-/workspace}"; }\' >> /etc/bash.bashrc; ' +
-          'while true; do sleep 60; done'
-        : 'while true; do sleep 60; done'
-    ],
+    Cmd: ['bash', '-c', fallbackInit + initScript + '; while true; do sleep 60; done'],
     Env: userEnv,
     HostConfig: {
       Binds: [
