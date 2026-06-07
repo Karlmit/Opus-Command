@@ -253,8 +253,12 @@ router.get('/snapshots', requireAuth, async (req, res) => {
       `git -C '${root}' tag -l "snapshot/*" --sort=-creatordate --format="%(refname:short)|%(creatordate:iso)|%(subject)" 2>/dev/null`
     );
     const snapshots = result.stdout.split('\n').filter(Boolean).map(line => {
-      const [tag, date, ...labelParts] = line.split('|');
-      return { tag: tag.trim(), date: date?.trim(), label: labelParts.join('|').trim() };
+      const [tag, date, ...msgParts] = line.split('|');
+      const fullMsg = msgParts.join('|').trim();
+      // Message is "ts: label" or just "ts" — extract the human-written label only
+      const colonIdx = fullMsg.indexOf(': ');
+      const label = colonIdx >= 0 ? fullMsg.slice(colonIdx + 2) : '';
+      return { tag: tag.trim(), date: date?.trim(), label };
     });
     res.json({ snapshots });
   } catch {
@@ -274,7 +278,10 @@ router.post('/restore', requireAuth, async (req, res) => {
   const safeTag = tag.replace(/'/g, "\\'");
   try {
     const root = await getGitRoot(contName);
-    await execInContainer(contName, `git -C '${root}' checkout '${safeTag}' -- . 2>&1`);
+    // checkout restores tracked files; clean removes files added after the snapshot
+    await execInContainer(contName,
+      `git -C '${root}' checkout '${safeTag}' -- . 2>&1 && git -C '${root}' clean -fd 2>&1`
+    );
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: `Git operation failed: ${err.message}` });

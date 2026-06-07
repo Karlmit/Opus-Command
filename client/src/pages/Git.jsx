@@ -367,12 +367,12 @@ export default function GitPage() {
   }
 
   async function handleSnapshot() {
-    const label = prompt('Snapshot label (optional):') ?? undefined;
-    if (label === null) return;
+    const label = prompt('Snapshot label (optional):');
+    if (label === null) return;  // user pressed Cancel
     const res = await fetch(`/api/projects/${projectId}/git/snapshot`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-      body: JSON.stringify({ label }),
+      body: JSON.stringify({ label: label.trim() || undefined }),
     });
     const data = await res.json();
     if (data.success) { addToast(`Snapshot: ${data.tag}`); loadSnapshots(); }
