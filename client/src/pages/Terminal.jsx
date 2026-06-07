@@ -18,6 +18,12 @@ function getSocket() {
   return socket;
 }
 
+// Terminal state machine values:
+//   connecting  — join/reattach sent, waiting for server response
+//   attached    — server confirmed PTY is live
+//   detached    — socket disconnected (transient)
+//   dead        — server confirmed PTY is gone (session orphaned after restart)
+
 /* ── Terminal Tab ── */
 function TerminalTab({ session, active, onSelect, onRename, onClose }) {
   const [renaming, setRenaming] = useState(false);
@@ -101,6 +107,7 @@ export default function TerminalPage() {
   const [activeSessionId, setActive]    = useState(null);
   const [reconnecting, setReconnecting] = useState(false);
   const [reconnectTime, setReconnectTime] = useState(0);
+  const [sessionDead, setSessionDead]   = useState(false);
 
   // xterm lives in refs — never re-created on re-render
   const terminalRef    = useRef(null); // DOM div
@@ -109,6 +116,8 @@ export default function TerminalPage() {
   const currentSession = useRef(null); // currently joined session ID
   // session ID queued for join while socket was disconnected
   const pendingJoinRef = useRef(null);
+  // terminal state: 'connecting' | 'attached' | 'detached' | 'dead'
+  const terminalStateRef = useRef('connecting');
 
   /* ── 1. Initialize xterm once the DOM div mounts ── */
   useEffect(() => {
@@ -139,17 +148,25 @@ export default function TerminalPage() {
     xtermRef.current   = term;
     fitAddonRef.current = fitAddon;
 
-    // Keyboard → socket
+    // Keyboard → socket; blocked when session is dead
     term.onData(data => {
+      if (terminalStateRef.current === 'dead') {
+        console.log('[terminal] input blocked: session is dead');
+        return;
+      }
       const sock = getSocket();
       if (currentSession.current && sock.connected) {
         sock.emit('terminal:input', { sessionId: currentSession.current, data });
       }
     });
 
-    // Resize observer → fit + notify server
+    // Resize observer → fit + notify server; blocked when session is dead
     const ro = new ResizeObserver(() => {
       try { fitAddon.fit(); } catch (_) {}
+      if (terminalStateRef.current === 'dead') {
+        console.log('[terminal] resize blocked: session is dead');
+        return;
+      }
       if (currentSession.current && term.cols > 0 && term.rows > 0) {
         getSocket().emit('terminal:resize', {
           sessionId: currentSession.current,
@@ -171,6 +188,7 @@ export default function TerminalPage() {
   /* ── doJoin: emit terminal:join and fit/resize the PTY ── */
   function doJoin(sessionId) {
     const sock = getSocket();
+    console.log('[terminal] sending terminal:join for', sessionId.slice(0, 8));
     sock.emit('terminal:join', { sessionId });
     // Two rAF cycles ensure the div is painted and measurable before fitting
     requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -189,14 +207,18 @@ export default function TerminalPage() {
     const sock = getSocket();
 
     function onConnect() {
+      console.log('[terminal] socket connected');
       setReconnecting(false);
       const pending = pendingJoinRef.current;
       if (pending) {
         // selectSession was called while disconnected — complete the join now
         pendingJoinRef.current = null;
+        terminalStateRef.current = 'connecting';
         doJoin(pending);
       } else if (currentSession.current) {
         // Simple reconnect: xterm already has content, just re-join the room
+        terminalStateRef.current = 'connecting';
+        console.log('[terminal] sending terminal:reattach for', currentSession.current.slice(0, 8));
         sock.emit('terminal:reattach', { sessionId: currentSession.current });
         const term = xtermRef.current;
         if (term && term.cols > 0 && term.rows > 0) {
@@ -210,6 +232,7 @@ export default function TerminalPage() {
     }
 
     function onDisconnect() {
+      terminalStateRef.current = 'detached';
       setReconnecting(true);
       setReconnectTime(0);
     }
@@ -238,28 +261,46 @@ export default function TerminalPage() {
       setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, aiState: state } : s));
     }
 
-    function onSessionDead({ sessionId }) {
-      if (sessionId === currentSession.current && xtermRef.current) {
-        xtermRef.current.write('\r\n\x1b[31m[Session ended — open a new terminal to continue]\x1b[0m\r\n');
+    function onSessionAttached({ sessionId }) {
+      if (sessionId === currentSession.current) {
+        terminalStateRef.current = 'attached';
+        setSessionDead(false);
+        if (xtermRef.current) {
+          xtermRef.current.options.cursorBlink = true;
+        }
       }
     }
 
-    sock.on('connect',               onConnect);
-    sock.on('disconnect',            onDisconnect);
-    sock.on('terminal:data',         onData);
-    sock.on('terminal:scrollback',   onScrollback);
-    sock.on('terminal:exit',         onExit);
-    sock.on('terminal:ai-state',     onAiState);
-    sock.on('terminal:session-dead', onSessionDead);
+    function onSessionDead({ sessionId }) {
+      console.log('[terminal] terminal:session-dead received for', sessionId.slice(0, 8));
+      if (sessionId === currentSession.current) {
+        terminalStateRef.current = 'dead';
+        setSessionDead(true);
+        if (xtermRef.current) {
+          xtermRef.current.options.cursorBlink = false;
+          xtermRef.current.write('\r\n\x1b[31m[Session ended — Opus Command restarted. Open a new terminal to continue.]\x1b[0m\r\n');
+        }
+      }
+    }
+
+    sock.on('connect',                onConnect);
+    sock.on('disconnect',             onDisconnect);
+    sock.on('terminal:data',          onData);
+    sock.on('terminal:scrollback',    onScrollback);
+    sock.on('terminal:exit',          onExit);
+    sock.on('terminal:ai-state',      onAiState);
+    sock.on('terminal:session-attached', onSessionAttached);
+    sock.on('terminal:session-dead',  onSessionDead);
 
     return () => {
-      sock.off('connect',               onConnect);
-      sock.off('disconnect',            onDisconnect);
-      sock.off('terminal:data',         onData);
-      sock.off('terminal:scrollback',   onScrollback);
-      sock.off('terminal:exit',         onExit);
-      sock.off('terminal:ai-state',     onAiState);
-      sock.off('terminal:session-dead', onSessionDead);
+      sock.off('connect',                onConnect);
+      sock.off('disconnect',             onDisconnect);
+      sock.off('terminal:data',          onData);
+      sock.off('terminal:scrollback',    onScrollback);
+      sock.off('terminal:exit',          onExit);
+      sock.off('terminal:ai-state',      onAiState);
+      sock.off('terminal:session-attached', onSessionAttached);
+      sock.off('terminal:session-dead',  onSessionDead);
 
       if (currentSession.current) {
         sock.emit('terminal:leave', { sessionId: currentSession.current });
@@ -296,10 +337,15 @@ export default function TerminalPage() {
     }
 
     currentSession.current = sessionId;
+    terminalStateRef.current = 'connecting';
     setActive(sessionId);
+    setSessionDead(false);
 
     // Full reset: clears content AND resets terminal modes set by the previous session
-    xtermRef.current?.reset();
+    if (xtermRef.current) {
+      xtermRef.current.reset();
+      xtermRef.current.options.cursorBlink = true;
+    }
 
     if (sock.connected) {
       doJoin(sessionId);
@@ -377,7 +423,7 @@ export default function TerminalPage() {
 
         {/*
           The xterm div is ALWAYS in the DOM so xterm can open() on mount.
-          The empty-state overlay sits on top when there are no sessions.
+          Overlays sit on top when needed.
         */}
         <div ref={terminalRef} className="terminal-xterm" />
 
@@ -385,6 +431,17 @@ export default function TerminalPage() {
           <div className="terminal-empty-overlay">
             <p>No terminal sessions.</p>
             <button className="btn btn-primary" onClick={createSession}>New Terminal</button>
+          </div>
+        )}
+
+        {sessionDead && (
+          <div className="terminal-dead-overlay" role="alert">
+            <div className="terminal-dead-content">
+              <span className="terminal-dead-icon">&#9888;</span>
+              <p className="terminal-dead-message">Session ended because Opus Command restarted.</p>
+              <p className="terminal-dead-sub">Open a new terminal to continue.</p>
+              <button className="btn btn-primary" onClick={createSession}>New Terminal</button>
+            </div>
           </div>
         )}
 

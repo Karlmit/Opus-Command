@@ -116,6 +116,7 @@ async function main() {
   }
 
   const terminal = require('./services/terminal.service');
+  terminal.logStartupState();
 
   io.on('connection', (socket) => {
     const session = socket.request.session;
@@ -123,21 +124,27 @@ async function main() {
       socket.disconnect();
       return;
     }
-    console.log(`[socket] Client connected: ${socket.id}`);
+    console.log(`[socket] client connected: ${socket.id}`);
 
     // terminal:join — client explicitly wants scrollback (fresh xterm, session switch, project nav).
     socket.on('terminal:join', ({ sessionId }) => {
       socket.join(`session:${sessionId}`);
       terminal.clientJoinSession(sessionId, socket.id);
 
+      const alive = terminal.isSessionAlive(sessionId);
+      console.log(`[socket] join session=${sessionId.slice(0,8)} socket=${socket.id.slice(0,8)} pty_alive=${alive}`);
+
       const scrollback = terminal.getSessionScrollback(sessionId);
       if (scrollback) {
-        console.log(`[socket] Replaying ${scrollback.length} bytes for session ${sessionId.slice(0,8)} → ${socket.id.slice(0,8)}`);
+        console.log(`[socket] replaying ${scrollback.length} bytes for session ${sessionId.slice(0,8)}`);
         socket.emit('terminal:scrollback', { sessionId, data: scrollback });
       }
 
-      if (!terminal.isSessionAlive(sessionId)) {
+      if (!alive) {
+        console.log(`[socket] emitting terminal:session-dead for ${sessionId.slice(0,8)}`);
         socket.emit('terminal:session-dead', { sessionId });
+      } else {
+        socket.emit('terminal:session-attached', { sessionId });
       }
     });
 
@@ -146,10 +153,15 @@ async function main() {
     socket.on('terminal:reattach', ({ sessionId }) => {
       socket.join(`session:${sessionId}`);
       terminal.clientJoinSession(sessionId, socket.id);
-      console.log(`[socket] Reattached to session ${sessionId.slice(0,8)} (no scrollback)`);
 
-      if (!terminal.isSessionAlive(sessionId)) {
+      const alive = terminal.isSessionAlive(sessionId);
+      console.log(`[socket] reattach session=${sessionId.slice(0,8)} socket=${socket.id.slice(0,8)} pty_alive=${alive}`);
+
+      if (!alive) {
+        console.log(`[socket] emitting terminal:session-dead for ${sessionId.slice(0,8)}`);
         socket.emit('terminal:session-dead', { sessionId });
+      } else {
+        socket.emit('terminal:session-attached', { sessionId });
       }
     });
 

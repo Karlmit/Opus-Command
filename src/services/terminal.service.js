@@ -218,7 +218,24 @@ function resizeSession(sessionId, cols, rows) {
 }
 
 function isSessionAlive(sessionId) {
-  return activePTYs.has(sessionId);
+  const session = activePTYs.get(sessionId);
+  if (!session) return false;
+  try {
+    // Signal 0 checks existence without killing the process
+    process.kill(session.pty.pid, 0);
+    return true;
+  } catch {
+    // Process no longer exists — remove stale entry
+    activePTYs.delete(sessionId);
+    return false;
+  }
+}
+
+function logStartupState() {
+  const db = getDB_local();
+  let dbCount = 0;
+  try { dbCount = db.select().from(terminalSessions).all().length; } catch (_) {}
+  console.log(`[terminal] startup: ${dbCount} session(s) in DB, ${activePTYs.size} active PTY(s) — all pre-existing sessions are orphaned`);
 }
 
 function killSession(sessionId) {
@@ -298,4 +315,5 @@ module.exports = {
   clientJoinSession,
   clientLeaveSession,
   isSessionAlive,
+  logStartupState,
 };
