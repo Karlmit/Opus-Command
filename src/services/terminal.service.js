@@ -43,7 +43,7 @@ async function createSession(projectId, io) {
     // Without -t, bash sees no TTY, warns about job control, and behaves oddly.
     // node-pty wraps docker exec in a host PTY (master side); docker exec -t
     // creates a PTY inside the container (slave side) — the chain works correctly.
-    ptyProcess = pty.spawn('docker', ['exec', '-it', '-e', 'TERM=xterm-256color', contName, '/bin/bash'], {
+    ptyProcess = pty.spawn('docker', ['exec', '-it', '-w', '/workspace', '-e', 'TERM=xterm-256color', contName, '/bin/bash'], {
       name: 'xterm-256color',
       cols: 80,
       rows: 24,
