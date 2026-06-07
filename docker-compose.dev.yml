@@ -1,0 +1,19 @@
+services:
+  opus-command:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: opus-command-dev:latest
+    container_name: opus-command-dev
+    ports:
+      - "3000:3000"
+    volumes:
+      - opus-data:/app/data
+      - /projects:/projects
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - SESSION_SECRET=dev-secret-not-for-production
+    restart: unless-stopped
+
+volumes:
+  opus-data:

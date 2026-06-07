@@ -1,21 +1,15 @@
 services:
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: opus-command-dev:latest
+  opus-command:
+    image: ghcr.io/karlmit/opus-command:latest
     container_name: opus-command
     ports:
       - "3000:3000"
     volumes:
-      - opus-data:/app/data
-      - /projects:/projects
+      - /mnt/user/appdata/OpusCommand:/app/data
+      - /mnt/user/opus-projects:/projects
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      - NODE_ENV=production
       - SESSION_SECRET=${SESSION_SECRET:-change-me-in-production}
-      - DATA_DIR=/app/data
-      - PROJECTS_DIR=/projects
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/setup/status"]
@@ -23,7 +17,3 @@ services:
       timeout: 5s
       start_period: 30s
       retries: 3
-
-volumes:
-  opus-data:
-    driver: local
