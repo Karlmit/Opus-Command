@@ -24,6 +24,24 @@ Opus Command is built around three ideas:
 - **AI agent awareness** — the app watches PTY output and detects when Claude Code, Codex CLI, or OpenCode is waiting for your input. You get a badge notification without polling terminals manually.
 - **Git safety** — create a snapshot before every AI session, review the diff, revert individual files or everything, and commit — all without leaving the app.
 
+### Terminal sessions survive Opus Command restarts
+
+PTY sessions are owned by the workspace container, not the main app. Each workspace runs a lightweight `terminal-agent` process that holds all PTY sessions independently.
+
+```
+Browser
+  ↕ Socket.io
+Opus Command  ← can be updated/restarted freely
+  ↕ WebSocket (internal Docker network)
+terminal-agent  ← lives inside the workspace container
+  ↕ node-pty
+bash / Claude Code / Codex CLI
+```
+
+When Opus Command restarts or updates, it reconnects to the surviving terminal-agents. Claude Code keeps running. Your terminal picks up exactly where it left off — no lost input, no dead session overlay, resize still works.
+
+If the workspace container itself restarts, sessions end (the PTY process is gone). Everything else — Opus Command updates, container image swaps, service restarts — is transparent to running sessions.
+
 ---
 
 ## Quick Start
@@ -86,7 +104,7 @@ Open **http://localhost:3000**. First startup shows a setup screen to create you
 
 #### Terminal System
 - Multiple named PTY sessions per project, running inside workspace containers
-- Sessions survive browser refresh and tab close — the PTY keeps running server-side
+- Sessions survive browser refresh, tab close, **and Opus Command restarts** — PTYs live in the workspace container, not the main app
 - Reconnect from any device (PC, tablet, phone) and pick up where you left off
 - 5,000-line scrollback stored server-side and restored on reconnect
 - Editable session names (double-click to rename)
