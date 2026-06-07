@@ -7,6 +7,7 @@ import Login from './pages/Login';
 import Projects from './pages/Projects';
 import ProjectDashboard from './pages/ProjectDashboard';
 import TerminalPage from './pages/Terminal';
+import Settings from './pages/Settings';
 
 function LoadingScreen() {
   return (
@@ -89,7 +90,7 @@ export default function App() {
         }
       >
         <Route index element={<Projects />} />
-        <Route path="settings/*" element={<PlaceholderPage title="Settings" />} />
+        <Route path="settings/*" element={<Settings />} />
       </Route>
 
       {/* Project workspace cockpit */}

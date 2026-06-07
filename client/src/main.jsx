@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { ToastProvider } from './components/Toast';
+import { NotificationsProvider } from './context/NotificationsContext';
 import App from './App';
 import './styles/globals.css';
 
@@ -21,9 +22,11 @@ createRoot(root).render(
   <StrictMode>
     <BrowserRouter>
       <AuthProvider>
-        <ToastProvider>
-          <App />
-        </ToastProvider>
+        <NotificationsProvider>
+          <ToastProvider>
+            <App />
+          </ToastProvider>
+        </NotificationsProvider>
       </AuthProvider>
     </BrowserRouter>
   </StrictMode>
