@@ -531,17 +531,23 @@ function GitHubSection({ csrfToken, addToast }) {
       </div>
 
       <div className="github-scopes">
-        <p className="github-scopes-title">Required token permissions</p>
+        <p className="github-scopes-title">Required scopes — classic token only</p>
+        <p className="github-scopes-warning">
+          GitHub's new fine-grained tokens do not support GitHub Packages / GHCR yet.
+          You must use a <strong>classic</strong> token.
+        </p>
         <ul className="github-scopes-list">
-          <li><code>repo</code> — read/write repositories, create branches &amp; pull requests</li>
-          <li><code>workflow</code> — trigger and manage GitHub Actions runs</li>
-          <li><code>write:packages</code> — push Docker images to GitHub Container Registry (GHCR)</li>
+          <li><code>repo</code> — full read/write access to repositories, branches, and pull requests</li>
+          <li><code>workflow</code> — add and update GitHub Actions workflow files</li>
+          <li><code>write:packages</code> — push images to GitHub Container Registry (ghcr.io)</li>
         </ul>
         <p className="github-scopes-note">
-          Create a classic token at{' '}
-          <a href="https://github.com/settings/tokens/new" target="_blank" rel="noopener noreferrer">
-            github.com/settings/tokens/new
-          </a>. After saving, open your project → <strong>Workspace</strong> tab → <strong>Recreate</strong> to apply.
+          Go to{' '}
+          <a href="https://github.com/settings/tokens" target="_blank" rel="noopener noreferrer">
+            github.com/settings/tokens
+          </a>{' '}
+          → <strong>Generate new token</strong> → <strong>Generate new token (classic)</strong>.
+          After saving here, open your project → <strong>Workspace</strong> tab → <strong>Recreate</strong> to apply.
         </p>
       </div>
 

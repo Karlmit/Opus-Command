@@ -148,6 +148,13 @@
   border-radius: var(--radius-md);
 }
 
+.github-scopes-warning {
+  font-size: var(--font-size-xs);
+  color: var(--color-warning, #e6a817);
+  line-height: var(--leading-normal);
+  margin: 0;
+}
+
 .github-scopes-title {
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
