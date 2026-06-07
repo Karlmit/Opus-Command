@@ -1,6 +1,6 @@
 node_modules/
 client/node_modules/
-public/
+/public/
 data/
 *.db
 *.db-shm

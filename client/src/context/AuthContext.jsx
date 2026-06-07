@@ -11,19 +11,20 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     async function init() {
       try {
-        const [statusRes, meRes] = await Promise.all([
+        const [statusRes, meRes, csrfRes] = await Promise.all([
           fetch('/api/setup/status'),
           fetch('/api/auth/me'),
+          fetch('/api/auth/csrf-token'),
         ]);
         const status = await statusRes.json();
         const me = await meRes.json();
+        const csrf = await csrfRes.json();
+
         setSetupComplete(status.setupComplete);
+        setCsrfToken(csrf.csrfToken || '');
+
         if (me.loggedIn) {
           setUser({ id: me.userId, username: me.username });
-          // Fetch CSRF token for authenticated users
-          const csrfRes = await fetch('/api/auth/csrf-token');
-          const csrfData = await csrfRes.json();
-          setCsrfToken(csrfData.csrfToken);
         }
       } catch (e) {
         console.error('Auth init failed:', e);
