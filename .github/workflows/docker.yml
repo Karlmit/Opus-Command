@@ -6,7 +6,6 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  OWNER: ${{ github.repository_owner }}
 
 jobs:
   build:
@@ -29,13 +28,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # GHCR requires lowercase — github.repository_owner preserves original case
+      - name: Set lowercase image names
+        run: |
+          echo "APP_IMAGE=${{ env.REGISTRY }}/$(echo ${{ github.repository_owner }} | tr '[:upper:]' '[:lower:]')/opus-command:latest" >> $GITHUB_ENV
+          echo "WS_IMAGE=${{ env.REGISTRY }}/$(echo ${{ github.repository_owner }} | tr '[:upper:]' '[:lower:]')/opus-command-workspace-claude-code:latest" >> $GITHUB_ENV
+
       - name: Build and push app image
         uses: docker/build-push-action@v5
         with:
           context: .
           platforms: linux/amd64
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/opus-command:latest
+          tags: ${{ env.APP_IMAGE }}
           cache-from: type=gha,scope=app
           cache-to: type=gha,scope=app,mode=max
 
@@ -45,6 +50,6 @@ jobs:
           context: ./workspace-images/claude-code
           platforms: linux/amd64
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/opus-command-workspace-claude-code:latest
+          tags: ${{ env.WS_IMAGE }}
           cache-from: type=gha,scope=workspace
           cache-to: type=gha,scope=workspace,mode=max
