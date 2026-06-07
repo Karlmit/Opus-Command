@@ -1,4 +1,4 @@
-FROM node:20-bookworm
+FROM node:20-bookworm-slim
 
 ENV HOME=/root
 
@@ -10,10 +10,8 @@ RUN apt-get update && apt-get install -y \
 
 RUN npm install -g pnpm yarn
 
-# Install Claude Code CLI
-RUN npm install -g @anthropic-ai/claude-code 2>/dev/null \
-    || echo "Claude Code installation: configure manually after container start"
-
 WORKDIR /workspace
+
+# Claude Code: run `npm install -g @anthropic-ai/claude-code` inside the terminal after first start.
 
 CMD ["/bin/bash", "-l"]

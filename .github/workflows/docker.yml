@@ -22,6 +22,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -66,20 +69,26 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  # Workspace template images — only built on release tags to avoid unnecessary builds
   build-workspaces:
     runs-on: ubuntu-latest
     needs: build-app
-    if: github.event_name != 'pull_request'
+    if: startsWith(github.ref, 'refs/tags/v')
+    continue-on-error: true
     permissions:
       contents: read
       packages: write
     strategy:
+      fail-fast: false
       matrix:
         template: [general, nodejs, python, powershell]
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -91,21 +100,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata for workspace
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-workspace-${{ matrix.template }}
-          tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=semver,pattern={{version}}
-
       - name: Build and push workspace template image
         uses: docker/build-push-action@v5
         with:
           context: ./workspace-images/${{ matrix.template }}
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-workspace-${{ matrix.template }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-workspace-${{ matrix.template }}:${{ github.ref_name }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

@@ -1,35 +1,32 @@
 # Stage 1: Build React frontend
-FROM node:20-alpine AS client-builder
+FROM node:20-slim AS client-builder
 WORKDIR /build/client
 COPY client/package*.json ./
 RUN npm install
 COPY client/ ./
 RUN npm run build
 
-# Stage 2: Build server (with native module compilation)
-FROM node:20-alpine AS server-deps
-RUN apk add --no-cache python3 make g++
+# Stage 2: Build server deps (Debian slim = better pre-built binary support for arm64)
+FROM node:20-slim AS server-deps
+RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
 COPY package*.json ./
 RUN npm install --omit=dev
 
 # Stage 3: Production runtime
-FROM node:20-alpine AS runtime
-RUN apk add --no-cache libstdc++ git docker-cli
+FROM node:20-slim AS runtime
+RUN apt-get update && apt-get install -y git docker.io && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy built artifacts
 COPY --from=server-deps /build/node_modules ./node_modules
 COPY --from=client-builder /build/public ./public
 COPY src/ ./src/
 COPY drizzle/ ./drizzle/
 COPY package.json ./
 
-# Create volume mount points
 RUN mkdir -p /app/data /projects
 
-# Version embed (overridden by build arg in CI)
 ARG APP_VERSION=dev
 ENV APP_VERSION=${APP_VERSION}
 ENV NODE_ENV=production

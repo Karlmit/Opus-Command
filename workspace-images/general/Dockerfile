@@ -13,13 +13,13 @@ RUN apt-get update && apt-get install -y \
     nano \
     vim \
     htop \
+    bash-completion \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Claude Code CLI
-RUN curl -fsSL https://raw.githubusercontent.com/anthropics/claude-code/main/install.sh | sh 2>/dev/null \
-    || npm install -g @anthropic-ai/claude-code 2>/dev/null \
-    || echo "Claude Code installation: configure manually after container start"
-
 WORKDIR /workspace
+
+# Claude Code and Codex CLI are installed by the user inside the terminal after first start.
+# Run: npm install -g @anthropic-ai/claude-code
+# API keys persist in the home volume (~/.claude, ~/.codex).
 
 CMD ["/bin/bash", "-l"]
