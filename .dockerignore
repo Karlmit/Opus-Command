@@ -16,9 +16,9 @@ _bmad
 _bmad-output
 docs
 Logos
-*.md
-*.png
-*.svg
 workspace-images
 .github
+README.md
+ROADMAP.md
 NOTES.md
+ExampleFromPlanning.png

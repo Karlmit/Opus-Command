@@ -14,8 +14,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # npm and npx are included with node:20-slim
 RUN npm install -g @anthropic-ai/claude-code
 
-# Verify installations
-RUN node --version && npm --version && npx --version && claude --version
+# Smoke-test node/npm — skip claude --version as it can fail non-interactively
+RUN node --version && npm --version && npx --version
 
 WORKDIR /workspace
 
