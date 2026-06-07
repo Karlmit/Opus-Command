@@ -210,10 +210,15 @@ function writeToSession(sessionId, data) {
 }
 
 function resizeSession(sessionId, cols, rows) {
+  if (!cols || !rows || cols < 1 || rows < 1) return;
   const session = activePTYs.get(sessionId);
   if (session && session.pty) {
     session.pty.resize(cols, rows);
   }
+}
+
+function isSessionAlive(sessionId) {
+  return activePTYs.has(sessionId);
 }
 
 function killSession(sessionId) {
@@ -292,4 +297,5 @@ module.exports = {
   listSessions,
   clientJoinSession,
   clientLeaveSession,
+  isSessionAlive,
 };

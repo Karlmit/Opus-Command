@@ -107,6 +107,8 @@ export default function TerminalPage() {
   const xtermRef       = useRef(null); // XTerm instance
   const fitAddonRef    = useRef(null); // FitAddon instance
   const currentSession = useRef(null); // currently joined session ID
+  // session ID queued for join while socket was disconnected
+  const pendingJoinRef = useRef(null);
 
   /* ── 1. Initialize xterm once the DOM div mounts ── */
   useEffect(() => {
@@ -114,6 +116,7 @@ export default function TerminalPage() {
     if (!div || xtermRef.current) return; // already initialized
 
     const term = new XTerm({
+      convertEol: true, // treat bare \n as \r\n so output never overwrites the same line
       theme: {
         background: '#1E2024',
         foreground: '#E8EAED',
@@ -147,7 +150,7 @@ export default function TerminalPage() {
     // Resize observer → fit + notify server
     const ro = new ResizeObserver(() => {
       try { fitAddon.fit(); } catch (_) {}
-      if (currentSession.current && term.cols && term.rows) {
+      if (currentSession.current && term.cols > 0 && term.rows > 0) {
         getSocket().emit('terminal:resize', {
           sessionId: currentSession.current,
           cols: term.cols,
@@ -165,6 +168,21 @@ export default function TerminalPage() {
     };
   }, []); // runs once on mount — terminalRef.current is always set because the div is always in the DOM
 
+  /* ── doJoin: emit terminal:join and fit/resize the PTY ── */
+  function doJoin(sessionId) {
+    const sock = getSocket();
+    sock.emit('terminal:join', { sessionId });
+    // Two rAF cycles ensure the div is painted and measurable before fitting
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      try { fitAddonRef.current?.fit(); } catch (_) {}
+      const term = xtermRef.current;
+      if (term && sock.connected && term.cols > 0 && term.rows > 0) {
+        sock.emit('terminal:resize', { sessionId, cols: term.cols, rows: term.rows });
+      }
+      term?.focus();
+    }));
+  }
+
   /* ── 2. Load sessions + set up socket listeners ── */
   useEffect(() => {
     loadSessions();
@@ -172,9 +190,22 @@ export default function TerminalPage() {
 
     function onConnect() {
       setReconnecting(false);
-      // Re-join current session after reconnect
-      if (currentSession.current) {
-        sock.emit('terminal:join', { sessionId: currentSession.current });
+      const pending = pendingJoinRef.current;
+      if (pending) {
+        // selectSession was called while disconnected — complete the join now
+        pendingJoinRef.current = null;
+        doJoin(pending);
+      } else if (currentSession.current) {
+        // Simple reconnect: xterm already has content, just re-join the room
+        sock.emit('terminal:reattach', { sessionId: currentSession.current });
+        const term = xtermRef.current;
+        if (term && term.cols > 0 && term.rows > 0) {
+          sock.emit('terminal:resize', {
+            sessionId: currentSession.current,
+            cols: term.cols,
+            rows: term.rows,
+          });
+        }
       }
     }
 
@@ -207,20 +238,28 @@ export default function TerminalPage() {
       setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, aiState: state } : s));
     }
 
-    sock.on('connect',           onConnect);
-    sock.on('disconnect',        onDisconnect);
-    sock.on('terminal:data',     onData);
-    sock.on('terminal:scrollback', onScrollback);
-    sock.on('terminal:exit',     onExit);
-    sock.on('terminal:ai-state', onAiState);
+    function onSessionDead({ sessionId }) {
+      if (sessionId === currentSession.current && xtermRef.current) {
+        xtermRef.current.write('\r\n\x1b[31m[Session ended — open a new terminal to continue]\x1b[0m\r\n');
+      }
+    }
+
+    sock.on('connect',               onConnect);
+    sock.on('disconnect',            onDisconnect);
+    sock.on('terminal:data',         onData);
+    sock.on('terminal:scrollback',   onScrollback);
+    sock.on('terminal:exit',         onExit);
+    sock.on('terminal:ai-state',     onAiState);
+    sock.on('terminal:session-dead', onSessionDead);
 
     return () => {
-      sock.off('connect',           onConnect);
-      sock.off('disconnect',        onDisconnect);
-      sock.off('terminal:data',     onData);
-      sock.off('terminal:scrollback', onScrollback);
-      sock.off('terminal:exit',     onExit);
-      sock.off('terminal:ai-state', onAiState);
+      sock.off('connect',               onConnect);
+      sock.off('disconnect',            onDisconnect);
+      sock.off('terminal:data',         onData);
+      sock.off('terminal:scrollback',   onScrollback);
+      sock.off('terminal:exit',         onExit);
+      sock.off('terminal:ai-state',     onAiState);
+      sock.off('terminal:session-dead', onSessionDead);
 
       if (currentSession.current) {
         sock.emit('terminal:leave', { sessionId: currentSession.current });
@@ -259,30 +298,14 @@ export default function TerminalPage() {
     currentSession.current = sessionId;
     setActive(sessionId);
 
-    // Clear terminal content before showing new session
-    xtermRef.current?.clear();
-
-    const join = () => {
-      sock.emit('terminal:join', { sessionId });
-      // Two rAF cycles ensure the div is painted and measurable before fitting
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        try { fitAddonRef.current?.fit(); } catch (_) {}
-        if (xtermRef.current && sock.connected) {
-          sock.emit('terminal:resize', {
-            sessionId,
-            cols: xtermRef.current.cols,
-            rows: xtermRef.current.rows,
-          });
-        }
-        xtermRef.current?.focus();
-      }));
-    };
+    // Full reset: clears content AND resets terminal modes set by the previous session
+    xtermRef.current?.reset();
 
     if (sock.connected) {
-      join();
+      doJoin(sessionId);
     } else {
-      // Socket not connected yet — join once it is
-      sock.once('connect', join);
+      // Store for onConnect to pick up — overwrites any stale pending join
+      pendingJoinRef.current = sessionId;
     }
   }
 

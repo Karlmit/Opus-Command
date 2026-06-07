@@ -125,37 +125,32 @@ async function main() {
     }
     console.log(`[socket] Client connected: ${socket.id}`);
 
-    // Per-socket set of sessions that have already received scrollback.
-    // Prevents duplicate replays when terminal:join is emitted more than once.
-    const sentScrollbacks = new Set();
-
-    // terminal:join — first attachment.  Sends scrollback history exactly once.
+    // terminal:join — client explicitly wants scrollback (fresh xterm, session switch, project nav).
     socket.on('terminal:join', ({ sessionId }) => {
       socket.join(`session:${sessionId}`);
       terminal.clientJoinSession(sessionId, socket.id);
 
-      const key = `${socket.id}:${sessionId}`;
-      if (sentScrollbacks.has(key)) {
-        console.log(`[socket] session ${sessionId.slice(0,8)} scrollback already sent to ${socket.id.slice(0,8)}, skipping`);
-        return;
-      }
-      sentScrollbacks.add(key);
-
       const scrollback = terminal.getSessionScrollback(sessionId);
       if (scrollback) {
-        const bytes = scrollback.length;
-        console.log(`[socket] Replaying ${bytes} bytes history for session ${sessionId.slice(0,8)} → socket ${socket.id.slice(0,8)}`);
+        console.log(`[socket] Replaying ${scrollback.length} bytes for session ${sessionId.slice(0,8)} → ${socket.id.slice(0,8)}`);
         socket.emit('terminal:scrollback', { sessionId, data: scrollback });
+      }
+
+      if (!terminal.isSessionAlive(sessionId)) {
+        socket.emit('terminal:session-dead', { sessionId });
       }
     });
 
-    // terminal:reattach — used on tab-switch / resize / reconnect within the SAME
-    // browser session.  Joins the room for live output but sends NO scrollback,
-    // because the xterm instance already has the content.
+    // terminal:reattach — socket reconnect within same browser session.
+    // Joins the room for live output but sends NO scrollback (xterm already has it).
     socket.on('terminal:reattach', ({ sessionId }) => {
       socket.join(`session:${sessionId}`);
       terminal.clientJoinSession(sessionId, socket.id);
       console.log(`[socket] Reattached to session ${sessionId.slice(0,8)} (no scrollback)`);
+
+      if (!terminal.isSessionAlive(sessionId)) {
+        socket.emit('terminal:session-dead', { sessionId });
+      }
     });
 
     // Terminal: leave session room
