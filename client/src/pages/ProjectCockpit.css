@@ -240,25 +240,37 @@
   display: flex;
   flex-direction: column;
   position: relative;
+  background: var(--color-terminal-bg);
 }
 
-/* Terminal */
+/* Terminals always fill the content area — never hidden from layout */
 .terminals-layer {
   flex: 1;
   overflow: hidden;
-  background: var(--color-terminal-bg);
   position: relative;
 }
 
+/* Each terminal instance stacks absolutely so they all share the same space */
 .terminal-instance {
-  width: 100%;
-  height: 100%;
+  position: absolute;
+  inset: 0;
   padding: var(--spacing-sm);
 }
 
+/* visibility:hidden keeps dimensions; display:none would cause FitAddon to measure 0×0 */
 .terminal-instance .xterm,
 .terminal-instance .xterm-screen { height: 100% !important; }
 .terminal-instance .xterm-viewport { background: var(--color-terminal-bg) !important; }
+
+/* Overlay: file editor / git / workspace panels — sit on top of terminals */
+.content-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface);
+}
 
 .terminal-reconnect-overlay {
   position: absolute;

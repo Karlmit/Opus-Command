@@ -95,7 +95,7 @@ function TerminalInstance({ sessionId, active, termRefs }) {
     const term = new XTerm({
       theme: { background:'#1E2024', foreground:'#E8EAED', cursor:'#3B82F6', selectionBackground:'rgba(59,130,246,0.30)' },
       fontFamily: "'JetBrains Mono','Cascadia Code',ui-monospace,monospace",
-      fontSize: 14, lineHeight: 1.5, cursorBlink: true, cursorStyle: 'block', scrollback: 5000,
+      fontSize: 14, lineHeight: 1.0, cursorBlink: true, cursorStyle: 'block', scrollback: 5000,
     });
     const fit = new FitAddon();
     term.loadAddon(fit); term.loadAddon(new WebLinksAddon());
@@ -116,7 +116,10 @@ function TerminalInstance({ sessionId, active, termRefs }) {
     if (active) requestAnimationFrame(() => requestAnimationFrame(() => { termRefs.current[sessionId]?.fit(); termRefs.current[sessionId]?.focus(); }));
   }, [active]);
 
-  return <div ref={divRef} className="terminal-instance" style={{ display: active ? 'block' : 'none' }} />;
+  // Use visibility (not display:none) so the element keeps its dimensions.
+  // display:none causes FitAddon to measure 0×0, making the terminal squish
+  // when shown again. visibility:hidden keeps layout intact.
+  return <div ref={divRef} className="terminal-instance" style={{ visibility: active ? 'visible' : 'hidden' }} />;
 }
 
 /* ── Workspace settings panel ──────────────────── */
@@ -446,7 +449,7 @@ export default function ProjectCockpit() {
   }
 
   const activeFileTab = fileTabs.find(t => `file-${t.path}` === activeTab);
-  const showTerminals = activeTab?.startsWith('term-');
+  const showOverlay = activeFileTab || activeTab === 'settings' || activeTab === 'git';
 
   return (
     <div className="cockpit">
@@ -505,11 +508,20 @@ export default function ProjectCockpit() {
 
         {/* Content */}
         <div className="cockpit-content">
-          {/* All terminal instances — always mounted */}
-          <div className="terminals-layer" style={{ display: showTerminals ? 'flex' : 'none' }}>
+          {/*
+            Terminals layer is ALWAYS rendered and takes full space.
+            Files/panels overlay on top using position:absolute.
+            This keeps terminal dims stable so FitAddon never measures 0×0.
+          */}
+          <div className="terminals-layer">
             {termTabs.map(t => (
               <TerminalInstance key={t.id} sessionId={t.id} active={activeTab === `term-${t.id}`} termRefs={termRefs} />
             ))}
+            {termTabs.length === 0 && !showOverlay && (
+              <div className="cockpit-empty">
+                <button className="btn btn-primary" onClick={createTerminal}>Open Terminal</button>
+              </div>
+            )}
             {reconnecting && (
               <div className="terminal-reconnect-overlay">
                 {reconSecs > 5 ? `Connection lost. Retrying… ${reconSecs}s` : 'Reconnecting…'}
@@ -517,53 +529,51 @@ export default function ProjectCockpit() {
             )}
           </div>
 
-          {/* File editor */}
-          {activeFileTab?.type === 'text' && (
-            <div className="file-editor" onKeyDown={e => { if ((e.ctrlKey||e.metaKey) && e.key==='s') { e.preventDefault(); saveFile(activeFileTab.path); } }}>
-              <div className="file-editor-toolbar">
-                <button className="btn btn-ghost" onClick={() => { const t = termTabs[0]; if (t) activateTerm(t.id); else setActiveTab(null); }}>← Terminal</button>
-                <span className="file-editor-name">{activeFileTab.name}</span>
-                <button className="btn btn-primary" onClick={() => saveFile(activeFileTab.path)}>Save</button>
-              </div>
-              <textarea className="file-editor-area" spellCheck={false}
-                value={fileContent[activeFileTab.path] || ''}
-                onChange={e => { setFileContent(p=>({...p,[activeFileTab.path]:e.target.value})); setDirty(p=>({...p,[activeFileTab.path]:true})); }} />
-            </div>
-          )}
+          {/* Overlay: file editor, image viewer, or panel — sits on top of terminals */}
+          {showOverlay && (
+            <div className="content-overlay">
+              {/* File editor */}
+              {activeFileTab?.type === 'text' && (
+                <div className="file-editor" onKeyDown={e => { if ((e.ctrlKey||e.metaKey) && e.key==='s') { e.preventDefault(); saveFile(activeFileTab.path); } }}>
+                  <div className="file-editor-toolbar">
+                    <button className="btn btn-ghost" onClick={() => { const t = termTabs[0]; if (t) activateTerm(t.id); else setActiveTab(null); }}>← Terminal</button>
+                    <span className="file-editor-name">{activeFileTab.name}</span>
+                    <button className="btn btn-primary" onClick={() => saveFile(activeFileTab.path)}>Save</button>
+                  </div>
+                  <textarea className="file-editor-area" spellCheck={false}
+                    value={fileContent[activeFileTab.path] || ''}
+                    onChange={e => { setFileContent(p=>({...p,[activeFileTab.path]:e.target.value})); setDirty(p=>({...p,[activeFileTab.path]:true})); }} />
+                </div>
+              )}
 
-          {/* Image viewer */}
-          {activeFileTab?.type === 'image' && (
-            <div className="file-editor">
-              <div className="file-editor-toolbar">
-                <button className="btn btn-ghost" onClick={() => { const t = termTabs[0]; if (t) activateTerm(t.id); }}>← Terminal</button>
-                <span className="file-editor-name">{activeFileTab.name}</span>
-              </div>
-              <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center', background:'var(--color-surface-elevated)', overflow:'auto', padding:'var(--spacing-lg)' }}>
-                <img src={`/api/projects/${projectId}/files/read?path=${encodeURIComponent(activeFileTab.path)}`} alt={activeFileTab.name} style={{ maxWidth:'100%', maxHeight:'100%', objectFit:'contain' }} />
-              </div>
-            </div>
-          )}
+              {/* Image viewer */}
+              {activeFileTab?.type === 'image' && (
+                <div className="file-editor">
+                  <div className="file-editor-toolbar">
+                    <button className="btn btn-ghost" onClick={() => { const t = termTabs[0]; if (t) activateTerm(t.id); }}>← Terminal</button>
+                    <span className="file-editor-name">{activeFileTab.name}</span>
+                  </div>
+                  <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center', background:'var(--color-surface-elevated)', overflow:'auto', padding:'var(--spacing-lg)' }}>
+                    <img src={`/api/projects/${projectId}/files/read?path=${encodeURIComponent(activeFileTab.path)}`} alt={activeFileTab.name} style={{ maxWidth:'100%', maxHeight:'100%', objectFit:'contain' }} />
+                  </div>
+                </div>
+              )}
 
-          {/* Workspace settings panel */}
-          {activeTab === 'settings' && (
-            <div className="side-panel">
-              <div className="side-panel-header">WORKSPACE</div>
-              <WorkspacePanel projectId={projectId} project={project} csrfToken={csrfToken} addToast={addToast} />
-            </div>
-          )}
+              {/* Workspace settings panel */}
+              {activeTab === 'settings' && (
+                <div className="side-panel">
+                  <div className="side-panel-header">WORKSPACE</div>
+                  <WorkspacePanel projectId={projectId} project={project} csrfToken={csrfToken} addToast={addToast} />
+                </div>
+              )}
 
-          {/* Git panel */}
-          {activeTab === 'git' && (
-            <div className="side-panel">
-              <div className="side-panel-header">GIT</div>
-              <GitPanel projectId={projectId} csrfToken={csrfToken} addToast={addToast} />
-            </div>
-          )}
-
-          {/* Empty */}
-          {!activeTab && (
-            <div className="cockpit-empty">
-              <button className="btn btn-primary" onClick={createTerminal}>Open Terminal</button>
+              {/* Git panel */}
+              {activeTab === 'git' && (
+                <div className="side-panel">
+                  <div className="side-panel-header">GIT</div>
+                  <GitPanel projectId={projectId} csrfToken={csrfToken} addToast={addToast} />
+                </div>
+              )}
             </div>
           )}
         </div>
