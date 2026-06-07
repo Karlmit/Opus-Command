@@ -285,26 +285,37 @@ function UpdatesSection({ csrfToken }) {
           {checkResult.error ? (
             <p className="error-message">{checkResult.error}</p>
           ) : updateAvailable ? (
-            <div>
-              {checkResult.digestChanged && !isNewer(checkResult.current, checkResult.latest) ? (
-                <p className="update-available">
-                  New image available on GHCR — same version but rebuilt.{' '}
-                  {checkResult.url && <a href={checkResult.url} target="_blank" rel="noopener noreferrer" className="update-link">Release notes</a>}
-                </p>
-              ) : (
-                <p className="update-available">
-                  Update available — {checkResult.latest ? `v${semver(checkResult.current)} → v${checkResult.latest}` : 'new image on GHCR'}{' '}
-                  {checkResult.url && <a href={checkResult.url} target="_blank" rel="noopener noreferrer" className="update-link">Release notes</a>}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <p className="update-available">
+                {checkResult.digestChanged && !isNewer(checkResult.current, checkResult.latest)
+                  ? 'New image available — same version, rebuilt on GHCR'
+                  : `Update available — v${semver(checkResult.current)} → v${checkResult.latest}`
+                }
+                {checkResult.url && <>{' '}<a href={checkResult.url} target="_blank" rel="noopener noreferrer" className="update-link">Release notes</a></>}
+              </p>
+              {checkResult.localHash && checkResult.remoteHash && (
+                <p style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--font-size-xs)', color: 'var(--color-text-dim)' }}>
+                  running: {checkResult.localHash} → latest: {checkResult.remoteHash}
                 </p>
               )}
             </div>
           ) : (
-            <p className="update-current">
-              Up to date — v{semver(checkResult.current) || checkResult.current}
-              {checkResult.current?.includes('+') || checkResult.current?.includes('-')
-                ? ` (${checkResult.current})`
-                : ''}
-            </p>
+            <div>
+              <p className="update-current">
+                Up to date — v{semver(checkResult.current) || checkResult.current}
+                {checkResult.current?.includes('+') ? ` (build ${checkResult.current.split('+')[1]})` : ''}
+              </p>
+              {checkResult.localHash && (
+                <p style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--font-size-xs)', color: 'var(--color-text-dim)', marginTop: 2 }}>
+                  image: {checkResult.localHash}{checkResult.remoteHash ? ` = ${checkResult.remoteHash} ✓` : ''}
+                </p>
+              )}
+              {checkResult.digestError && (
+                <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-dim)', marginTop: 2 }}>
+                  ⚠ Digest check failed: {checkResult.digestError}
+                </p>
+              )}
+            </div>
           )}
         </div>
       )}

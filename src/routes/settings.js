@@ -83,52 +83,73 @@ router.post('/updates/apply', requireAuth, async (req, res) => {
   }
 });
 
-// Fetch a URL, return parsed JSON
-function fetchJson(url, headers = {}) {
+function fetchJson(url, extraHeaders = {}) {
   return new Promise((resolve, reject) => {
-    const req = https.get(url, { headers: { 'User-Agent': 'OpusCommand', ...headers } }, (resp) => {
+    const req = https.get(url, {
+      headers: { 'User-Agent': 'OpusCommand', ...extraHeaders },
+    }, (resp) => {
+      // Follow redirects
+      if (resp.statusCode === 301 || resp.statusCode === 302) {
+        return fetchJson(resp.headers.location, extraHeaders).then(resolve, reject);
+      }
       let data = '';
       resp.on('data', c => { data += c; });
-      resp.on('end', () => { try { resolve(JSON.parse(data)); } catch (e) { reject(e); } });
+      resp.on('end', () => { try { resolve(JSON.parse(data)); } catch (e) { reject(new Error(`JSON parse error: ${e.message} — body: ${data.slice(0, 100)}`)); } });
     });
     req.on('error', reject);
-    req.setTimeout(10000, () => { req.destroy(); reject(new Error('timeout')); });
+    req.setTimeout(15000, () => { req.destroy(); reject(new Error('timeout')); });
   });
 }
 
-// Check the GHCR registry manifest digest for our own image.
-// This detects ANY new push to :latest, not just tagged releases.
-async function getGhcrDigest(imageName) {
-  // imageName: ghcr.io/karlmit/opus-command:latest
-  const parts = imageName.replace('ghcr.io/', '').split(':');
-  const repo  = parts[0];
-  const tag   = parts[1] || 'latest';
+// Fetch the image config digest from GHCR for the given image.
+// The config digest is the sha256 of the image configuration blob —
+// identical to what `docker inspect --format '{{.Id}}'` returns.
+// Comparing this with selfInfo.Image detects ANY new image push,
+// regardless of manifest list vs single-arch format.
+async function getRemoteImageConfigDigest(imageName) {
+  // ghcr.io/karlmit/opus-command:latest → repo=karlmit/opus-command, tag=latest
+  const withoutHost = imageName.replace(/^ghcr\.io\//, '');
+  const colonIdx = withoutHost.lastIndexOf(':');
+  const repo = colonIdx >= 0 ? withoutHost.slice(0, colonIdx) : withoutHost;
+  const tag  = colonIdx >= 0 ? withoutHost.slice(colonIdx + 1) : 'latest';
 
-  // Anonymous token for public GHCR packages
+  // Anonymous pull token for public GHCR packages
   const tokenData = await fetchJson(
     `https://ghcr.io/token?scope=repository:${repo}:pull&service=ghcr.io`
   );
   const token = tokenData.token;
+  if (!token) throw new Error('No token from GHCR');
 
-  return new Promise((resolve, reject) => {
-    const req = https.get(
-      `https://ghcr.io/v2/${repo}/manifests/${tag}`,
-      {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Accept': 'application/vnd.docker.distribution.manifest.v2+json',
-          'User-Agent': 'OpusCommand',
-        },
-      },
-      (resp) => {
-        // The digest is in the response header, no need to read the body
-        resolve(resp.headers['docker-content-digest'] || null);
-        resp.resume(); // drain
-      }
-    );
-    req.on('error', reject);
-    req.setTimeout(10000, () => { req.destroy(); reject(new Error('timeout')); });
-  });
+  const ACCEPTS = [
+    'application/vnd.oci.image.index.v1+json',
+    'application/vnd.docker.distribution.manifest.list.v2+json',
+    'application/vnd.oci.image.manifest.v1+json',
+    'application/vnd.docker.distribution.manifest.v2+json',
+  ].join(', ');
+
+  // Fetch the top-level manifest (may be a list or a single manifest)
+  const manifest = await fetchJson(
+    `https://ghcr.io/v2/${repo}/manifests/${tag}`,
+    { Authorization: `Bearer ${token}`, Accept: ACCEPTS }
+  );
+
+  // Manifest list / OCI index → find the linux/amd64 platform manifest
+  if (Array.isArray(manifest.manifests)) {
+    const amd64 = manifest.manifests.find(m =>
+      m.platform?.os === 'linux' && m.platform?.architecture === 'amd64'
+    ) || manifest.manifests[0];
+
+    if (amd64?.digest) {
+      const platManifest = await fetchJson(
+        `https://ghcr.io/v2/${repo}/manifests/${amd64.digest}`,
+        { Authorization: `Bearer ${token}`, Accept: amd64.mediaType || ACCEPTS }
+      );
+      return platManifest.config?.digest || null;
+    }
+  }
+
+  // Single-arch manifest — config.digest is what we want
+  return manifest.config?.digest || null;
 }
 
 router.get('/updates/check', requireAuth, async (req, res) => {
@@ -147,34 +168,40 @@ router.get('/updates/check', requireAuth, async (req, res) => {
     const latestRelease = githubRelease?.tag_name?.replace(/^v/, '') || null;
     const releaseUrl    = githubRelease?.html_url || null;
 
-    // 2. GHCR digest — has the :latest image changed since we last pulled?
-    let digestChanged = false;
-    let localDigest   = null;
-    let remoteDigest  = null;
+    // 2. Image config digest check — detects ANY new push to :latest.
+    //    selfInfo.Image = sha256 of the image config blob.
+    //    getRemoteImageConfigDigest() fetches the same value from GHCR.
+    //    If they differ, a new image is available regardless of version number.
+    let digestChanged    = false;
+    let localConfigHash  = null;
+    let remoteConfigHash = null;
+    let digestError      = null;
+
     try {
       const selfInfo  = await docker.getContainer(os.hostname()).inspect();
-      const imageName = selfInfo.Config.Image; // ghcr.io/karlmit/opus-command:latest
-      localDigest  = selfInfo.Image;            // sha256:... of running image layers
+      const imageName = selfInfo.Config.Image;
+      localConfigHash = selfInfo.Image; // sha256:abc123...
 
-      // Get the local image's RepoDigests (what digest it was pulled as)
-      const imageInfo = await docker.getImage(imageName).inspect();
-      const localPulledDigest = (imageInfo.RepoDigests || [])[0]?.split('@')[1] || null;
-
-      remoteDigest = await getGhcrDigest(imageName);
-      digestChanged = remoteDigest && localPulledDigest && remoteDigest !== localPulledDigest;
-    } catch (_) {
-      // Docker not available or image not from GHCR — fall back to version compare only
+      if (imageName.startsWith('ghcr.io/')) {
+        remoteConfigHash = await getRemoteImageConfigDigest(imageName);
+        digestChanged = !!(remoteConfigHash && localConfigHash && remoteConfigHash !== localConfigHash);
+      }
+    } catch (err) {
+      digestError = err.message;
+      console.warn('[updates] Digest check failed:', err.message);
     }
 
     const current = APP_VERSION.replace(/^v/, '');
 
     res.json({
       current,
-      latest: latestRelease,
-      url: releaseUrl,
-      digestChanged,   // true = new image on GHCR even if version number is same
-      localDigest: localDigest?.slice(0, 19),   // short, just for display
-      remoteDigest: remoteDigest?.slice(0, 19),
+      latest:       latestRelease,
+      url:          releaseUrl,
+      digestChanged,
+      // Short hashes for display — same 8-char format Unraid/Watchtower shows
+      localHash:  localConfigHash?.replace('sha256:', '').slice(0, 8)  || null,
+      remoteHash: remoteConfigHash?.replace('sha256:', '').slice(0, 8) || null,
+      digestError: digestError || undefined,
     });
   } catch (err) {
     res.status(502).json({ error: 'Could not check for updates. Check your internet connection.' });
