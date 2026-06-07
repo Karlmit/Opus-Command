@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../components/Toast';
 import './Settings.css';
+import './ClaudeSettings.css';
 
 const SOUNDS = [
   { id: 'chime', label: 'Chime' },
@@ -258,6 +259,156 @@ function UpdatesSection() {
   );
 }
 
+// ── Claude Code / Azure AI Foundry settings ──────────────────────────────────
+
+const AZURE_FIELDS = [
+  {
+    key: 'ANTHROPIC_BASE_URL',
+    label: 'Azure AI Foundry endpoint',
+    placeholder: 'https://<resource>.services.ai.azure.com/models',
+    hint: 'The endpoint URL from your Azure AI Foundry deployment.',
+    secret: false,
+  },
+  {
+    key: 'ANTHROPIC_API_KEY',
+    label: 'API key',
+    placeholder: 'sk-...',
+    hint: 'Your Azure AI Foundry API key. Stored in /app/data.',
+    secret: true,
+  },
+];
+
+function ClaudeSection({ csrfToken, addToast }) {
+  const [vars, setVars]         = useState({}); // { KEY: value }
+  const [extra, setExtra]       = useState([]); // [{key, value}] — custom vars
+  const [saving, setSaving]     = useState(false);
+  const [showSecrets, setShow]  = useState({});
+
+  useEffect(() => {
+    fetch('/api/settings/workspace-env')
+      .then(r => r.json())
+      .then(data => {
+        const map = {};
+        const ext = [];
+        (data.vars || []).forEach(({ key, value }) => {
+          if (AZURE_FIELDS.some(f => f.key === key)) map[key] = value;
+          else ext.push({ key, value });
+        });
+        setVars(map);
+        setExtra(ext);
+      })
+      .catch(() => {});
+  }, []);
+
+  async function save() {
+    setSaving(true);
+    const allVars = [
+      ...AZURE_FIELDS.map(f => ({ key: f.key, value: vars[f.key] || '' })).filter(v => v.value),
+      ...extra.filter(v => v.key.trim()),
+    ];
+    try {
+      const res = await fetch('/api/settings/workspace-env', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ vars: allVars }),
+      });
+      const data = await res.json();
+      if (data.success) addToast(`Saved ${data.count} environment variable${data.count !== 1 ? 's' : ''}.`);
+      else addToast(data.error || 'Save failed.', 'error');
+    } catch { addToast('Save failed.', 'error'); }
+    finally { setSaving(false); }
+  }
+
+  function addExtra() {
+    setExtra(prev => [...prev, { key: '', value: '' }]);
+  }
+
+  function updateExtra(i, field, val) {
+    setExtra(prev => prev.map((e, idx) => idx === i ? { ...e, [field]: val } : e));
+  }
+
+  function removeExtra(i) {
+    setExtra(prev => prev.filter((_, idx) => idx !== i));
+  }
+
+  return (
+    <div className="settings-section">
+      <h2 className="settings-section-title">CLAUDE CODE — AZURE AI FOUNDRY</h2>
+      <p className="claude-section-desc">
+        These environment variables are injected into every workspace container.
+        New projects and recreated workspaces pick them up automatically.
+        Existing running containers need a <strong>Restart</strong> or <strong>Recreate</strong> to apply changes.
+      </p>
+
+      <div className="claude-fields">
+        {AZURE_FIELDS.map(field => (
+          <div key={field.key} className="form-group">
+            <label className="form-label">{field.label}</label>
+            <div className="claude-input-row">
+              <input
+                className="input"
+                type={field.secret && !showSecrets[field.key] ? 'password' : 'text'}
+                value={vars[field.key] || ''}
+                onChange={e => setVars(v => ({ ...v, [field.key]: e.target.value }))}
+                placeholder={field.placeholder}
+                autoComplete="off"
+              />
+              {field.secret && (
+                <button
+                  className="btn btn-ghost claude-reveal"
+                  type="button"
+                  onClick={() => setShow(s => ({ ...s, [field.key]: !s[field.key] }))}
+                  aria-label={showSecrets[field.key] ? 'Hide' : 'Show'}
+                >
+                  {showSecrets[field.key] ? '🙈' : '👁'}
+                </button>
+              )}
+            </div>
+            <p className="form-hint">{field.hint} Variable name: <code>{field.key}</code></p>
+          </div>
+        ))}
+      </div>
+
+      {/* Additional custom env vars */}
+      {extra.length > 0 && (
+        <div className="claude-extra">
+          <div className="claude-extra-title">Additional variables</div>
+          {extra.map((ev, i) => (
+            <div key={i} className="claude-extra-row">
+              <input
+                className="input claude-extra-key"
+                value={ev.key}
+                onChange={e => updateExtra(i, 'key', e.target.value)}
+                placeholder="VARIABLE_NAME"
+              />
+              <input
+                className="input claude-extra-value"
+                value={ev.value}
+                onChange={e => updateExtra(i, 'value', e.target.value)}
+                placeholder="value"
+              />
+              <button className="btn btn-ghost" onClick={() => removeExtra(i)} aria-label="Remove">×</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="claude-actions">
+        <button className="btn btn-ghost" onClick={addExtra}>+ Add variable</button>
+        <button className="btn btn-primary" onClick={save} disabled={saving}>
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+
+      <div className="claude-note">
+        <strong>Note:</strong> Variables are stored in <code>/app/data</code> and visible via{' '}
+        <code>docker inspect</code> on workspace containers. Do not use highly sensitive secrets
+        that could cause harm if exposed on your local network.
+      </div>
+    </div>
+  );
+}
+
 export default function Settings() {
   const { csrfToken } = useAuth();
   const { addToast } = useToast();
@@ -268,10 +419,11 @@ export default function Settings() {
         <h1 className="settings-title">SETTINGS</h1>
       </div>
       <div className="settings-content">
+        <ClaudeSection csrfToken={csrfToken} addToast={addToast} />
         <AccountSection csrfToken={csrfToken} addToast={addToast} />
         <AppearanceSection csrfToken={csrfToken} addToast={addToast} />
-        <UpdatesSection />
         <SoundSection csrfToken={csrfToken} />
+        <UpdatesSection />
       </div>
     </div>
   );

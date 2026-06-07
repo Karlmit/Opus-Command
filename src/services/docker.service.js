@@ -4,16 +4,12 @@ const path = require('path');
 
 const docker = new Dockerode({ socketPath: '/var/run/docker.sock' });
 
-const WORKSPACE_IMAGES = {
-  general: 'ghcr.io/karlmit/opus-command-workspace-general:latest',
-  nodejs: 'ghcr.io/karlmit/opus-command-workspace-nodejs:latest',
-  python: 'ghcr.io/karlmit/opus-command-workspace-python:latest',
-  powershell: 'ghcr.io/karlmit/opus-command-workspace-powershell:latest',
-};
+// Single workspace template — Claude Code with Node.js/npm/npx
+const WORKSPACE_IMAGE = 'ghcr.io/karlmit/opus-command-workspace-claude-code:latest';
 
-// Fallback image used when workspace template images haven't been published yet.
-// debian:bookworm-slim is ~30MB, always on Docker Hub, and has bash.
-const FALLBACK_IMAGE = 'debian:bookworm-slim';
+// Fallback used until the GHCR image is published.
+// node:20-slim has node, npm, npx — we can install Claude Code at first run.
+const FALLBACK_IMAGE = 'node:20-slim';
 
 function containerName(projectId) {
   return `opus-workspace-${projectId}`;
@@ -23,36 +19,36 @@ function homeVolumeName(projectId) {
   return `opus-home-${projectId}`;
 }
 
-async function getImageForTemplate(template) {
-  const imageName = WORKSPACE_IMAGES[template] || WORKSPACE_IMAGES.general;
+async function getWorkspaceImage() {
+  // Try the published GHCR image first
   try {
-    await docker.getImage(imageName).inspect();
-    return imageName;
+    await docker.getImage(WORKSPACE_IMAGE).inspect();
+    return WORKSPACE_IMAGE;
   } catch {
-    // Try to pull the image
     try {
       await new Promise((resolve, reject) => {
-        docker.pull(imageName, (err, stream) => {
+        docker.pull(WORKSPACE_IMAGE, (err, stream) => {
           if (err) return reject(err);
-          docker.modem.followProgress(stream, (err, output) => {
-            if (err) reject(err);
-            else resolve(output);
-          });
+          docker.modem.followProgress(stream, (err) => err ? reject(err) : resolve());
         });
       });
-      return imageName;
+      return WORKSPACE_IMAGE;
     } catch {
-      console.warn(`[docker] Could not pull ${imageName}, falling back to ${FALLBACK_IMAGE}`);
+      console.log(`[docker] GHCR workspace image not yet published, using ${FALLBACK_IMAGE}`);
       return FALLBACK_IMAGE;
     }
   }
 }
 
-async function createWorkspaceContainer(projectId, folderPath, template) {
-  const image = await getImageForTemplate(template);
+async function createWorkspaceContainer(projectId, folderPath) {
+  const image = await getWorkspaceImage();
   const name = containerName(projectId);
   const homeVol = homeVolumeName(projectId);
   const projectHostPath = path.join(PROJECTS_DIR, folderPath);
+
+  // Load user-configured environment variables (e.g. Azure AI Foundry keys)
+  const { getWorkspaceEnvVars } = require('./auth.service');
+  const userEnv = getWorkspaceEnvVars().map(({ key, value }) => `${key}=${value}`);
 
   // Create home volume if it doesn't exist
   try {
@@ -71,15 +67,17 @@ async function createWorkspaceContainer(projectId, folderPath, template) {
   const container = await docker.createContainer({
     name,
     Image: image,
-    Cmd: !image.startsWith('ghcr.io/karlmit/opus-command-workspace')
+    // Published image has CMD ["/bin/bash"]; fallback node:20-slim needs keepalive
+    Cmd: image === FALLBACK_IMAGE
       ? ['/bin/bash', '-c', 'while true; do sleep 60; done']
       : undefined,
+    Env: userEnv,
     HostConfig: {
       Binds: [
         `${projectHostPath}:/workspace`,
         `${homeVol}:/root`,
       ],
-      // NO Docker socket in workspace containers (FR-WORK-6)
+      // Workspace containers do NOT get the Docker socket
       RestartPolicy: { Name: 'unless-stopped' },
     },
     WorkingDir: '/workspace',
@@ -106,11 +104,14 @@ async function restartContainer(projectId) {
   return getContainerStatus(projectId);
 }
 
-async function recreateContainer(projectId, folderPath, template) {
+async function recreateContainer(projectId, folderPath) {
   const homeVol = homeVolumeName(projectId);
-  const image = await getImageForTemplate(template);
+  const image = await getWorkspaceImage();
   const name = containerName(projectId);
   const projectHostPath = path.join(PROJECTS_DIR, folderPath);
+
+  const { getWorkspaceEnvVars } = require('./auth.service');
+  const userEnv = getWorkspaceEnvVars().map(({ key, value }) => `${key}=${value}`);
 
   try {
     const existing = docker.getContainer(name);
@@ -121,9 +122,10 @@ async function recreateContainer(projectId, folderPath, template) {
   const container = await docker.createContainer({
     name,
     Image: image,
-    Cmd: !image.startsWith('ghcr.io/karlmit/opus-command-workspace')
+    Cmd: image === FALLBACK_IMAGE
       ? ['/bin/bash', '-c', 'while true; do sleep 60; done']
       : undefined,
+    Env: userEnv,
     HostConfig: {
       Binds: [`${projectHostPath}:/workspace`, `${homeVol}:/root`],
       RestartPolicy: { Name: 'unless-stopped' },
@@ -135,42 +137,32 @@ async function recreateContainer(projectId, folderPath, template) {
   return { containerId: container.id };
 }
 
-async function rebuildContainer(projectId, folderPath, template) {
-  const image = WORKSPACE_IMAGES[template] || WORKSPACE_IMAGES.general;
-
-  // Pull latest image
-  await new Promise((resolve, reject) => {
-    docker.pull(image, (err, stream) => {
-      if (err) return reject(err);
-      docker.modem.followProgress(stream, (err, output) => {
-        if (err) reject(err);
-        else resolve(output);
-      });
+async function rebuildContainer(projectId, folderPath) {
+  // Pull latest workspace image
+  await new Promise((resolve) => {
+    docker.pull(WORKSPACE_IMAGE, (err, stream) => {
+      if (err || !stream) return resolve();
+      docker.modem.followProgress(stream, () => resolve());
     });
-  }).catch(err => {
-    console.warn('[docker] Pull failed, using cached image:', err.message);
-  });
+  }).catch(() => {});
 
-  return recreateContainer(projectId, folderPath, template);
+  return recreateContainer(projectId, folderPath);
 }
 
-async function resetEnvironment(projectId, folderPath, template) {
+async function resetEnvironment(projectId, folderPath) {
   const homeVol = homeVolumeName(projectId);
 
-  // Stop container first
   try {
     const existing = docker.getContainer(containerName(projectId));
     await existing.stop().catch(() => {});
     await existing.remove();
   } catch (_) {}
 
-  // Remove home volume
   try {
     await docker.getVolume(homeVol).remove();
   } catch (_) {}
 
-  // Recreate
-  return recreateContainer(projectId, folderPath, template);
+  return recreateContainer(projectId, folderPath);
 }
 
 async function removeWorkspace(projectId) {

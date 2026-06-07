@@ -39,12 +39,9 @@ router.get('/', requireAuth, async (req, res) => {
 // POST /api/projects — create a new project
 router.post('/', requireAuth, async (req, res) => {
   try {
-    const { name, folder, template } = req.body;
+    const { name, folder } = req.body;
     if (!name || !name.trim()) return res.status(400).json({ error: 'Project name is required.' });
     if (!folder || !folder.trim()) return res.status(400).json({ error: 'Project folder is required.' });
-    if (!['general', 'nodejs', 'python', 'powershell'].includes(template)) {
-      return res.status(400).json({ error: 'Invalid template.' });
-    }
 
     // Validate folder path is within /projects
     const folderPath = folder.trim().replace(/^\//, '');
@@ -61,7 +58,7 @@ router.post('/', requireAuth, async (req, res) => {
     const inserted = db.insert(projects).values({
       name: name.trim(),
       folderPath,
-      template,
+      template: 'claude-code',
       status: 'starting',
       createdAt: now,
     }).returning().all();
@@ -69,7 +66,7 @@ router.post('/', requireAuth, async (req, res) => {
     const project = inserted[0];
 
     // Provision workspace container asynchronously
-    docker.createWorkspaceContainer(project.id, folderPath, template)
+    docker.createWorkspaceContainer(project.id, folderPath)
       .then(async ({ containerId, homeVolume }) => {
         db.update(projects).set({
           containerId,
@@ -185,26 +182,27 @@ router.post('/:id/lifecycle', requireAuth, async (req, res) => {
         emitStatus('running');
         break;
 
-      case 'recreate':
+      case 'recreate': {
         emitStatus('starting');
-        const { containerId: newId } = await docker.recreateContainer(projectId, project.folderPath, project.template);
+        const { containerId: newId } = await docker.recreateContainer(projectId, project.folderPath);
         db.update(projects).set({ containerId: newId }).where(eq(projects.id, projectId)).run();
         emitStatus('running');
         break;
-
-      case 'rebuild':
+      }
+      case 'rebuild': {
         emitStatus('starting');
-        const { containerId: rebuiltId } = await docker.rebuildContainer(projectId, project.folderPath, project.template);
+        const { containerId: rebuiltId } = await docker.rebuildContainer(projectId, project.folderPath);
         db.update(projects).set({ containerId: rebuiltId }).where(eq(projects.id, projectId)).run();
         emitStatus('running');
         break;
-
-      case 'reset':
+      }
+      case 'reset': {
         emitStatus('starting');
-        const { containerId: resetId } = await docker.resetEnvironment(projectId, project.folderPath, project.template);
+        const { containerId: resetId } = await docker.resetEnvironment(projectId, project.folderPath);
         db.update(projects).set({ containerId: resetId }).where(eq(projects.id, projectId)).run();
         emitStatus('running');
         break;
+      }
 
       default:
         return res.status(400).json({ error: 'Invalid lifecycle action.' });

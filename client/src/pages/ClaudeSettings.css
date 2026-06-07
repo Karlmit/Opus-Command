@@ -1,0 +1,105 @@
+.claude-section-desc {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  line-height: var(--leading-normal);
+}
+
+.claude-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.claude-input-row {
+  display: flex;
+  gap: var(--spacing-xs);
+  align-items: center;
+}
+
+.claude-input-row .input {
+  flex: 1;
+}
+
+.claude-reveal {
+  flex-shrink: 0;
+  font-size: var(--font-size-base);
+  height: 32px;
+  width: 32px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.form-hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  margin-top: var(--spacing-xs);
+  line-height: var(--leading-normal);
+}
+
+.form-hint code {
+  font-family: var(--font-mono);
+  background: var(--color-surface-elevated);
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+}
+
+.claude-extra {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.claude-extra-title {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--tracking-wide);
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+}
+
+.claude-extra-row {
+  display: flex;
+  gap: var(--spacing-xs);
+  align-items: center;
+}
+
+.claude-extra-key {
+  width: 180px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  flex-shrink: 0;
+}
+
+.claude-extra-value {
+  flex: 1;
+}
+
+.claude-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  padding-top: var(--spacing-xs);
+}
+
+.claude-note {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  line-height: var(--leading-normal);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--color-surface-elevated);
+  border-radius: var(--radius-md);
+  border-left: 3px solid var(--color-border-strong);
+}
+
+.claude-note code {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+
+.claude-note strong {
+  color: var(--color-text-secondary);
+}

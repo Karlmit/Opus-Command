@@ -42,7 +42,7 @@ async function main() {
   // Pre-pull the fallback workspace image in the background so it's
   // ready when the user creates their first project.
   const { docker: dockerClient } = require('./services/docker.service');
-  const FALLBACK = 'debian:bookworm-slim';
+  const FALLBACK = 'node:20-slim';
   dockerClient.getImage(FALLBACK).inspect()
     .catch(() => {
       console.log(`[startup] Pre-pulling fallback workspace image ${FALLBACK}…`);

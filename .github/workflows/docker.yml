@@ -81,7 +81,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        template: [general, nodejs, python, powershell]
+        template: [claude-code]
 
     steps:
       - name: Checkout

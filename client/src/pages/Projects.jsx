@@ -3,13 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import './Projects.css';
 
-const TEMPLATES = [
-  { id: 'general', label: 'General Development' },
-  { id: 'nodejs', label: 'Node.js Development' },
-  { id: 'python', label: 'Python Development' },
-  { id: 'powershell', label: 'PowerShell Development' },
-];
-
 function StatusPill({ status }) {
   const label = status.charAt(0).toUpperCase() + status.slice(1);
   return (
@@ -22,13 +15,20 @@ function StatusPill({ status }) {
 
 function NewProjectModal({ onClose, onCreated }) {
   const { csrfToken } = useAuth();
-  const [step, setStep] = useState(1);
-  const [form, setForm] = useState({ name: '', folder: '', template: 'general' });
+  const [form, setForm] = useState({ name: '', folder: '' });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  async function handleSubmit() {
-    if (step < 3) return setStep(s => s + 1);
+  // Auto-fill folder from name
+  function handleNameChange(name) {
+    const folder = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    setForm(f => ({ ...f, name, folder: f.folder || folder }));
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!form.name.trim()) return setError('Project name is required.');
+    if (!form.folder.trim()) return setError('Project folder is required.');
 
     setLoading(true);
     setError('');
@@ -57,11 +57,10 @@ function NewProjectModal({ onClose, onCreated }) {
       <div className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
         <div className="modal-header">
           <h2 id="modal-title" className="modal-title">New Project</h2>
-          <div className="modal-steps">Step {step} of 3</div>
         </div>
 
-        <div className="modal-body">
-          {step === 1 && (
+        <form onSubmit={handleSubmit}>
+          <div className="modal-body">
             <div className="form-group">
               <label className="form-label" htmlFor="proj-name">Project Name</label>
               <input
@@ -69,60 +68,34 @@ function NewProjectModal({ onClose, onCreated }) {
                 className="input"
                 autoFocus
                 value={form.name}
-                onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                onChange={e => handleNameChange(e.target.value)}
                 placeholder="My Project"
               />
             </div>
-          )}
-          {step === 2 && (
             <div className="form-group">
               <label className="form-label" htmlFor="proj-folder">Project Folder</label>
               <input
                 id="proj-folder"
                 className="input"
-                autoFocus
                 value={form.folder}
                 onChange={e => setForm(f => ({ ...f, folder: e.target.value }))}
                 placeholder="my-project"
               />
-              <p className="form-hint">Subdirectory path within <code>/projects</code></p>
+              <p className="form-hint">Subdirectory within <code>/projects</code> — created automatically</p>
             </div>
-          )}
-          {step === 3 && (
-            <div className="form-group">
-              <label className="form-label">Workspace Template</label>
-              <div className="radio-group">
-                {TEMPLATES.map(t => (
-                  <label key={t.id} className="radio-option">
-                    <input
-                      type="radio"
-                      name="template"
-                      value={t.id}
-                      checked={form.template === t.id}
-                      onChange={() => setForm(f => ({ ...f, template: t.id }))}
-                    />
-                    <span>{t.label}</span>
-                  </label>
-                ))}
-              </div>
+            <div className="modal-workspace-info">
+              <span className="modal-workspace-badge">Claude Code workspace</span>
+              <span className="modal-workspace-desc">Node.js · npm · npx · Claude Code CLI · Azure AI Foundry</span>
             </div>
-          )}
-
-          {error && <p className="error-message">{error}</p>}
-        </div>
-
-        <div className="modal-footer">
-          <button className="btn btn-ghost" onClick={step > 1 ? () => setStep(s => s - 1) : onClose}>
-            {step > 1 ? 'Back' : 'Cancel'}
-          </button>
-          <button
-            className="btn btn-primary"
-            onClick={handleSubmit}
-            disabled={loading || (step === 1 && !form.name) || (step === 2 && !form.folder)}
-          >
-            {loading ? 'Creating…' : step === 3 ? 'Create Project' : 'Next'}
-          </button>
-        </div>
+            {error && <p className="error-message">{error}</p>}
+          </div>
+          <div className="modal-footer">
+            <button className="btn btn-ghost" type="button" onClick={onClose}>Cancel</button>
+            <button className="btn btn-primary" type="submit" disabled={loading || !form.name || !form.folder}>
+              {loading ? 'Creating…' : 'Create Project'}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );

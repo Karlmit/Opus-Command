@@ -54,4 +54,13 @@ function setSetting(key, value) {
     .run();
 }
 
-module.exports = { hasAdminAccount, createAdminAccount, verifyCredentials, changePassword, getSetting, setSetting };
+function getWorkspaceEnvVars() {
+  try {
+    const raw = getSetting('workspace_env_vars');
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+module.exports = { hasAdminAccount, createAdminAccount, verifyCredentials, changePassword, getSetting, setSetting, getWorkspaceEnvVars };
