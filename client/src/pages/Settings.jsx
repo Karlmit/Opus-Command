@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../components/Toast';
+import { io } from 'socket.io-client';
 import './Settings.css';
 import './ClaudeSettings.css';
 
@@ -178,30 +179,61 @@ function SoundSection({ csrfToken }) {
   );
 }
 
-function UpdatesSection() {
-  const [version, setVersion] = useState('…');
+function UpdatesSection({ csrfToken }) {
+  const [version, setVersion]         = useState('…');
   const [checkResult, setCheckResult] = useState(null);
-  const [checking, setChecking] = useState(false);
+  const [checking, setChecking]       = useState(false);
+  const [updating, setUpdating]       = useState(false);
+  const [updateLog, setUpdateLog]     = useState([]);
 
   useEffect(() => {
     fetch('/api/settings/version').then(r => r.json()).then(d => setVersion(d.version || '0.1.0'));
   }, []);
 
+  // Stream progress from Socket.io while updating
+  useEffect(() => {
+    if (!updating) return;
+    const sock = io({ autoConnect: true });
+    sock.on('self-update:progress', ({ message }) => {
+      if (message) setUpdateLog(prev => [...prev.slice(-20), message]);
+    });
+    return () => sock.disconnect();
+  }, [updating]);
+
   async function checkForUpdates() {
-    setChecking(true);
-    setCheckResult(null);
+    setChecking(true); setCheckResult(null);
     try {
       const res = await fetch('/api/settings/updates/check');
       const data = await res.json();
-      if (data.error) {
-        setCheckResult({ error: data.error });
-      } else {
-        setCheckResult({ current: data.current, latest: data.latest, url: data.url });
-      }
+      setCheckResult(data.error ? { error: data.error } : data);
     } catch {
       setCheckResult({ error: 'Could not check for updates. Check your internet connection.' });
-    } finally {
-      setChecking(false);
+    } finally { setChecking(false); }
+  }
+
+  async function applyUpdate() {
+    setUpdating(true);
+    setUpdateLog(['Starting update…']);
+    try {
+      const res = await fetch('/api/settings/updates/apply', {
+        method: 'POST',
+        headers: { 'X-CSRF-Token': csrfToken },
+      });
+      const data = await res.json();
+      if (data.alreadyLatest) {
+        setUpdateLog(['Already running the latest version.']);
+        setUpdating(false);
+      } else if (data.updating) {
+        setUpdateLog(prev => [...prev, 'Container restarting… refreshing in a few seconds.']);
+        setTimeout(() => window.location.reload(), 12000);
+      } else if (data.error) {
+        setUpdateLog(prev => [...prev, `Error: ${data.error}`]);
+        setUpdating(false);
+      }
+    } catch {
+      // Connection dropped = update is mid-flight, container restarting
+      setUpdateLog(prev => [...prev, 'Connection lost — update applying. Refreshing…']);
+      setTimeout(() => window.location.reload(), 8000);
     }
   }
 
@@ -216,6 +248,8 @@ function UpdatesSection() {
     return false;
   }
 
+  const updateAvailable = checkResult && !checkResult.error && isNewer(checkResult.current, checkResult.latest);
+
   return (
     <div className="settings-section">
       <h2 className="settings-section-title">UPDATES</h2>
@@ -224,22 +258,25 @@ function UpdatesSection() {
         <span className="settings-value font-mono">v{version}</span>
       </div>
 
-      <button className="btn btn-ghost" onClick={checkForUpdates} disabled={checking}>
-        {checking ? (
-          <><span className="spinner" />Checking…</>
-        ) : 'Check for Updates'}
-      </button>
+      <div style={{ display: 'flex', gap: 'var(--spacing-sm)', flexWrap: 'wrap', alignItems: 'center' }}>
+        <button className="btn btn-ghost" onClick={checkForUpdates} disabled={checking || updating}>
+          {checking ? <><span className="spinner" />Checking…</> : 'Check for Updates'}
+        </button>
+        {updateAvailable && !updating && (
+          <button className="btn btn-primary" onClick={applyUpdate}>
+            ↑ Update to v{checkResult.latest}
+          </button>
+        )}
+      </div>
 
-      {checkResult && (
+      {checkResult && !updating && (
         <div className="update-result">
           {checkResult.error ? (
             <p className="error-message">{checkResult.error}</p>
-          ) : isNewer(checkResult.current, checkResult.latest) ? (
+          ) : updateAvailable ? (
             <p className="update-available">
-              Update Available — Current: {checkResult.current} → Latest: {checkResult.latest}{' '}
-              <a href={checkResult.url} target="_blank" rel="noopener noreferrer" className="update-link">
-                View on GitHub
-              </a>
+              Update available — v{checkResult.current} → v{checkResult.latest}{' '}
+              <a href={checkResult.url} target="_blank" rel="noopener noreferrer" className="update-link">Release notes</a>
             </p>
           ) : (
             <p className="update-current">Up to date — v{checkResult.current}</p>
@@ -247,14 +284,16 @@ function UpdatesSection() {
         </div>
       )}
 
-      <div className="update-instructions">
-        <p className="settings-label">To update:</p>
-        <div className="update-steps">
-          <p><strong>Docker Compose:</strong></p>
-          <code>docker compose pull && docker compose up -d</code>
-          <p><strong>Unraid / Watchtower:</strong> Use the standard Docker update workflow in your management tool. No manual steps required.</p>
+      {updating && (
+        <div className="update-log">
+          {updateLog.map((line, i) => (
+            <div key={i} className="update-log-line">
+              {i === updateLog.length - 1 && <span className="spinner" style={{ marginRight: 6 }} />}
+              {line}
+            </div>
+          ))}
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -423,7 +462,7 @@ export default function Settings() {
         <AccountSection csrfToken={csrfToken} addToast={addToast} />
         <AppearanceSection csrfToken={csrfToken} addToast={addToast} />
         <SoundSection csrfToken={csrfToken} />
-        <UpdatesSection />
+        <UpdatesSection csrfToken={csrfToken} />
       </div>
     </div>
   );

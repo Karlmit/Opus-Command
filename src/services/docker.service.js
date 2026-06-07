@@ -244,8 +244,84 @@ function streamContainerLogs(projectId, onData, onEnd) {
   });
 }
 
+/* ── Self-update ──────────────────────────────────────────────────────────
+ * Pull the new app image, then recreate own container from the fresh image.
+ * The host is identified via os.hostname() which Docker sets to the short
+ * container ID. We inspect self to get the full HostConfig so the new
+ * container is created with identical mounts, ports, and env.
+ * ─────────────────────────────────────────────────────────────────────── */
+const os = require('os');
+const APP_IMAGE = 'ghcr.io/karlmit/opus-command:latest';
+
+async function selfUpdate(onProgress) {
+  // 1. Identify own container
+  const selfId = os.hostname();
+  let selfInfo;
+  try {
+    selfInfo = await docker.getContainer(selfId).inspect();
+  } catch {
+    throw new Error('Cannot identify own container. Make sure the container name matches.');
+  }
+
+  const imageName = selfInfo.Config.Image; // e.g. ghcr.io/karlmit/opus-command:latest
+
+  // 2. Pull latest image — stream progress
+  onProgress({ step: 'pull', message: 'Pulling latest image…' });
+  await new Promise((resolve, reject) => {
+    docker.pull(imageName, (err, stream) => {
+      if (err) return reject(err);
+      docker.modem.followProgress(stream, (err) => err ? reject(err) : resolve(), (event) => {
+        if (event.status) onProgress({ step: 'pull', message: event.status, detail: event.progressDetail });
+      });
+    });
+  });
+
+  // 3. Compare image IDs — is there actually a new version?
+  const newImage = await docker.getImage(imageName).inspect();
+  if (newImage.Id === selfInfo.Image) {
+    return { alreadyLatest: true };
+  }
+
+  // 4. Prepare new container name (temp)
+  const originalName = selfInfo.Name.replace(/^\//, '');
+  const tempName = `${originalName}-next`;
+  try { await docker.getContainer(tempName).remove({ force: true }); } catch (_) {}
+
+  // 5. Create new container with identical config + new image
+  onProgress({ step: 'create', message: 'Creating new container…' });
+  const newContainer = await docker.createContainer({
+    name: tempName,
+    Image: imageName,
+    Env: selfInfo.Config.Env,
+    HostConfig: selfInfo.HostConfig,
+    Labels: selfInfo.Config.Labels,
+  });
+
+  // 6. Handoff: send this response, then stop self and start new container.
+  //    2 s gives the HTTP response time to reach the client before the
+  //    connection drops. The client's reconnect overlay handles the gap.
+  onProgress({ step: 'restart', message: 'Restarting with new version…' });
+
+  setTimeout(async () => {
+    try {
+      const self = docker.getContainer(selfId);
+      await self.stop({ t: 5 });
+      await newContainer.start();
+      // Rename new container to the original name
+      await newContainer.rename({ name: originalName });
+      // Remove the old (now stopped) container
+      await self.remove().catch(() => {});
+    } catch (e) {
+      console.error('[self-update] Handoff error:', e.message);
+    }
+  }, 2000);
+
+  return { updating: true };
+}
+
 module.exports = {
   docker,
+  selfUpdate,
   createWorkspaceContainer,
   startContainer,
   stopContainer,

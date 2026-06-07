@@ -61,6 +61,28 @@ router.get('/version', requireAuth, (req, res) => {
   res.json({ version: APP_VERSION });
 });
 
+router.post('/updates/apply', requireAuth, async (req, res) => {
+  const { selfUpdate } = require('../services/docker.service');
+  const io = req.app.get('io');
+
+  // Stream progress to the client via Socket.io while the pull happens
+  const onProgress = (event) => {
+    if (io) io.emit('self-update:progress', event);
+  };
+
+  try {
+    const result = await selfUpdate(onProgress);
+    if (result.alreadyLatest) {
+      return res.json({ alreadyLatest: true, message: 'Already running the latest version.' });
+    }
+    // "updating: true" means the restart timer is armed — connection will drop soon
+    res.json({ updating: true, message: 'Update started. Reconnecting in a few seconds…' });
+  } catch (err) {
+    console.error('[self-update] Error:', err.message);
+    res.status(500).json({ error: `Update failed: ${err.message}` });
+  }
+});
+
 router.get('/updates/check', requireAuth, (req, res) => {
   const url = 'https://api.github.com/repos/Karlmit/Opus-Command/releases/latest';
   const req2 = https.get(url, { headers: { 'User-Agent': 'OpusCommand' } }, (resp) => {
