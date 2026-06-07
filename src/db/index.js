@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS projects (
   container_id TEXT,
   home_volume TEXT,
   status TEXT DEFAULT 'stopped',
+  avatar TEXT DEFAULT '',
   created_at INTEGER NOT NULL
 );
 
@@ -90,6 +91,8 @@ function initDB() {
   sqlite.pragma('foreign_keys = ON');
 
   sqlite.exec(SCHEMA_SQL);
+  // Add avatar column to existing installations
+  try { sqlite.exec("ALTER TABLE projects ADD COLUMN avatar TEXT DEFAULT ''"); } catch (_) {}
   runMigrations(sqlite);
 
   db = drizzle(sqlite, { schema });

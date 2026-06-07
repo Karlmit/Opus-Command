@@ -22,6 +22,7 @@ router.get('/', requireAuth, async (req, res) => {
         name: p.name,
         folderPath: p.folderPath,
         template: p.template,
+        avatar: p.avatar || '',
         status,
         terminalCount: 0,
         aiWaiting: 0,
@@ -143,6 +144,23 @@ router.get('/:id', requireAuth, async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch project.' });
+  }
+});
+
+// PATCH /api/projects/:id — update name or avatar
+router.patch('/:id', requireAuth, (req, res) => {
+  const projectId = parseInt(req.params.id);
+  try {
+    const db = getDB();
+    const { name, avatar } = req.body;
+    const updates = {};
+    if (name !== undefined) updates.name = name.trim();
+    if (avatar !== undefined) updates.avatar = avatar;
+    if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'Nothing to update.' });
+    db.update(projects).set(updates).where(eq(projects.id, projectId)).run();
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Update failed.' });
   }
 });
 
