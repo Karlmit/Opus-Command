@@ -8,6 +8,8 @@ import Projects from './pages/Projects';
 import ProjectDashboard from './pages/ProjectDashboard';
 import TerminalPage from './pages/Terminal';
 import Settings from './pages/Settings';
+import FilesPage from './pages/Files';
+import GitPage from './pages/Git';
 
 function LoadingScreen() {
   return (
@@ -104,9 +106,9 @@ export default function App() {
       >
         <Route index element={<ProjectDashboard />} />
         <Route path="terminal" element={<TerminalPage />} />
-        <Route path="files/*" element={<PlaceholderPage title="Files" />} />
-        <Route path="git/*" element={<PlaceholderPage title="Git" />} />
-        <Route path="settings/*" element={<PlaceholderPage title="Workspace Settings" />} />
+        <Route path="files/*" element={<FilesPage />} />
+        <Route path="git/*" element={<GitPage />} />
+        <Route path="settings/*" element={<Settings />} />
       </Route>
     </Routes>
   );
