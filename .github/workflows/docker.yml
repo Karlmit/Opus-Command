@@ -2,7 +2,6 @@ name: Build and Push
 
 on:
   push:
-    branches: [main]
     tags: ['v*']
 
 env:
@@ -37,12 +36,7 @@ jobs:
 
       - name: Get version
         id: version
-        run: |
-          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            echo "version=${{ github.ref_name }}" >> $GITHUB_OUTPUT
-          else
-            echo "version=$(node -p "require('./package.json').version")+$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-          fi
+        run: echo "version=${{ github.ref_name }}" >> $GITHUB_OUTPUT
 
       - name: Build and push app image
         uses: docker/build-push-action@v5
