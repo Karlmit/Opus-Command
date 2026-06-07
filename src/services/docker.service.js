@@ -11,8 +11,9 @@ const WORKSPACE_IMAGES = {
   powershell: 'ghcr.io/karlmit/opus-command-workspace-powershell:latest',
 };
 
-// Fallback image for development (when workspace images aren't available)
-const FALLBACK_IMAGE = 'ubuntu:22.04';
+// Fallback image used when workspace template images haven't been published yet.
+// debian:bookworm-slim is ~30MB, always on Docker Hub, and has bash.
+const FALLBACK_IMAGE = 'debian:bookworm-slim';
 
 function containerName(projectId) {
   return `opus-workspace-${projectId}`;
@@ -70,7 +71,9 @@ async function createWorkspaceContainer(projectId, folderPath, template) {
   const container = await docker.createContainer({
     name,
     Image: image,
-    Cmd: image === FALLBACK_IMAGE ? ['/bin/bash', '-c', 'while true; do sleep 60; done'] : undefined,
+    Cmd: !image.startsWith('ghcr.io/karlmit/opus-command-workspace')
+      ? ['/bin/bash', '-c', 'while true; do sleep 60; done']
+      : undefined,
     HostConfig: {
       Binds: [
         `${projectHostPath}:/workspace`,
@@ -118,7 +121,9 @@ async function recreateContainer(projectId, folderPath, template) {
   const container = await docker.createContainer({
     name,
     Image: image,
-    Cmd: image === FALLBACK_IMAGE ? ['/bin/bash', '-c', 'while true; do sleep 60; done'] : undefined,
+    Cmd: !image.startsWith('ghcr.io/karlmit/opus-command-workspace')
+      ? ['/bin/bash', '-c', 'while true; do sleep 60; done']
+      : undefined,
     HostConfig: {
       Binds: [`${projectHostPath}:/workspace`, `${homeVol}:/root`],
       RestartPolicy: { Name: 'unless-stopped' },

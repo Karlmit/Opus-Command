@@ -39,6 +39,24 @@ async function main() {
 
   fs.mkdirSync(DATA_DIR, { recursive: true });
 
+  // Pre-pull the fallback workspace image in the background so it's
+  // ready when the user creates their first project.
+  const { docker: dockerClient } = require('./services/docker.service');
+  const FALLBACK = 'debian:bookworm-slim';
+  dockerClient.getImage(FALLBACK).inspect()
+    .catch(() => {
+      console.log(`[startup] Pre-pulling fallback workspace image ${FALLBACK}…`);
+      return new Promise((resolve) => {
+        dockerClient.pull(FALLBACK, (err, stream) => {
+          if (err || !stream) return resolve();
+          dockerClient.modem.followProgress(stream, () => {
+            console.log(`[startup] ${FALLBACK} ready.`);
+            resolve();
+          });
+        });
+      });
+    });
+
   if (!fs.existsSync(AGENT_PATTERNS_PATH)) {
     fs.writeFileSync(AGENT_PATTERNS_PATH, JSON.stringify(DEFAULT_AGENT_PATTERNS, null, 2));
     console.log('[startup] Created default agent-patterns.json');
