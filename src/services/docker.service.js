@@ -69,9 +69,17 @@ async function createWorkspaceContainer(projectId, folderPath) {
   const container = await docker.createContainer({
     name,
     Image: image,
-    // Published image has CMD ["/bin/bash"]; fallback node:20-slim needs keepalive
+    // Published image has CMD ["/bin/bash"]; fallback node:20-slim needs:
+    // 1. Install Claude Code (if not already installed from a previous run)
+    // 2. Set up the cd override (since /etc/bash.bashrc from the image isn't present)
+    // 3. Keepalive loop
     Cmd: image === FALLBACK_IMAGE
-      ? ['/bin/bash', '-c', 'while true; do sleep 60; done']
+      ? ['bash', '-c',
+          'command -v claude || npm install -g @anthropic-ai/claude-code --quiet 2>&1 | tail -1; ' +
+          'grep -q "Opus Command" /etc/bash.bashrc 2>/dev/null || ' +
+          'echo \'cd() { builtin cd "${@:-/workspace}"; }\' >> /etc/bash.bashrc; ' +
+          'while true; do sleep 60; done'
+        ]
       : undefined,
     Env: userEnv,
     HostConfig: {
