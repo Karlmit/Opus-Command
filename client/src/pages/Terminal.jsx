@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -9,15 +9,16 @@ import { useToast } from '../components/Toast';
 import '@xterm/xterm/css/xterm.css';
 import './Terminal.css';
 
+// Singleton socket shared across renders
 let socket = null;
-
 function getSocket() {
-  if (!socket || socket.disconnected) {
-    socket = io({ autoConnect: true, reconnection: true, reconnectionDelay: 1000, reconnectionAttempts: 20 });
+  if (!socket) {
+    socket = io({ autoConnect: true, reconnection: true, reconnectionDelay: 1000, reconnectionAttempts: 30 });
   }
   return socket;
 }
 
+/* ── Terminal Tab ── */
 function TerminalTab({ session, active, onSelect, onRename, onClose }) {
   const [renaming, setRenaming] = useState(false);
   const [newName, setNewName] = useState(session.name);
@@ -47,11 +48,9 @@ function TerminalTab({ session, active, onSelect, onRename, onClose }) {
     }
   }
 
-  const aiState = session.aiState;
-
   return (
     <div
-      className={`terminal-tab${active ? ' active' : ''}${aiState !== 'none' ? ` ai-${aiState}` : ''}`}
+      className={`terminal-tab${active ? ' active' : ''}${session.aiState !== 'none' ? ` ai-${session.aiState}` : ''}`}
       onClick={() => onSelect(session.id)}
       role="tab"
       aria-selected={active}
@@ -73,7 +72,7 @@ function TerminalTab({ session, active, onSelect, onRename, onClose }) {
         <span className="terminal-tab-name" onDoubleClick={startRename}>{session.name}</span>
       )}
 
-      {aiState === 'waiting' && (
+      {session.aiState === 'waiting' && (
         <span className="badge-ai terminal-tab-ai-badge" aria-live="polite" aria-atomic="true">
           Waiting
         </span>
@@ -84,7 +83,6 @@ function TerminalTab({ session, active, onSelect, onRename, onClose }) {
           className={`terminal-tab-close${confirmClose ? ' confirming' : ''}`}
           onClick={handleClose}
           title={confirmClose ? 'Click again to kill' : 'Close'}
-          aria-label={confirmClose ? 'Confirm kill' : 'Close session'}
         >
           {confirmClose ? 'Kill?' : '×'}
         </button>
@@ -93,25 +91,27 @@ function TerminalTab({ session, active, onSelect, onRename, onClose }) {
   );
 }
 
+/* ── Main terminal page ── */
 export default function TerminalPage() {
   const { id: projectId } = useParams();
   const { csrfToken } = useAuth();
   const { addToast } = useToast();
 
-  const [sessions, setSessions] = useState([]);
-  const [activeSessionId, setActiveSessionId] = useState(null);
-  const [connected, setConnected] = useState(false);
+  const [sessions, setSessions]         = useState([]);
+  const [activeSessionId, setActive]    = useState(null);
   const [reconnecting, setReconnecting] = useState(false);
   const [reconnectTime, setReconnectTime] = useState(0);
 
-  const terminalRef = useRef(null);
-  const xtermRef = useRef(null);
-  const fitAddonRef = useRef(null);
-  const currentSessionRef = useRef(null);
+  // xterm lives in refs — never re-created on re-render
+  const terminalRef    = useRef(null); // DOM div
+  const xtermRef       = useRef(null); // XTerm instance
+  const fitAddonRef    = useRef(null); // FitAddon instance
+  const currentSession = useRef(null); // currently joined session ID
 
-  // Initialize xterm
+  /* ── 1. Initialize xterm once the DOM div mounts ── */
   useEffect(() => {
-    if (!terminalRef.current) return;
+    const div = terminalRef.current;
+    if (!div || xtermRef.current) return; // already initialized
 
     const term = new XTerm({
       theme: {
@@ -120,180 +120,185 @@ export default function TerminalPage() {
         cursor: '#3B82F6',
         selectionBackground: 'rgba(59,130,246,0.30)',
       },
-      fontFamily: "'JetBrains Mono', 'Cascadia Code', ui-monospace, monospace",
+      fontFamily: "'JetBrains Mono', 'Cascadia Code', 'Fira Code', ui-monospace, monospace",
       fontSize: 14,
       lineHeight: 1.5,
       cursorBlink: true,
       cursorStyle: 'block',
       scrollback: 5000,
-      allowProposedApi: true,
     });
 
     const fitAddon = new FitAddon();
-    const linksAddon = new WebLinksAddon();
     term.loadAddon(fitAddon);
-    term.loadAddon(linksAddon);
-    term.open(terminalRef.current);
-    fitAddon.fit();
+    term.loadAddon(new WebLinksAddon());
+    term.open(div);
 
-    xtermRef.current = term;
+    xtermRef.current   = term;
     fitAddonRef.current = fitAddon;
 
-    // Forward keyboard input to socket
+    // Keyboard → socket
     term.onData(data => {
       const sock = getSocket();
-      if (currentSessionRef.current && sock.connected) {
-        sock.emit('terminal:input', { sessionId: currentSessionRef.current, data });
+      if (currentSession.current && sock.connected) {
+        sock.emit('terminal:input', { sessionId: currentSession.current, data });
       }
     });
 
-    const resizeObserver = new ResizeObserver(() => {
-      fitAddon.fit();
-      if (currentSessionRef.current) {
-        const sock = getSocket();
-        sock.emit('terminal:resize', {
-          sessionId: currentSessionRef.current,
+    // Resize observer → fit + notify server
+    const ro = new ResizeObserver(() => {
+      try { fitAddon.fit(); } catch (_) {}
+      if (currentSession.current && term.cols && term.rows) {
+        getSocket().emit('terminal:resize', {
+          sessionId: currentSession.current,
           cols: term.cols,
           rows: term.rows,
         });
       }
     });
-    resizeObserver.observe(terminalRef.current);
+    ro.observe(div);
 
     return () => {
-      resizeObserver.disconnect();
+      ro.disconnect();
       term.dispose();
+      xtermRef.current    = null;
+      fitAddonRef.current = null;
     };
-  }, []);
+  }, []); // runs once on mount — terminalRef.current is always set because the div is always in the DOM
 
-  // Load sessions and set up socket
+  /* ── 2. Load sessions + set up socket listeners ── */
   useEffect(() => {
     loadSessions();
-    const sock = setupSocket();
+    const sock = getSocket();
+
+    function onConnect() {
+      setReconnecting(false);
+      // Re-join current session after reconnect
+      if (currentSession.current) {
+        sock.emit('terminal:join', { sessionId: currentSession.current });
+      }
+    }
+
+    function onDisconnect() {
+      setReconnecting(true);
+      setReconnectTime(0);
+    }
+
+    function onData({ sessionId, data }) {
+      if (sessionId === currentSession.current && xtermRef.current) {
+        xtermRef.current.write(data);
+      }
+    }
+
+    function onScrollback({ sessionId, data }) {
+      if (sessionId === currentSession.current && xtermRef.current) {
+        xtermRef.current.write(data);
+      }
+    }
+
+    function onExit({ sessionId }) {
+      setSessions(prev => prev.filter(s => s.id !== sessionId));
+      if (sessionId === currentSession.current) {
+        currentSession.current = null;
+        setActive(null);
+      }
+    }
+
+    function onAiState({ sessionId, state }) {
+      setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, aiState: state } : s));
+    }
+
+    sock.on('connect',           onConnect);
+    sock.on('disconnect',        onDisconnect);
+    sock.on('terminal:data',     onData);
+    sock.on('terminal:scrollback', onScrollback);
+    sock.on('terminal:exit',     onExit);
+    sock.on('terminal:ai-state', onAiState);
+
     return () => {
-      if (currentSessionRef.current) {
-        sock.emit('terminal:leave', { sessionId: currentSessionRef.current });
+      sock.off('connect',           onConnect);
+      sock.off('disconnect',        onDisconnect);
+      sock.off('terminal:data',     onData);
+      sock.off('terminal:scrollback', onScrollback);
+      sock.off('terminal:exit',     onExit);
+      sock.off('terminal:ai-state', onAiState);
+
+      if (currentSession.current) {
+        sock.emit('terminal:leave', { sessionId: currentSession.current });
       }
     };
   }, [projectId]);
 
+  /* ── Reconnect timer ── */
+  useEffect(() => {
+    if (!reconnecting) return;
+    const t = setInterval(() => setReconnectTime(n => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [reconnecting]);
+
   async function loadSessions() {
     try {
-      const res = await fetch(`/api/projects/${projectId}/terminals`);
+      const res  = await fetch(`/api/projects/${projectId}/terminals`);
       const data = await res.json();
-      setSessions(data.sessions || []);
-      // Auto-select first active session
-      const first = data.sessions?.[0];
-      if (first && !activeSessionId) {
-        selectSession(first.id);
-      }
+      const list = data.sessions || [];
+      setSessions(list);
+      if (list.length > 0) selectSession(list[0].id);
     } catch {
-      addToast('Failed to load terminal sessions.', 'error');
+      addToast('Failed to load sessions.', 'error');
     }
   }
 
-  function setupSocket() {
-    const sock = getSocket();
-
-    sock.on('connect', () => {
-      setConnected(true);
-      setReconnecting(false);
-      // Reattach to current session
-      if (currentSessionRef.current) {
-        sock.emit('terminal:join', { sessionId: currentSessionRef.current });
-      }
-    });
-
-    sock.on('disconnect', () => {
-      setConnected(false);
-      setReconnecting(true);
-      setReconnectTime(0);
-    });
-
-    sock.on('terminal:data', ({ sessionId, data }) => {
-      if (sessionId === currentSessionRef.current && xtermRef.current) {
-        xtermRef.current.write(data);
-      }
-    });
-
-    sock.on('terminal:scrollback', ({ sessionId, data }) => {
-      if (sessionId === currentSessionRef.current && xtermRef.current) {
-        xtermRef.current.clear();
-        xtermRef.current.write(data);
-      }
-    });
-
-    sock.on('terminal:exit', ({ sessionId }) => {
-      setSessions(prev => prev.filter(s => s.id !== sessionId));
-      if (sessionId === currentSessionRef.current) {
-        currentSessionRef.current = null;
-        setActiveSessionId(null);
-      }
-    });
-
-    sock.on('terminal:ai-state', ({ sessionId, state }) => {
-      setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, aiState: state } : s));
-    });
-
-    sock.on('project:status', ({ id, status }) => {
-      // Project status changed — update terminal count if needed
-    });
-
-    return sock;
-  }
-
-  // Reconnect timer
-  useEffect(() => {
-    if (!reconnecting) return;
-    const interval = setInterval(() => setReconnectTime(t => t + 1), 1000);
-    return () => clearInterval(interval);
-  }, [reconnecting]);
-
+  /* ── Select (join) a session ── */
   function selectSession(sessionId) {
     const sock = getSocket();
 
-    // Leave current session room
-    if (currentSessionRef.current && currentSessionRef.current !== sessionId) {
-      sock.emit('terminal:leave', { sessionId: currentSessionRef.current });
+    // Leave old room
+    if (currentSession.current && currentSession.current !== sessionId) {
+      sock.emit('terminal:leave', { sessionId: currentSession.current });
     }
 
-    currentSessionRef.current = sessionId;
-    setActiveSessionId(sessionId);
+    currentSession.current = sessionId;
+    setActive(sessionId);
 
-    // Join new session room
-    sock.emit('terminal:join', { sessionId });
+    // Clear terminal content before showing new session
+    xtermRef.current?.clear();
 
-    // Resize after selection
-    setTimeout(() => {
-      fitAddonRef.current?.fit();
-      if (xtermRef.current && sessionId) {
-        sock.emit('terminal:resize', {
-          sessionId,
-          cols: xtermRef.current.cols,
-          rows: xtermRef.current.rows,
-        });
-      }
-    }, 50);
+    const join = () => {
+      sock.emit('terminal:join', { sessionId });
+      // Two rAF cycles ensure the div is painted and measurable before fitting
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        try { fitAddonRef.current?.fit(); } catch (_) {}
+        if (xtermRef.current && sock.connected) {
+          sock.emit('terminal:resize', {
+            sessionId,
+            cols: xtermRef.current.cols,
+            rows: xtermRef.current.rows,
+          });
+        }
+        xtermRef.current?.focus();
+      }));
+    };
+
+    if (sock.connected) {
+      join();
+    } else {
+      // Socket not connected yet — join once it is
+      sock.once('connect', join);
+    }
   }
 
+  /* ── Create a new session ── */
   async function createSession() {
     try {
-      const res = await fetch(`/api/projects/${projectId}/terminals`, {
+      const res  = await fetch(`/api/projects/${projectId}/terminals`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
         body: JSON.stringify({}),
       });
       const data = await res.json();
       if (data.sessionId) {
-        setSessions(prev => [...prev, {
-          id: data.sessionId,
-          name: data.name,
-          active: true,
-          aiState: 'none',
-        }]);
+        const newSession = { id: data.sessionId, name: data.name, active: true, aiState: 'none' };
+        setSessions(prev => [...prev, newSession]);
         selectSession(data.sessionId);
-        xtermRef.current?.clear();
-        xtermRef.current?.focus();
       } else {
         addToast(data.error || 'Failed to create terminal.', 'error');
       }
@@ -307,9 +312,7 @@ export default function TerminalPage() {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
       body: JSON.stringify({ name }),
-    }).then(() => {
-      setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, name } : s));
-    });
+    }).then(() => setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, name } : s)));
   }
 
   async function handleClose(sessionId) {
@@ -317,49 +320,51 @@ export default function TerminalPage() {
       method: 'DELETE',
       headers: { 'X-CSRF-Token': csrfToken },
     });
-    setSessions(prev => prev.filter(s => s.id !== sessionId));
-    if (sessionId === activeSessionId) {
-      const remaining = sessions.filter(s => s.id !== sessionId);
-      if (remaining.length > 0) selectSession(remaining[0].id);
-      else setActiveSessionId(null);
-    }
+    setSessions(prev => {
+      const next = prev.filter(s => s.id !== sessionId);
+      if (sessionId === activeSessionId && next.length > 0) selectSession(next[0].id);
+      else if (next.length === 0) { currentSession.current = null; setActive(null); }
+      return next;
+    });
   }
 
+  /* ── Render ── */
   return (
     <div className="terminal-page">
-      {/* Tab bar */}
+
+      {/* Tab bar — always visible */}
       <div className="terminal-tab-bar" role="tablist" aria-label="Terminal sessions">
-        {sessions.map(session => (
+        {sessions.map(s => (
           <TerminalTab
-            key={session.id}
-            session={session}
-            active={session.id === activeSessionId}
+            key={s.id}
+            session={s}
+            active={s.id === activeSessionId}
             onSelect={selectSession}
             onRename={handleRename}
             onClose={handleClose}
           />
         ))}
-        <button className="terminal-new-btn btn btn-ghost" onClick={createSession} title="New terminal">
+        <button className="terminal-new-btn btn btn-ghost" onClick={createSession}>
           + New
         </button>
       </div>
 
-      {/* Terminal panel */}
+      {/* Terminal container */}
       <div className="terminal-container" role="tabpanel">
-        {sessions.length === 0 ? (
-          <div className="terminal-empty">
-            <p>No terminal sessions. Open a new terminal to start.</p>
+
+        {/*
+          The xterm div is ALWAYS in the DOM so xterm can open() on mount.
+          The empty-state overlay sits on top when there are no sessions.
+        */}
+        <div ref={terminalRef} className="terminal-xterm" />
+
+        {sessions.length === 0 && (
+          <div className="terminal-empty-overlay">
+            <p>No terminal sessions.</p>
             <button className="btn btn-primary" onClick={createSession}>New Terminal</button>
           </div>
-        ) : (
-          <div
-            ref={terminalRef}
-            className="terminal-xterm"
-            style={{ display: activeSessionId ? 'block' : 'none' }}
-          />
         )}
 
-        {/* Reconnect overlay */}
         {reconnecting && (
           <div className="terminal-reconnect-overlay">
             <span className="terminal-reconnect-text">
@@ -377,17 +382,11 @@ export default function TerminalPage() {
           {sessions.find(s => s.id === activeSessionId)?.name || 'Terminal'}
         </span>
         <button className="btn btn-ghost" onClick={() => {
-          navigator.clipboard.readText().then(text => {
-            const sock = getSocket();
-            if (activeSessionId) sock.emit('terminal:input', { sessionId: activeSessionId, data: text });
-          }).catch(() => {});
+          navigator.clipboard.readText()
+            .then(text => getSocket().emit('terminal:input', { sessionId: activeSessionId, data: text }))
+            .catch(() => {});
         }}>Paste</button>
-        <button className="btn btn-ghost" onClick={() => xtermRef.current?.focus()}>
-          Keyboard
-        </button>
-        <button className="btn btn-ghost" onClick={() => setSessions(s => [...s])}>
-          Sessions
-        </button>
+        <button className="btn btn-ghost" onClick={() => xtermRef.current?.focus()}>Keyboard</button>
       </div>
     </div>
   );
