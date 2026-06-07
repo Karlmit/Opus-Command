@@ -1,5 +1,5 @@
 const Dockerode = require('dockerode');
-const { PROJECTS_DIR } = require('../config');
+const { PROJECTS_DIR, HOST_PROJECTS_DIR } = require('../config');
 const path = require('path');
 
 const docker = new Dockerode({ socketPath: '/var/run/docker.sock' });
@@ -44,7 +44,9 @@ async function createWorkspaceContainer(projectId, folderPath) {
   const image = await getWorkspaceImage();
   const name = containerName(projectId);
   const homeVol = homeVolumeName(projectId);
-  const projectHostPath = path.join(PROJECTS_DIR, folderPath);
+  // Use the HOST-side path for bind mounts — the Docker daemon resolves
+  // paths relative to the host, not relative to this container's filesystem.
+  const projectHostPath = path.join(HOST_PROJECTS_DIR, folderPath);
 
   // Load user-configured environment variables (e.g. Azure AI Foundry keys)
   const { getWorkspaceEnvVars } = require('./auth.service');
@@ -108,7 +110,7 @@ async function recreateContainer(projectId, folderPath) {
   const homeVol = homeVolumeName(projectId);
   const image = await getWorkspaceImage();
   const name = containerName(projectId);
-  const projectHostPath = path.join(PROJECTS_DIR, folderPath);
+  const projectHostPath = path.join(HOST_PROJECTS_DIR, folderPath);
 
   const { getWorkspaceEnvVars } = require('./auth.service');
   const userEnv = getWorkspaceEnvVars().map(({ key, value }) => `${key}=${value}`);

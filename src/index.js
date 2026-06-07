@@ -7,7 +7,7 @@ const compression = require('compression');
 const path = require('path');
 const fs = require('fs');
 
-const { PORT, SESSION_SECRET, NODE_ENV, DATA_DIR, AGENT_PATTERNS_PATH } = require('./config');
+const { PORT, SESSION_SECRET, NODE_ENV, DATA_DIR, AGENT_PATTERNS_PATH, HOST_PROJECTS_DIR, PROJECTS_DIR } = require('./config');
 const { initDB, getSQLite } = require('./db');
 const SQLiteSessionStore = require('./middleware/sessionStore');
 const { csrfMiddleware } = require('./middleware/csrf');
@@ -158,6 +158,12 @@ async function main() {
   server.listen(PORT, () => {
     const elapsed = Date.now() - startTime;
     console.log(`[startup] Opus Command v${require('../package.json').version} ready on port ${PORT} (${elapsed}ms)`);
+    if (HOST_PROJECTS_DIR !== PROJECTS_DIR) {
+      console.log(`[startup] Workspace bind mounts use host path: ${HOST_PROJECTS_DIR}`);
+    } else {
+      console.log(`[startup] WARNING: HOST_PROJECTS_DIR not set — workspace bind mounts use ${PROJECTS_DIR}`);
+      console.log(`[startup] If running in Docker, set HOST_PROJECTS_DIR to the host-side projects path.`);
+    }
   });
 
   // Expose io for use by other modules

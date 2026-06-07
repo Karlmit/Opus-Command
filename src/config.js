@@ -5,9 +5,20 @@ const DATA_DIR = process.env.DATA_DIR ||
 
 const PROJECTS_DIR = process.env.PROJECTS_DIR || '/projects';
 
+// HOST_PROJECTS_DIR is the path to the projects folder AS SEEN BY THE DOCKER HOST.
+// When opus-command runs inside Docker, workspace container bind mounts are
+// resolved by the host Docker daemon — so they need the real host-side path.
+//
+// Example: if your docker-compose has "- /mnt/user/projects:/projects",
+// set HOST_PROJECTS_DIR=/mnt/user/projects in your environment.
+//
+// If not set, falls back to PROJECTS_DIR (correct for bare-metal installs).
+const HOST_PROJECTS_DIR = process.env.HOST_PROJECTS_DIR || PROJECTS_DIR;
+
 module.exports = {
   DATA_DIR,
   PROJECTS_DIR,
+  HOST_PROJECTS_DIR,
   DB_PATH: path.join(DATA_DIR, 'db.sqlite'),
   AGENT_PATTERNS_PATH: path.join(DATA_DIR, 'agent-patterns.json'),
   PORT: parseInt(process.env.PORT || '3000', 10),

@@ -10,6 +10,10 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - SESSION_SECRET=${SESSION_SECRET:-change-me-in-production}
+      # HOST_PROJECTS_DIR must match the LEFT side of the /projects volume above.
+      # This is needed because workspace containers are created via the Docker socket
+      # and bind mount paths are resolved on the HOST, not inside this container.
+      - HOST_PROJECTS_DIR=/mnt/user/opus-projects
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/setup/status"]
