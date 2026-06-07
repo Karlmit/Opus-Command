@@ -40,33 +40,9 @@ async function getWorkspaceImage() {
   }
 }
 
-async function createWorkspaceContainer(projectId, folderPath) {
-  const image = await getWorkspaceImage();
-  const name = containerName(projectId);
-  const homeVol = homeVolumeName(projectId);
-  // Use the HOST-side path for bind mounts — the Docker daemon resolves
-  // paths relative to the host, not relative to this container's filesystem.
-  const projectHostPath = path.join(HOST_PROJECTS_DIR, folderPath);
-
-  // Load user-configured environment variables (e.g. Azure AI Foundry keys)
-  const { getWorkspaceEnvVars } = require('./auth.service');
-  const userEnv = getWorkspaceEnvVars().map(({ key, value }) => `${key}=${value}`);
-
-  // Create home volume if it doesn't exist
-  try {
-    await docker.getVolume(homeVol).inspect();
-  } catch {
-    await docker.createVolume({ Name: homeVol });
-  }
-
-  // Remove existing container if any
-  try {
-    const existing = docker.getContainer(name);
-    await existing.stop().catch(() => {});
-    await existing.remove();
-  } catch (_) {}
-
-  // Build startup script — runs once on container start to initialise the home volume
+// Shared startup Cmd — used by createWorkspaceContainer AND recreateContainer
+// so every container (new, recreated, rebuilt, reset) runs the same init script.
+function buildWorkspaceCmd(image) {
   const claudeSettings = JSON.stringify({
     model: 'sonnet',
     enabledPlugins: { 'azure@azure-skills': true },
@@ -77,16 +53,12 @@ async function createWorkspaceContainer(projectId, folderPath) {
 
   const initScript = [
     'mkdir -p ~/.claude ~/bin ~/.npm-global',
-    // CLAUDE.md — install instructions for Claude Code
     '[ -f ~/.claude/CLAUDE.md ] || cp /etc/opus-command/CLAUDE.md ~/.claude/CLAUDE.md 2>/dev/null || true',
-    // settings.json — enables the azure-skills plugin
     `[ -f ~/.claude/settings.json ] || echo '${claudeSettings}' > ~/.claude/settings.json`,
-    // npm prefix → home volume so global installs survive Recreate
     '[ -f ~/.npmrc ] || echo "prefix=${HOME}/.npm-global" > ~/.npmrc',
-    // Write Azure AI Foundry vars to ~/.bashrc so they are available in every interactive shell.
-    // CLAUDE_CODE_USE_FOUNDRY=1 is the key flag that switches Claude Code into Foundry mode.
-    // The other vars come from Docker env injection (Opus Command Settings).
-    // Skip if already written (grep check) and only write if ANTHROPIC_FOUNDRY_RESOURCE is set.
+    // CLAUDE_CODE_USE_FOUNDRY=1 is required to activate Azure AI Foundry mode in Claude Code.
+    // All four vars are written to ~/.bashrc so they survive shell restarts.
+    // Idempotent: skipped if already present, and guarded by ANTHROPIC_FOUNDRY_RESOURCE being set.
     'grep -q "CLAUDE_CODE_USE_FOUNDRY" ~/.bashrc 2>/dev/null || ' +
     '[ -z "$ANTHROPIC_FOUNDRY_RESOURCE" ] || ' +
     'printf "\\n# Claude Code — Azure AI Foundry\\n' +
@@ -104,17 +76,37 @@ async function createWorkspaceContainer(projectId, folderPath) {
       'cd() { builtin cd "${@:-/workspace}"; }\\n\' >> /etc/bash.bashrc; '
     : '';
 
+  return ['bash', '-c', fallbackInit + initScript + '; while true; do sleep 60; done'];
+}
+
+async function createWorkspaceContainer(projectId, folderPath) {
+  const image = await getWorkspaceImage();
+  const name = containerName(projectId);
+  const homeVol = homeVolumeName(projectId);
+  const projectHostPath = path.join(HOST_PROJECTS_DIR, folderPath);
+
+  const { getWorkspaceEnvVars } = require('./auth.service');
+  const userEnv = getWorkspaceEnvVars().map(({ key, value }) => `${key}=${value}`);
+
+  try {
+    await docker.getVolume(homeVol).inspect();
+  } catch {
+    await docker.createVolume({ Name: homeVol });
+  }
+
+  try {
+    const existing = docker.getContainer(name);
+    await existing.stop().catch(() => {});
+    await existing.remove();
+  } catch (_) {}
+
   const container = await docker.createContainer({
     name,
     Image: image,
-    Cmd: ['bash', '-c', fallbackInit + initScript + '; while true; do sleep 60; done'],
+    Cmd: buildWorkspaceCmd(image),
     Env: userEnv,
     HostConfig: {
-      Binds: [
-        `${projectHostPath}:/workspace`,
-        `${homeVol}:/root`,
-      ],
-      // Workspace containers do NOT get the Docker socket
+      Binds: [`${projectHostPath}:/workspace`, `${homeVol}:/root`],
       RestartPolicy: { Name: 'unless-stopped' },
     },
     WorkingDir: '/workspace',
@@ -159,7 +151,7 @@ async function recreateContainer(projectId, folderPath) {
   const container = await docker.createContainer({
     name,
     Image: image,
-    Cmd: ['bash', '-c', 'while true; do sleep 60; done'],
+    Cmd: buildWorkspaceCmd(image),
     Env: userEnv,
     HostConfig: {
       Binds: [`${projectHostPath}:/workspace`, `${homeVol}:/root`],
