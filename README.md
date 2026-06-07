@@ -123,6 +123,7 @@ Open **http://localhost:3000**. First startup shows a setup screen to create you
 
 #### File Management
 - File tree rooted at project folder, auto-refreshes within 2 seconds of AI agent changes
+- **Git status indicators** — coloured dots and tinted filenames in the tree (M=amber, A=green, D=red, R=blue, ?=grey); directory dot when any child has changes
 - Toolbar with New File and New Folder buttons (also available via right-click context menu)
 - Operations: create, rename, delete (with confirmation), download, copy absolute path
 - Drag-and-drop file upload — per-file progress toasts, error toasts per failed file
@@ -139,17 +140,20 @@ Open **http://localhost:3000**. First startup shows a setup screen to create you
 - "This file cannot be displayed." for binary and unsupported types
 
 #### Git Integration
-- Branch name, changed file count, and clean/dirty status
-- Changed files list with status badges (M / A / D / R / ?)
-- Unified diff view — added lines in green (20% opacity), removed lines in red (20% opacity)
-- Stage and unstage files via checkbox; commit with message
-- Single-file revert — inline two-click confirmation
-- Revert all changes — modal confirmation
+- **GitKraken-inspired three-pane layout** — toolbar, left changes panel, right diff/history
+- Branch pill showing current branch; new-branch form to create and switch in one step
+- Ahead/behind commit counts with Fetch, Pull, and Push buttons
+- Changed files list with coloured status badges (M / A / D / R / ?)
+- Line-numbered unified diff view — added lines green, removed lines red, hunk headers accented
+- Stage / unstage files via checkbox; commit with message (Ctrl+Enter shortcut)
+- Single-file revert — inline two-click confirmation; Revert All with modal confirmation
 - Create branch from current HEAD
+- **Commit history with visual branch graph** — coloured dots per branch, relative timestamps, ref pills (HEAD, branch, remote, tag)
 - Snapshots — annotated git tags (`snapshot/YYYY-MM-DD-HH-MM-SS`) with optional label
-- Snapshot list with human-readable timestamps ("Today at 14:22")
-- Restore from snapshot — modal confirmation warns uncommitted changes will be overwritten
+- Snapshot list with human-readable timestamps ("Today at 14:22"), restore with one-click confirmation
+- Restore fully resets working tree: `git checkout tag -- .` + `git clean -fd`
 - Git panel auto-refreshes within 3 seconds
+- Auto-detects git root inside workspace container (handles repos in subdirectories)
 - All git operations execute inside the workspace container
 
 #### Settings
@@ -186,7 +190,7 @@ Open **http://localhost:3000**. First startup shows a setup screen to create you
 | **Editor** | Simple textarea — no syntax highlighting yet (CodeMirror integration planned) |
 | **Workspace images** | Template images are published on release tags; the `general` template falls back to `ubuntu:22.04` in development |
 | **File operations** | Copy and Move not yet implemented (workaround: download + re-upload, or use the terminal) |
-| **Git** | No push/pull — remote operations must be done in the terminal |
+| **Git** | No interactive rebase, stash, or cherry-pick — complex operations must be done in the terminal |
 | **Terminal** | No split-pane view within a single session |
 | **Notifications** | Badge + sound only when the browser tab is open — no background push notifications |
 | **Mobile terminal** | Log viewer works for simple commands but not full-screen TUIs (Claude Code, htop, vim). Mobile terminal is read-only with command input; it does not render cursor-addressed output correctly |
@@ -198,7 +202,7 @@ Open **http://localhost:3000**. First startup shows a setup screen to create you
 
 - **CodeMirror editor** — full syntax highlighting for JS, TS, Python, Go, Rust, CSS, and all other CodeMirror-supported languages
 - **File copy and move** — drag-and-drop within the file tree
-- **Git push / pull** — remote operations from the Git panel (requires credential management in home volume)
+- **Stash / unstash, cherry-pick, interactive rebase** — advanced git operations from the panel
 - **Multi-terminal split view** — side-by-side terminal panes
 - **Push notifications** — notify your phone when Claude Code is waiting for input, without needing the browser open
 - **Opus Connector** — companion product for cross-device background AI notifications (see `OpusConnector_ProjectSpec.md`)

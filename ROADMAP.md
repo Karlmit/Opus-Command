@@ -129,7 +129,7 @@
 | 🔴 | Copy file / folder |
 | 🔴 | Move file / folder (drag-and-drop within tree) |
 | 🔴 | Multi-select for bulk operations |
-| 🔴 | File status indicators from git (modified dot, untracked colour) |
+| 🟢 | File status indicators from git — coloured dots + tinted names (M/A/D/R/?) in tree |
 
 ---
 
@@ -162,27 +162,27 @@
 
 | Status | Feature |
 |--------|---------|
-| 🟢 | Current branch name |
+| 🟢 | GitKraken-inspired three-pane layout (toolbar / changes+commit / diff+history) |
+| 🟢 | Branch pill — current branch name, new-branch form to create and switch |
+| 🟢 | Ahead/behind commit counts with Fetch, Pull, and Push buttons |
 | 🟢 | Changed file count and working tree status |
-| 🟢 | Changed files list with status badges (M / A / D / R / ?) |
-| 🟢 | Unified diff view — added lines green (20% opacity), removed lines red |
+| 🟢 | Changed files list with coloured status badges (M / A / D / R / ?) |
+| 🟢 | Line-numbered unified diff view — added green, removed red, hunk headers accented |
 | 🟢 | Stage and unstage files via checkbox |
-| 🟢 | Commit with message |
+| 🟢 | Commit with message (Ctrl+Enter shortcut) |
 | 🟢 | Revert single file — inline two-click confirmation |
 | 🟢 | Revert all changes — modal confirmation |
 | 🟢 | Create branch from current HEAD |
-| 🟢 | Snapshots — annotated tags `snapshot/YYYY-MM-DD-HH-MM-SS` |
+| 🟢 | Commit history with visual branch graph — coloured dots, relative timestamps, ref pills |
+| 🟢 | Snapshots — annotated tags `snapshot/YYYY-MM-DD-HH-MM-SS` with optional label |
 | 🟢 | Snapshot list with human-readable timestamps |
-| 🟢 | Restore from snapshot — warns uncommitted changes will be overwritten |
+| 🟢 | Restore from snapshot — `git checkout tag -- .` + `git clean -fd` for full reset |
 | 🟢 | Git panel auto-refreshes within 3 seconds |
+| 🟢 | Auto-detects git root inside container (handles repos in subdirectories) |
 | 🟢 | All git ops execute inside the workspace container |
-| 🔴 | Push to remote |
-| 🔴 | Pull from remote |
-| 🔴 | Fetch |
 | 🔴 | Stash / unstash |
 | 🔴 | Cherry-pick commit |
 | 🔴 | Interactive rebase |
-| 🔴 | Commit history log with graph |
 | 🔴 | GitHub / Azure DevOps pull request integration |
 
 ---
