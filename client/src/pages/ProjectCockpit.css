@@ -720,4 +720,17 @@
 
   /* Cockpit project footer on mobile */
   .cockpit-project-footer { padding: var(--spacing-md); }
+
+  /* Momentum scrolling on all scroll containers */
+  .filetree-scroll,
+  .panel-content,
+  .git-diff,
+  .panel-logs {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
+  }
+
+  /* Terminal: tell browser xterm owns all touch — no scroll interception */
+  .terminal-instance { touch-action: none; }
 }

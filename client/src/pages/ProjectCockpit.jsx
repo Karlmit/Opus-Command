@@ -187,14 +187,23 @@ function TerminalInstance({ sessionId, active, termRefs }) {
     term.loadAddon(new WebLinksAddon());
 
     let ro = null;
-    const onWinResize = () => { try { fit.fit(); } catch (_) {} };
-
-    const doFit = () => {
+    const isMobile = () => window.innerWidth <= 768;
+    const onWinResize = () => {
       try { fit.fit(); } catch (_) {}
+      // Don't resize PTY from mobile — would wrap PC terminal output at phone width
+      if (!isMobile()) doResizeEmit();
+    };
+
+    const doResizeEmit = () => {
       const sock = getSocket();
       if (term.cols && term.rows && sock.connected) {
         sock.emit('terminal:resize', { sessionId, cols: term.cols, rows: term.rows });
       }
+    };
+
+    const doFit = () => {
+      try { fit.fit(); } catch (_) {}
+      if (!isMobile()) doResizeEmit();
     };
 
     // Open terminal — wait for font so glyph width is measured correctly
