@@ -87,7 +87,7 @@ function buildWorkspaceCmd(image) {
   const agentStart =
     '[ -f /opt/terminal-agent/index.js ] && node /opt/terminal-agent/index.js &';
 
-  return ['bash', '-c', fallbackInit + initScript + '; ' + agentStart + '; while true; do sleep 60; done'];
+  return ['bash', '-c', `${fallbackInit}${initScript}\n${agentStart}\nwhile true; do sleep 60; done`];
 }
 
 // ── Internal network management ──────────────────────────────────────────────
