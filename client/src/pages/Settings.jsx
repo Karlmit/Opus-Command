@@ -388,8 +388,7 @@ function ClaudeSection({ csrfToken, addToast }) {
   async function save() {
     setSaving(true);
     const allVars = AZURE_FIELDS
-      .map(f => ({ key: f.key, value: vars[f.key] || '' }))
-      .filter(v => v.value);
+      .map(f => ({ key: f.key, value: vars[f.key] || '' }));
     try {
       const res = await fetch('/api/settings/workspace-env', {
         method: 'POST',
@@ -449,6 +448,115 @@ function ClaudeSection({ csrfToken, addToast }) {
   );
 }
 
+function GitHubSection({ csrfToken, addToast }) {
+  const [token, setToken]     = useState('');
+  const [hasToken, setHasToken] = useState(false);
+  const [show, setShow]       = useState(false);
+  const [saving, setSaving]   = useState(false);
+
+  useEffect(() => {
+    fetch('/api/settings/workspace-env')
+      .then(r => r.json())
+      .then(data => {
+        const ghVar = (data.vars || []).find(v => v.key === 'GH_TOKEN');
+        setHasToken(!!ghVar?.value);
+      })
+      .catch(() => {});
+  }, []);
+
+  async function save() {
+    if (!token) return;
+    setSaving(true);
+    try {
+      const res = await fetch('/api/settings/workspace-env', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ vars: [{ key: 'GH_TOKEN', value: token }] }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        addToast('GitHub token saved.');
+        setHasToken(true);
+        setToken('');
+        setShow(false);
+      } else {
+        addToast(data.error || 'Save failed.', 'error');
+      }
+    } catch { addToast('Save failed.', 'error'); }
+    finally { setSaving(false); }
+  }
+
+  async function remove() {
+    setSaving(true);
+    try {
+      const res = await fetch('/api/settings/workspace-env', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ vars: [{ key: 'GH_TOKEN', value: '' }] }),
+      });
+      const data = await res.json();
+      if (data.success) { addToast('GitHub token removed.'); setHasToken(false); }
+    } catch { addToast('Remove failed.', 'error'); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <div className="settings-section">
+      <h2 className="settings-section-title">GITHUB</h2>
+
+      {hasToken && (
+        <div className="github-token-status">
+          <span className="github-token-set">Token configured</span>
+          <button className="btn btn-ghost" onClick={remove} disabled={saving}>Remove</button>
+        </div>
+      )}
+
+      <div className="form-group">
+        <label className="form-label">{hasToken ? 'Replace token' : 'Personal Access Token'}</label>
+        <div className="claude-input-row">
+          <input
+            className="input"
+            type={show ? 'text' : 'password'}
+            value={token}
+            onChange={e => setToken(e.target.value)}
+            placeholder={hasToken ? 'Enter new token to replace…' : 'ghp_…'}
+            autoComplete="off"
+          />
+          <button className="btn btn-ghost claude-reveal" type="button"
+            onClick={() => setShow(s => !s)}
+            aria-label={show ? 'Hide' : 'Show'}>
+            {show ? '🙈' : '👁'}
+          </button>
+        </div>
+      </div>
+
+      <div className="github-scopes">
+        <p className="github-scopes-title">Required token permissions</p>
+        <ul className="github-scopes-list">
+          <li><code>repo</code> — read/write repositories, create branches &amp; pull requests</li>
+          <li><code>workflow</code> — trigger and manage GitHub Actions runs</li>
+          <li><code>write:packages</code> — push Docker images to GitHub Container Registry (GHCR)</li>
+        </ul>
+        <p className="github-scopes-note">
+          Create a classic token at{' '}
+          <a href="https://github.com/settings/tokens/new" target="_blank" rel="noopener noreferrer">
+            github.com/settings/tokens/new
+          </a>. After saving, open your project → <strong>Workspace</strong> tab → <strong>Recreate</strong> to apply.
+        </p>
+      </div>
+
+      <button
+        className="btn btn-primary"
+        onClick={save}
+        disabled={saving || !token}
+        style={{ alignSelf: 'flex-start' }}
+      >
+        {saving ? 'Saving…' : 'Save Token'}
+      </button>
+    </div>
+  );
+}
+
 export default function Settings() {
   const { csrfToken } = useAuth();
   const { addToast } = useToast();
@@ -459,6 +567,7 @@ export default function Settings() {
         <h1 className="settings-title">SETTINGS</h1>
       </div>
       <div className="settings-content">
+        <GitHubSection csrfToken={csrfToken} addToast={addToast} />
         <ClaudeSection csrfToken={csrfToken} addToast={addToast} />
         <AccountSection csrfToken={csrfToken} addToast={addToast} />
         <AppearanceSection csrfToken={csrfToken} addToast={addToast} />

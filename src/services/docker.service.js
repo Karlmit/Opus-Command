@@ -72,6 +72,12 @@ function buildWorkspaceCmd(image) {
     'export ANTHROPIC_FOUNDRY_RESOURCE=$ANTHROPIC_FOUNDRY_RESOURCE\\n' +
     'export ANTHROPIC_DEFAULT_SONNET_MODEL=$ANTHROPIC_DEFAULT_SONNET_MODEL\\n' +
     'export ANTHROPIC_FOUNDRY_API_KEY=$ANTHROPIC_FOUNDRY_API_KEY\\n" >> ~/.bashrc',
+    // GH_TOKEN → write to ~/.bashrc so gh and git use it in interactive shells
+    'grep -q "GH_TOKEN" ~/.bashrc 2>/dev/null || ' +
+    '[ -z "$GH_TOKEN" ] || ' +
+    'printf "\\n# GitHub CLI\\nexport GH_TOKEN=$GH_TOKEN\\n" >> ~/.bashrc',
+    // Configure git to use gh as the credential helper (idempotent)
+    '[ -z "$GH_TOKEN" ] || command -v gh >/dev/null 2>&1 && GH_TOKEN=$GH_TOKEN gh auth setup-git 2>/dev/null || true',
   ].join('; ');
 
   const fallbackInit = image === FALLBACK_IMAGE

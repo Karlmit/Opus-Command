@@ -49,12 +49,21 @@ router.post('/workspace-env', requireAuth, (req, res) => {
   const { vars } = req.body; // [{ key, value }]
   if (!Array.isArray(vars)) return res.status(400).json({ error: 'vars must be an array.' });
 
-  const filtered = vars
+  const incoming = vars
     .filter(v => v.key && v.key.trim())
     .map(v => ({ key: v.key.trim().toUpperCase(), value: v.value || '' }));
 
-  setSetting('workspace_env_vars', JSON.stringify(filtered));
-  res.json({ success: true, count: filtered.length });
+  // Merge with existing: non-empty value = upsert, empty value = remove key, missing = preserve
+  let existing = [];
+  try { existing = JSON.parse(getSetting('workspace_env_vars') || '[]'); } catch {}
+  const map = Object.fromEntries(existing.map(v => [v.key, v.value]));
+  for (const { key, value } of incoming) {
+    if (value) map[key] = value;
+    else delete map[key];
+  }
+  const merged = Object.entries(map).map(([key, value]) => ({ key, value }));
+  setSetting('workspace_env_vars', JSON.stringify(merged));
+  res.json({ success: true, count: merged.length });
 });
 
 router.get('/version', requireAuth, (req, res) => {
