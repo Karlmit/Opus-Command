@@ -263,59 +263,96 @@ async function selfUpdate(onProgress) {
     throw new Error('Cannot identify own container. Make sure the container name matches.');
   }
 
-  const imageName = selfInfo.Config.Image; // e.g. ghcr.io/karlmit/opus-command:latest
+  const imageName = selfInfo.Config.Image;
 
-  // 2. Pull latest image — stream progress
+  // 2. Pull latest image
   onProgress({ step: 'pull', message: 'Pulling latest image…' });
   await new Promise((resolve, reject) => {
     docker.pull(imageName, (err, stream) => {
       if (err) return reject(err);
       docker.modem.followProgress(stream, (err) => err ? reject(err) : resolve(), (event) => {
-        if (event.status) onProgress({ step: 'pull', message: event.status, detail: event.progressDetail });
+        if (event.status) onProgress({ step: 'pull', message: event.status });
       });
     });
   });
 
-  // 3. Compare image IDs — is there actually a new version?
+  // 3. Check if actually a new image
   const newImage = await docker.getImage(imageName).inspect();
   if (newImage.Id === selfInfo.Image) {
     return { alreadyLatest: true };
   }
 
-  // 4. Prepare new container name (temp)
-  const originalName = selfInfo.Name.replace(/^\//, '');
-  const tempName = `${originalName}-next`;
-  try { await docker.getContainer(tempName).remove({ force: true }); } catch (_) {}
+  // 4. Build the conductor script.
+  //
+  //    PROBLEM WITH THE PREVIOUS APPROACH:
+  //    When the old code called `docker stop <self>`, it killed its own
+  //    Node.js process. `newContainer.start()` and the rename never ran.
+  //    The old container ended up stopped with nothing replacing it.
+  //
+  //    THE FIX — conductor container pattern:
+  //    Launch a small container from the NEW image before stopping the old one.
+  //    The conductor runs in its own process tree, completely separate from ours.
+  //    When it calls `docker stop <us>`, our process dies but the conductor
+  //    keeps running and completes the handoff.
+  //
+  //    The conductor uses Node.js + dockerode (already in /app of our image)
+  //    to operate entirely via the Docker socket — no docker CLI needed.
 
-  // 5. Create new container with identical config + new image
-  onProgress({ step: 'create', message: 'Creating new container…' });
-  const newContainer = await docker.createContainer({
-    name: tempName,
-    Image: imageName,
-    Env: selfInfo.Config.Env,
-    HostConfig: selfInfo.HostConfig,
-    Labels: selfInfo.Config.Labels,
+  const originalName  = selfInfo.Name.replace(/^\//, '');
+  const conductorName = `${originalName}-conductor`;
+
+  // Clean up any conductor left from a previous failed attempt
+  try { await docker.getContainer(conductorName).remove({ force: true }); } catch (_) {}
+
+  // Inline script: wait → stop old → remove old → create new → start new
+  const conductorScript = `
+    const Dockerode = require('/app/node_modules/dockerode');
+    const docker = new Dockerode({ socketPath: '/var/run/docker.sock' });
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+
+    async function run() {
+      await wait(3000);
+      console.log('[conductor] Stopping old container…');
+      const old = docker.getContainer(${JSON.stringify(selfId)});
+      await old.stop({ t: 10 }).catch(e => console.warn('stop:', e.message));
+      await old.remove().catch(e => console.warn('remove:', e.message));
+
+      console.log('[conductor] Creating new container…');
+      const next = await docker.createContainer({
+        name: ${JSON.stringify(originalName)},
+        Image: ${JSON.stringify(imageName)},
+        Env: ${JSON.stringify(selfInfo.Config.Env)},
+        HostConfig: ${JSON.stringify(selfInfo.HostConfig)},
+        Labels: ${JSON.stringify(selfInfo.Config.Labels || {})},
+      });
+
+      console.log('[conductor] Starting new container…');
+      await next.start();
+      console.log('[conductor] Done.');
+    }
+
+    run().catch(e => { console.error('[conductor] Error:', e.message); process.exit(1); });
+  `;
+
+  onProgress({ step: 'restart', message: 'Launching conductor…' });
+
+  const conductor = await docker.createContainer({
+    name: conductorName,
+    Image: imageName,          // New image — has Node.js + dockerode at /app
+    Cmd: ['node', '-e', conductorScript],
+    WorkingDir: '/app',
+    HostConfig: {
+      AutoRemove: true,        // Self-cleans when done
+      Binds: ['/var/run/docker.sock:/var/run/docker.sock'],
+    },
   });
 
-  // 6. Handoff: send this response, then stop self and start new container.
-  //    2 s gives the HTTP response time to reach the client before the
-  //    connection drops. The client's reconnect overlay handles the gap.
-  onProgress({ step: 'restart', message: 'Restarting with new version…' });
+  await conductor.start();
 
-  setTimeout(async () => {
-    try {
-      const self = docker.getContainer(selfId);
-      await self.stop({ t: 5 });
-      await newContainer.start();
-      // Rename new container to the original name
-      await newContainer.rename({ name: originalName });
-      // Remove the old (now stopped) container
-      await self.remove().catch(() => {});
-    } catch (e) {
-      console.error('[self-update] Handoff error:', e.message);
-    }
-  }, 2000);
+  onProgress({ step: 'restart', message: 'Restarting with new version — reconnecting shortly…' });
 
+  // The conductor takes over from here. We return the response now so the
+  // browser receives it before the conductor stops our container in ~3 seconds.
   return { updating: true };
 }
 
