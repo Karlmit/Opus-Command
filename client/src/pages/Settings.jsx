@@ -363,6 +363,9 @@ const AZURE_FIELDS = [
   },
 ];
 
+// CLAUDE_CODE_USE_FOUNDRY=1 is always written to ~/.bashrc by the workspace
+// init script alongside the above fields — no user input needed.
+
 function ClaudeSection({ csrfToken, addToast }) {
   const [vars, setVars]        = useState({});
   const [saving, setSaving]    = useState(false);
@@ -407,7 +410,9 @@ function ClaudeSection({ csrfToken, addToast }) {
         <span className="claude-section-badge">Azure AI Foundry</span>
       </div>
       <p className="claude-section-desc">
-        Injected into every workspace container so Claude Code connects to your Azure deployment automatically.
+        These values are injected into every workspace container and written to <code>~/.bashrc</code>
+        so Claude Code connects to Azure AI Foundry automatically.
+        <code>CLAUDE_CODE_USE_FOUNDRY=1</code> is added automatically alongside them.
         After saving, open your project → <strong>Workspace</strong> tab → <strong>Recreate</strong> to apply.
       </p>
 

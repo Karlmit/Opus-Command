@@ -79,10 +79,21 @@ async function createWorkspaceContainer(projectId, folderPath) {
     'mkdir -p ~/.claude ~/bin ~/.npm-global',
     // CLAUDE.md — install instructions for Claude Code
     '[ -f ~/.claude/CLAUDE.md ] || cp /etc/opus-command/CLAUDE.md ~/.claude/CLAUDE.md 2>/dev/null || true',
-    // settings.json — enables the azure-skills plugin so Claude Code connects via Azure AI Foundry
+    // settings.json — enables the azure-skills plugin
     `[ -f ~/.claude/settings.json ] || echo '${claudeSettings}' > ~/.claude/settings.json`,
     // npm prefix → home volume so global installs survive Recreate
     '[ -f ~/.npmrc ] || echo "prefix=${HOME}/.npm-global" > ~/.npmrc',
+    // Write Azure AI Foundry vars to ~/.bashrc so they are available in every interactive shell.
+    // CLAUDE_CODE_USE_FOUNDRY=1 is the key flag that switches Claude Code into Foundry mode.
+    // The other vars come from Docker env injection (Opus Command Settings).
+    // Skip if already written (grep check) and only write if ANTHROPIC_FOUNDRY_RESOURCE is set.
+    'grep -q "CLAUDE_CODE_USE_FOUNDRY" ~/.bashrc 2>/dev/null || ' +
+    '[ -z "$ANTHROPIC_FOUNDRY_RESOURCE" ] || ' +
+    'printf "\\n# Claude Code — Azure AI Foundry\\n' +
+    'export CLAUDE_CODE_USE_FOUNDRY=1\\n' +
+    'export ANTHROPIC_FOUNDRY_RESOURCE=$ANTHROPIC_FOUNDRY_RESOURCE\\n' +
+    'export ANTHROPIC_DEFAULT_SONNET_MODEL=$ANTHROPIC_DEFAULT_SONNET_MODEL\\n' +
+    'export ANTHROPIC_FOUNDRY_API_KEY=$ANTHROPIC_FOUNDRY_API_KEY\\n" >> ~/.bashrc',
   ].join('; ');
 
   const fallbackInit = image === FALLBACK_IMAGE
