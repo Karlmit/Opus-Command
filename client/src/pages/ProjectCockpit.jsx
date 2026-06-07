@@ -87,47 +87,111 @@ function FileNode({ node, depth, projectId, csrfToken, onOpenFile, activeFilePat
 /* ── Terminal instance ─────────────────────────── */
 function TerminalInstance({ sessionId, active, termRefs }) {
   const divRef = useRef(null);
-  const xtermRef = useRef(null);
-  const fitRef = useRef(null);
 
   useEffect(() => {
-    if (!divRef.current || xtermRef.current) return;
+    if (!divRef.current || termRefs.current[sessionId]) return;
+
     const term = new XTerm({
+      // Font — Cascadia Mono matches Windows Terminal exactly
+      fontFamily: '"Cascadia Mono", monospace',
+      fontSize: 16,
+      fontWeight: 400,
+      fontWeightBold: 700,
+      lineHeight: 1.0,
+      letterSpacing: 0,
+
+      // Theme
       theme: {
         background: '#1E2024',
         foreground: '#E8EAED',
         cursor: '#3B82F6',
+        cursorAccent: '#1E2024',
         selectionBackground: 'rgba(59,130,246,0.30)',
         scrollbarSliderBackground: 'rgba(255,255,255,0.10)',
         scrollbarSliderHoverBackground: 'rgba(255,255,255,0.20)',
         scrollbarSliderActiveBackground: 'rgba(255,255,255,0.30)',
       },
-      fontFamily: "'JetBrains Mono','Cascadia Code',ui-monospace,monospace",
-      fontSize: 14, lineHeight: 1.0, cursorBlink: true, cursorStyle: 'block', scrollback: 5000,
+
+      cursorBlink: true,
+      cursorStyle: 'block',
+      scrollback: 5000,
+      allowTransparency: false,
     });
+
     const fit = new FitAddon();
-    term.loadAddon(fit); term.loadAddon(new WebLinksAddon());
-    term.open(divRef.current);
-    xtermRef.current = term; fitRef.current = fit;
-    term.onData(data => { if (getSocket().connected) getSocket().emit('terminal:input', { sessionId, data }); });
+    term.loadAddon(fit);
+    term.loadAddon(new WebLinksAddon());
+
+    // Wait for Cascadia Mono to load so xterm measures the correct glyph width.
+    // Wrong glyph width → wrong col count → box-drawing characters misalign.
+    const open = () => {
+      term.open(divRef.current);
+      requestAnimationFrame(() => { try { fit.fit(); } catch (_) {} });
+    };
+    if (typeof document !== 'undefined' && document.fonts?.ready) {
+      document.fonts.ready.then(open);
+    } else {
+      open();
+    }
+
+    term.onData(data => {
+      if (getSocket().connected) getSocket().emit('terminal:input', { sessionId, data });
+    });
+
+    // Refit on container resize (handles sidebar collapse, panel resize)
     const ro = new ResizeObserver(() => {
       try { fit.fit(); } catch (_) {}
-      if (term.cols && term.rows) getSocket().emit('terminal:resize', { sessionId, cols: term.cols, rows: term.rows });
+      const sock = getSocket();
+      if (term.cols && term.rows && sock.connected) {
+        sock.emit('terminal:resize', { sessionId, cols: term.cols, rows: term.rows });
+      }
     });
     ro.observe(divRef.current);
-    // Expose to parent via ref map
-    termRefs.current[sessionId] = { write: d => term.write(d), clear: () => term.clear(), fit: () => { try { fit.fit(); } catch (_) {} }, focus: () => term.focus(), getSize: () => ({ cols: term.cols, rows: term.rows }) };
-    return () => { ro.disconnect(); term.dispose(); delete termRefs.current[sessionId]; };
+
+    // Window resize fallback
+    const onWinResize = () => { try { fit.fit(); } catch (_) {} };
+    window.addEventListener('resize', onWinResize);
+
+    termRefs.current[sessionId] = {
+      write:   d  => term.write(d),
+      clear:   () => term.clear(),
+      focus:   () => term.focus(),
+      fit:     () => { try { fit.fit(); } catch (_) {} },
+      getSize: () => term.cols ? { cols: term.cols, rows: term.rows } : null,
+    };
+
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', onWinResize);
+      term.dispose();
+      delete termRefs.current[sessionId];
+    };
   }, []);
 
+  // Refit + focus when tab becomes active
   useEffect(() => {
-    if (active) requestAnimationFrame(() => requestAnimationFrame(() => { termRefs.current[sessionId]?.fit(); termRefs.current[sessionId]?.focus(); }));
+    if (!active) return;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const ref = termRefs.current[sessionId];
+      if (!ref) return;
+      ref.fit();
+      ref.focus();
+      const size = ref.getSize();
+      if (size && getSocket().connected) {
+        getSocket().emit('terminal:resize', { sessionId, ...size });
+      }
+    }));
   }, [active]);
 
-  // Use visibility (not display:none) so the element keeps its dimensions.
-  // display:none causes FitAddon to measure 0×0, making the terminal squish
-  // when shown again. visibility:hidden keeps layout intact.
-  return <div ref={divRef} className="terminal-instance" style={{ visibility: active ? 'visible' : 'hidden' }} />;
+  return (
+    <div
+      ref={divRef}
+      className="terminal-instance"
+      // visibility:hidden keeps layout dimensions intact.
+      // display:none → FitAddon measures 0×0 → squished rendering when re-shown.
+      style={{ visibility: active ? 'visible' : 'hidden' }}
+    />
+  );
 }
 
 /* ── Workspace settings panel ──────────────────── */

@@ -280,26 +280,27 @@
   padding: var(--spacing-sm);
 }
 
-/* visibility:hidden keeps dimensions; display:none would cause FitAddon to measure 0×0 */
-.terminal-instance .xterm,
-.terminal-instance .xterm-screen { height: 100% !important; }
-.terminal-instance .xterm-viewport { background: var(--color-terminal-bg) !important; }
+/*
+  xterm.js renders characters on a <canvas> — CSS font/spacing rules have
+  no effect on canvas rendering. Only container sizing and scrollbar styling
+  belong here. Do NOT set line-height, letter-spacing, or font on .xterm or
+  its children; those values are passed as xterm.js constructor options.
+*/
 
-/* Dark-mode scrollbar for the xterm viewport — thin, subtle, fits the terminal bg */
-.terminal-instance .xterm-viewport::-webkit-scrollbar {
-  width: 6px;
-}
-.terminal-instance .xterm-viewport::-webkit-scrollbar-track {
-  background: transparent;
-}
+/* Let xterm fill the instance div */
+.terminal-instance .xterm { height: 100%; }
+
+/* Scrollbar — dark, thin, no white OS default */
+.terminal-instance .xterm-viewport { background: var(--color-terminal-bg) !important; }
+.terminal-instance .xterm-viewport::-webkit-scrollbar { width: 6px; }
+.terminal-instance .xterm-viewport::-webkit-scrollbar-track { background: transparent; }
 .terminal-instance .xterm-viewport::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(255,255,255,0.12);
   border-radius: 3px;
 }
 .terminal-instance .xterm-viewport::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.22);
+  background: rgba(255,255,255,0.22);
 }
-/* Firefox */
 .terminal-instance .xterm-viewport {
   scrollbar-width: thin;
   scrollbar-color: rgba(255,255,255,0.12) transparent;

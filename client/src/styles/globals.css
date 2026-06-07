@@ -126,6 +126,21 @@
 }
 
 /* ============================================================
+   XTERM ISOLATION
+   xterm renders on <canvas> so body CSS doesn't affect characters,
+   but prevent any accidental inheritance on the surrounding DOM.
+   ============================================================ */
+.xterm,
+.xterm-screen,
+.xterm-rows,
+.xterm-row {
+  line-height: normal !important;
+  letter-spacing: normal !important;
+  font-smoothing: unset !important;
+  -webkit-font-smoothing: unset !important;
+}
+
+/* ============================================================
    RESET & BASE
    ============================================================ */
 *, *::before, *::after {
