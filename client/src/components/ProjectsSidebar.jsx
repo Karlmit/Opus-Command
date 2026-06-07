@@ -15,18 +15,28 @@ const COLORS = ['#6366f1','#8b5cf6','#ec4899','#ef4444','#f59e0b','#22c55e','#06
 const EMOJIS = ['🚀','💡','🔥','⚡','🎯','🛠️','🌊','🦋','🌙','⭐','💎','🎮','🧩','🔮','🐉','🌿','🎨','🤖'];
 function defaultColor(id) { return COLORS[(id - 1) % COLORS.length]; }
 
+// Parses avatar string into { emoji, color }.
+// Formats: "" | "#hex" | "emoji" | "emoji|#hex"
+function parseAvatar(avatar, projectId) {
+  if (!avatar) return { emoji: '', color: defaultColor(projectId) };
+  if (avatar.includes('|')) {
+    const [e, c] = avatar.split('|');
+    return { emoji: e, color: c };
+  }
+  if (avatar.startsWith('#')) return { emoji: '', color: avatar };
+  return { emoji: avatar, color: defaultColor(projectId) };
+}
+
 export function ProjectAvatar({ project, size = 36 }) {
-  const avatar  = project.avatar || '';
-  const isEmoji = avatar.length > 0 && !avatar.startsWith('#');
-  const bgColor = isEmoji ? defaultColor(project.id) : (avatar || defaultColor(project.id));
+  const { emoji, color } = parseAvatar(project.avatar, project.id);
   const initials = (project.name || '?').slice(0, 2).toUpperCase();
   return (
     <div className="project-avatar"
-      style={{ width: size, height: size, minWidth: size, background: bgColor,
-               fontSize: isEmoji ? size * 0.5 : size * 0.35 }}
+      style={{ width: size, height: size, minWidth: size, background: color,
+               fontSize: emoji ? size * 0.5 : size * 0.35 }}
       title={project.name}
     >
-      {isEmoji ? avatar : initials}
+      {emoji || initials}
     </div>
   );
 }
@@ -139,18 +149,16 @@ function NewProjectForm({ csrfToken, onClose, onCreated }) {
 
 /* ── Avatar picker (inline in popover) ─────────── */
 function AvatarPickerForm({ project, csrfToken, onSaved, onClose }) {
-  const existing = project.avatar || '';
-  const [emoji, setEmoji] = useState(existing.startsWith('#') || !existing ? '' : existing);
-  const [color, setColor] = useState(existing.startsWith('#') ? existing : defaultColor(project.id));
-  const [mode,  setMode]  = useState(existing.startsWith('#') || !existing ? 'color' : 'emoji');
+  const parsed = parseAvatar(project.avatar, project.id);
+  const [emoji, setEmoji] = useState(parsed.emoji);
+  const [color, setColor] = useState(parsed.color);
   const [saving, setSaving] = useState(false);
 
-  const previewAvatar = mode === 'emoji' && emoji ? emoji : '';
-  const previewColor  = mode === 'emoji' && emoji ? defaultColor(project.id) : color;
+  const initials = project.name.slice(0, 2).toUpperCase();
 
   async function save() {
     setSaving(true);
-    const avatar = mode === 'emoji' && emoji ? emoji : color;
+    const avatar = emoji ? `${emoji}|${color}` : color;
     try {
       await fetch(`/api/projects/${project.id}`, {
         method: 'PATCH',
@@ -169,41 +177,32 @@ function AvatarPickerForm({ project, csrfToken, onSaved, onClose }) {
         <button className="popover-close" onClick={onClose} aria-label="Close">×</button>
       </div>
 
-      {/* Mini preview */}
       <div className="avatar-picker-preview">
         <div className="project-avatar avatar-preview-sm"
-          style={{ background: previewColor, fontSize: previewAvatar ? 18 : 13 }}>
-          {previewAvatar || project.name.slice(0, 2).toUpperCase()}
+          style={{ background: color, fontSize: emoji ? 18 : 13 }}>
+          {emoji || initials}
         </div>
         <span className="avatar-preview-label">{project.name}</span>
       </div>
 
-      {/* Mode tabs */}
-      <div className="avatar-mode-tabs">
-        <button className={`avatar-mode-btn${mode === 'color' ? ' active' : ''}`} onClick={() => setMode('color')}>Color</button>
-        <button className={`avatar-mode-btn${mode === 'emoji' ? ' active' : ''}`} onClick={() => setMode('emoji')}>Emoji</button>
+      <div className="avatar-section-title">Color</div>
+      <div className="avatar-color-grid">
+        {COLORS.map(c => (
+          <button key={c} className={`avatar-color-swatch${color === c ? ' selected' : ''}`}
+            style={{ background: c }} onClick={() => setColor(c)} aria-label={c} />
+        ))}
       </div>
 
-      {mode === 'color' && (
-        <div className="avatar-color-grid">
-          {COLORS.map(c => (
-            <button key={c} className={`avatar-color-swatch${color === c ? ' selected' : ''}`}
-              style={{ background: c }} onClick={() => setColor(c)} aria-label={c} />
-          ))}
-        </div>
-      )}
-
-      {mode === 'emoji' && (
-        <div className="avatar-emoji-grid">
-          {EMOJIS.map(e => (
-            <button key={e} className={`avatar-emoji-btn${emoji === e ? ' selected' : ''}`}
-              onClick={() => setEmoji(prev => prev === e ? '' : e)}>{e}</button>
-          ))}
-          {emoji && (
-            <button className="avatar-emoji-btn avatar-clear" onClick={() => setEmoji('')}>✕</button>
-          )}
-        </div>
-      )}
+      <div className="avatar-section-title">Emoji</div>
+      <div className="avatar-emoji-grid">
+        {EMOJIS.map(e => (
+          <button key={e} className={`avatar-emoji-btn${emoji === e ? ' selected' : ''}`}
+            onClick={() => setEmoji(prev => prev === e ? '' : e)}>{e}</button>
+        ))}
+        {emoji && (
+          <button className="avatar-emoji-btn avatar-clear" onClick={() => setEmoji('')}>✕</button>
+        )}
+      </div>
 
       <div className="popover-footer">
         <button className="btn btn-ghost" onClick={onClose} disabled={saving}>Cancel</button>

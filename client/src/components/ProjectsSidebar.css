@@ -344,28 +344,10 @@
   color: var(--color-text-primary);
 }
 
-.avatar-mode-tabs {
-  display: flex;
-  gap: 2px;
-  margin-bottom: var(--spacing-md);
-  background: var(--color-surface);
-  border-radius: var(--radius-md);
-  padding: 3px;
-}
-.avatar-mode-btn {
-  flex: 1;
-  padding: 5px;
-  border: none;
-  background: none;
-  border-radius: calc(var(--radius-md) - 2px);
+.avatar-section-title {
   font-size: var(--font-size-sm);
   color: var(--color-text-tertiary);
-  cursor: pointer;
-  transition: background 120ms, color 120ms;
-}
-.avatar-mode-btn.active {
-  background: var(--color-surface-elevated);
-  color: var(--color-text-primary);
+  margin: var(--spacing-sm) 0 4px;
 }
 
 .avatar-color-grid {
