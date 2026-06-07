@@ -34,6 +34,15 @@ jobs:
           echo "APP_IMAGE=${{ env.REGISTRY }}/$(echo ${{ github.repository_owner }} | tr '[:upper:]' '[:lower:]')/opus-command:latest" >> $GITHUB_ENV
           echo "WS_IMAGE=${{ env.REGISTRY }}/$(echo ${{ github.repository_owner }} | tr '[:upper:]' '[:lower:]')/opus-command-workspace-claude-code:latest" >> $GITHUB_ENV
 
+      - name: Get version
+        id: version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "version=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=$(node -p "require('./package.json').version")+$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          fi
+
       - name: Build and push app image
         uses: docker/build-push-action@v5
         with:
@@ -41,6 +50,8 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: ${{ env.APP_IMAGE }}
+          build-args: |
+            APP_VERSION=${{ steps.version.outputs.version }}
           cache-from: type=gha,scope=app
           cache-to: type=gha,scope=app,mode=max
 

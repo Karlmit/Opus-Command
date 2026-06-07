@@ -203,12 +203,17 @@ function UpdatesSection({ csrfToken }) {
   async function checkForUpdates() {
     setChecking(true); setCheckResult(null);
     try {
-      const res = await fetch('/api/settings/updates/check');
+      const res  = await fetch('/api/settings/updates/check');
       const data = await res.json();
       setCheckResult(data.error ? { error: data.error } : data);
     } catch {
       setCheckResult({ error: 'Could not check for updates. Check your internet connection.' });
     } finally { setChecking(false); }
+  }
+
+  // Strip pre-release suffixes (+abc, -dev, etc.) for semver comparison
+  function semver(v) {
+    return (v || '').replace(/^v/, '').replace(/[+\-].*$/, '').trim();
   }
 
   async function applyUpdate() {
@@ -238,17 +243,23 @@ function UpdatesSection({ csrfToken }) {
   }
 
   function isNewer(current, latest) {
-    if (!current || !latest) return false;
-    const c = current.split('.').map(Number);
-    const l = latest.split('.').map(Number);
+    const c = semver(current);
+    const l = semver(latest);
+    if (!c || !l) return false;
+    // "dev" or non-semver current = local/unversioned build → treat as outdated if any release exists
+    if (!c || isNaN(Number(c.split('.')[0]))) return !!l;
+    const cp = c.split('.').map(Number);
+    const lp = l.split('.').map(Number);
     for (let i = 0; i < 3; i++) {
-      if ((l[i] || 0) > (c[i] || 0)) return true;
-      if ((l[i] || 0) < (c[i] || 0)) return false;
+      if ((lp[i] || 0) > (cp[i] || 0)) return true;
+      if ((lp[i] || 0) < (cp[i] || 0)) return false;
     }
     return false;
   }
 
-  const updateAvailable = checkResult && !checkResult.error && isNewer(checkResult.current, checkResult.latest);
+  const updateAvailable = checkResult && !checkResult.error && (
+    isNewer(checkResult.current, checkResult.latest) || checkResult.digestChanged
+  );
 
   return (
     <div className="settings-section">
@@ -274,12 +285,26 @@ function UpdatesSection({ csrfToken }) {
           {checkResult.error ? (
             <p className="error-message">{checkResult.error}</p>
           ) : updateAvailable ? (
-            <p className="update-available">
-              Update available — v{checkResult.current} → v{checkResult.latest}{' '}
-              <a href={checkResult.url} target="_blank" rel="noopener noreferrer" className="update-link">Release notes</a>
-            </p>
+            <div>
+              {checkResult.digestChanged && !isNewer(checkResult.current, checkResult.latest) ? (
+                <p className="update-available">
+                  New image available on GHCR — same version but rebuilt.{' '}
+                  {checkResult.url && <a href={checkResult.url} target="_blank" rel="noopener noreferrer" className="update-link">Release notes</a>}
+                </p>
+              ) : (
+                <p className="update-available">
+                  Update available — {checkResult.latest ? `v${semver(checkResult.current)} → v${checkResult.latest}` : 'new image on GHCR'}{' '}
+                  {checkResult.url && <a href={checkResult.url} target="_blank" rel="noopener noreferrer" className="update-link">Release notes</a>}
+                </p>
+              )}
+            </div>
           ) : (
-            <p className="update-current">Up to date — v{checkResult.current}</p>
+            <p className="update-current">
+              Up to date — v{semver(checkResult.current) || checkResult.current}
+              {checkResult.current?.includes('+') || checkResult.current?.includes('-')
+                ? ` (${checkResult.current})`
+                : ''}
+            </p>
           )}
         </div>
       )}
