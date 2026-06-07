@@ -4,6 +4,12 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from './Toast';
 import './ProjectsSidebar.css';
 
+/* ── Constants ──────────────────────────────────── */
+const MIN_WIDTH       = 52;   // avatar-only rail
+const COLLAPSE_THRESH = 110;  // below this → avatar-only mode
+const DEFAULT_WIDTH   = 210;
+const MAX_WIDTH       = 360;
+
 /* ── Avatar helpers ─────────────────────────────── */
 const COLORS = ['#6366f1','#8b5cf6','#ec4899','#ef4444','#f59e0b','#22c55e','#06b6d4','#3b82f6','#64748b','#92400e'];
 const EMOJIS = ['🚀','💡','🔥','⚡','🎯','🛠️','🌊','🦋','🌙','⭐','💎','🎮','🧩','🔮','🐉','🌿','🎨','🤖'];
@@ -11,7 +17,7 @@ const EMOJIS = ['🚀','💡','🔥','⚡','🎯','🛠️','🌊','🦋','🌙'
 function defaultColor(id) { return COLORS[(id - 1) % COLORS.length]; }
 
 export function ProjectAvatar({ project, size = 36, onClick }) {
-  const avatar = project.avatar || '';
+  const avatar  = project.avatar || '';
   const isEmoji = avatar.length > 0 && !avatar.startsWith('#');
   const bgColor = isEmoji ? defaultColor(project.id) : (avatar || defaultColor(project.id));
   const initials = (project.name || '?').slice(0, 2).toUpperCase();
@@ -19,7 +25,12 @@ export function ProjectAvatar({ project, size = 36, onClick }) {
   return (
     <div
       className="project-avatar"
-      style={{ width: size, height: size, minWidth: size, background: bgColor, cursor: onClick ? 'pointer' : 'default', fontSize: isEmoji ? size * 0.5 : size * 0.35 }}
+      style={{
+        width: size, height: size, minWidth: size,
+        background: bgColor,
+        cursor: onClick ? 'pointer' : 'default',
+        fontSize: isEmoji ? size * 0.5 : size * 0.35,
+      }}
       onClick={onClick}
       title={project.name}
     >
@@ -30,14 +41,12 @@ export function ProjectAvatar({ project, size = 36, onClick }) {
 
 /* ── Avatar Picker ──────────────────────────────── */
 function AvatarPicker({ project, csrfToken, onSaved, onClose }) {
-  // Keep emoji and color as separate state so picking one doesn't reset the other
   const existing = project.avatar || '';
-  const [emoji, setEmoji]   = useState(existing.startsWith('#') || !existing ? '' : existing);
-  const [color, setColor]   = useState(existing.startsWith('#') ? existing : defaultColor(project.id));
-  const [mode, setMode]     = useState(existing.startsWith('#') || !existing ? 'color' : 'emoji');
+  const [emoji, setEmoji] = useState(existing.startsWith('#') || !existing ? '' : existing);
+  const [color, setColor] = useState(existing.startsWith('#') ? existing : defaultColor(project.id));
+  const [mode,  setMode]  = useState(existing.startsWith('#') || !existing ? 'color' : 'emoji');
   const [saving, setSaving] = useState(false);
 
-  // Preview
   const previewAvatar = mode === 'emoji' && emoji ? emoji : '';
   const previewColor  = mode === 'emoji' && emoji ? defaultColor(project.id) : color;
 
@@ -58,11 +67,8 @@ function AvatarPicker({ project, csrfToken, onSaved, onClose }) {
   return (
     <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="modal avatar-picker-modal" role="dialog" aria-modal="true" aria-labelledby="ap-title">
-        <div className="modal-header">
-          <h2 id="ap-title" className="modal-title">Project avatar</h2>
-        </div>
+        <div className="modal-header"><h2 id="ap-title" className="modal-title">Project avatar</h2></div>
         <div className="modal-body">
-          {/* Preview */}
           <div className="avatar-preview-row">
             <div className="project-avatar avatar-preview-large"
               style={{ background: previewColor, fontSize: previewAvatar ? 28 : 18 }}>
@@ -70,13 +76,10 @@ function AvatarPicker({ project, csrfToken, onSaved, onClose }) {
             </div>
             <span className="avatar-preview-name">{project.name}</span>
           </div>
-
-          {/* Mode toggle */}
           <div className="avatar-mode-tabs">
             <button className={`avatar-mode-btn${mode === 'color' ? ' active' : ''}`} onClick={() => setMode('color')}>Color</button>
             <button className={`avatar-mode-btn${mode === 'emoji' ? ' active' : ''}`} onClick={() => setMode('emoji')}>Emoji</button>
           </div>
-
           {mode === 'color' && (
             <div className="avatar-color-grid">
               {COLORS.map(c => (
@@ -85,14 +88,11 @@ function AvatarPicker({ project, csrfToken, onSaved, onClose }) {
               ))}
             </div>
           )}
-
           {mode === 'emoji' && (
             <div className="avatar-emoji-grid">
               {EMOJIS.map(e => (
                 <button key={e} className={`avatar-emoji-btn${emoji === e ? ' selected' : ''}`}
-                  onClick={() => setEmoji(prev => prev === e ? '' : e)}>
-                  {e}
-                </button>
+                  onClick={() => setEmoji(prev => prev === e ? '' : e)}>{e}</button>
               ))}
               {emoji && <button className="avatar-emoji-btn avatar-clear" onClick={() => setEmoji('')}>✕ Clear</button>}
             </div>
@@ -172,9 +172,13 @@ function ProjectContextMenu({ project, position, onClose, onOpenAvatar, navigate
 
   useEffect(() => {
     function handler(e) { if (ref.current && !ref.current.contains(e.target)) onClose(); }
+    function keyHandler(e) { if (e.key === 'Escape') onClose(); }
     document.addEventListener('mousedown', handler);
-    document.addEventListener('keydown', e => e.key === 'Escape' && onClose());
-    return () => document.removeEventListener('mousedown', handler);
+    document.addEventListener('keydown', keyHandler);
+    return () => {
+      document.removeEventListener('mousedown', handler);
+      document.removeEventListener('keydown', keyHandler);
+    };
   }, []);
 
   function go(path) { navigate(path); onClose(); }
@@ -182,7 +186,7 @@ function ProjectContextMenu({ project, position, onClose, onOpenAvatar, navigate
   return (
     <div ref={ref} className="project-context-menu" style={{ top: position.y, left: position.x }} role="menu">
       <button role="menuitem" onClick={() => go(`/project/${project.id}`)}>Open</button>
-      <button role="menuitem" onClick={() => go(`/project/${project.id}?tab=settings`)}>Settings &amp; Logs</button>
+      <button role="menuitem" onClick={() => go(`/project/${project.id}?tab=settings`)}>Workspace &amp; Logs</button>
       <button role="menuitem" onClick={() => go(`/project/${project.id}?tab=git`)}>Git</button>
       <div className="context-separator" />
       <button role="menuitem" onClick={() => { onOpenAvatar(); onClose(); }}>Change Avatar</button>
@@ -197,11 +201,68 @@ export default function ProjectsSidebar() {
   const { csrfToken } = useAuth();
   const { addToast } = useToast();
 
-  const [projects, setProjects]     = useState([]);
-  const [showNew, setShowNew]       = useState(false);
-  const [avatarTarget, setAvatar]   = useState(null);
-  const [contextMenu, setContext]   = useState(null); // { project, x, y }
+  const [projects, setProjects]   = useState([]);
+  const [showNew, setShowNew]     = useState(false);
+  const [avatarTarget, setAvatar] = useState(null);
+  const [contextMenu, setContext] = useState(null);
 
+  // ── Resizable width ──────────────────────────────
+  const [width, setWidth] = useState(() =>
+    parseInt(localStorage.getItem('sidebar-width') || String(DEFAULT_WIDTH), 10)
+  );
+  const widthRef   = useRef(width); // track in drag handler without stale closure
+  const isCollapsed = width < COLLAPSE_THRESH;
+
+  // Persist whenever width settles
+  useEffect(() => {
+    widthRef.current = width;
+    localStorage.setItem('sidebar-width', String(width));
+  }, [width]);
+
+  // Drag-to-resize handler
+  function startDrag(e) {
+    e.preventDefault();
+    const startX     = e.clientX;
+    const startWidth = widthRef.current;
+
+    function onMove(e) {
+      const newWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, startWidth + (e.clientX - startX)));
+      setWidth(newWidth);
+    }
+
+    function onUp() {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.cursor     = '';
+      document.body.style.userSelect = '';
+    }
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    document.body.style.cursor     = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }
+
+  // ── Theme-aware logo ─────────────────────────────
+  const [theme, setTheme] = useState(() =>
+    document.documentElement.getAttribute('data-theme') || 'dark'
+  );
+
+  useEffect(() => {
+    const obs = new MutationObserver(() =>
+      setTheme(document.documentElement.getAttribute('data-theme') || 'dark')
+    );
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    return () => obs.disconnect();
+  }, []);
+
+  const isDark  = theme !== 'light';
+  const logoSrc = isCollapsed
+    ? (isDark ? '/mark-dark.svg' : '/mark-light.svg')
+    : (isDark ? '/logo-dark.svg' : '/logo-light.svg');
+  const logoH   = isCollapsed ? 28 : 28;
+
+  // ── Project data ─────────────────────────────────
   useEffect(() => {
     load();
     const t = setInterval(load, 5000);
@@ -231,18 +292,28 @@ export default function ProjectsSidebar() {
     setContext({ project, x: e.clientX, y: e.clientY });
   }
 
+  /* ── Render ─────────────────────────────────────── */
   return (
-    <nav className="projects-sidebar" aria-label="Projects">
-      {/* Horizontal logo — static, not a nav button */}
+    <nav
+      className={`projects-sidebar${isCollapsed ? ' collapsed' : ''}`}
+      style={{ width, minWidth: width }}
+      aria-label="Projects"
+    >
+      {/* Logo — swaps between full lockup and mark based on width and theme */}
       <div className="sidebar-logo-area">
-        <img src="/logo-dark.svg" alt="Opus Command" height="28" style={{ maxWidth: 160 }} />
+        <img
+          src={logoSrc}
+          alt="Opus Command"
+          height={logoH}
+          style={{ maxWidth: isCollapsed ? 32 : 160, transition: 'max-width 150ms ease' }}
+        />
       </div>
 
       <div className="sidebar-divider" />
 
       {/* Project list */}
       <div className="sidebar-projects">
-        {projects.length === 0 && (
+        {projects.length === 0 && !isCollapsed && (
           <p className="sidebar-empty">No projects yet</p>
         )}
         {projects.map(project => {
@@ -253,7 +324,7 @@ export default function ProjectsSidebar() {
               className={`sidebar-project-item${isActive ? ' active' : ''}`}
               onClick={() => navigate(`/project/${project.id}`)}
               onContextMenu={e => handleContext(e, project)}
-              title={project.name}
+              title={isCollapsed ? project.name : undefined}
             >
               <div className="sidebar-avatar-wrap">
                 <ProjectAvatar
@@ -264,10 +335,12 @@ export default function ProjectsSidebar() {
                 <span className={`sidebar-status-dot status-${project.status}`} />
                 {project.aiWaiting > 0 && <span className="sidebar-ai-dot" />}
               </div>
-              <div className="sidebar-project-meta">
-                <span className="sidebar-project-name">{project.name}</span>
-                <span className="sidebar-project-status">{project.status}</span>
-              </div>
+              {!isCollapsed && (
+                <div className="sidebar-project-meta">
+                  <span className="sidebar-project-name">{project.name}</span>
+                  <span className="sidebar-project-status">{project.status}</span>
+                </div>
+              )}
             </div>
           );
         })}
@@ -276,21 +349,32 @@ export default function ProjectsSidebar() {
       <div className="sidebar-spacer" />
 
       {/* New project */}
-      <button className="sidebar-new-project" onClick={() => setShowNew(true)}>
+      <button
+        className="sidebar-new-project"
+        onClick={() => setShowNew(true)}
+        title={isCollapsed ? 'New project' : undefined}
+      >
         <span className="sidebar-new-icon">+</span>
-        <span className="sidebar-new-label">New project</span>
+        {!isCollapsed && <span className="sidebar-new-label">New project</span>}
       </button>
 
       <div className="sidebar-divider" />
 
       {/* Settings */}
-      <button className="sidebar-settings-btn" onClick={() => navigate('/settings')} title="Settings">
+      <button
+        className="sidebar-settings-btn"
+        onClick={() => navigate('/settings')}
+        title={isCollapsed ? 'Settings' : undefined}
+      >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="12" cy="12" r="3"/>
           <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
         </svg>
-        <span className="sidebar-settings-label">Settings</span>
+        {!isCollapsed && <span className="sidebar-settings-label">Settings</span>}
       </button>
+
+      {/* Drag handle — on the right edge */}
+      <div className="sidebar-resize-handle" onMouseDown={startDrag} title="Drag to resize" />
 
       {/* Modals */}
       {showNew && (
