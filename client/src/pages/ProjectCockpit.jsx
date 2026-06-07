@@ -266,7 +266,7 @@ function TerminalInstance({ sessionId, active, termRefs }) {
 }
 
 /* ── Workspace settings panel ──────────────────── */
-function WorkspacePanel({ projectId, project, csrfToken, addToast }) {
+function WorkspacePanel({ projectId, project, csrfToken, addToast, onDelete }) {
   const [logs, setLogs] = useState('');
   const [showLogs, setShowLogs] = useState(false);
   const [busy, setBusy] = useState(null);
@@ -334,6 +334,17 @@ function WorkspacePanel({ projectId, project, csrfToken, addToast }) {
           </button>
         </div>
         {showLogs && <div className="panel-logs"><pre>{logs}</pre></div>}
+      </div>
+
+      <div className="panel-section">
+        <div className="panel-section-title">DANGER ZONE</div>
+        <p className="panel-hint">
+          Removes the workspace container and home volume.
+          Project files on disk are <strong>not</strong> deleted.
+        </p>
+        <button className="btn btn-danger" onClick={onDelete}>
+          Delete Project
+        </button>
       </div>
     </div>
   );
@@ -712,7 +723,7 @@ export default function ProjectCockpit() {
               {activeTab === 'settings' && (
                 <div className="side-panel">
                   <div className="side-panel-header">WORKSPACE</div>
-                  <WorkspacePanel projectId={projectId} project={project} csrfToken={csrfToken} addToast={addToast} />
+                  <WorkspacePanel projectId={projectId} project={project} csrfToken={csrfToken} addToast={addToast} onDelete={() => setShowDelete(true)} />
                 </div>
               )}
 
