@@ -9,13 +9,19 @@
 /* ── File tree ──────────────────────────────────────────── */
 .cockpit-filetree {
   width: 220px;
-  min-width: 160px;
+  min-width: 220px;
   background: var(--color-surface);
   border-right: 1px solid var(--color-border);
   display: flex;
   flex-direction: column;
   overflow: hidden;
   flex-shrink: 0;
+  transition: width 150ms ease, min-width 150ms ease;
+}
+
+.cockpit-filetree.collapsed {
+  width: 32px;
+  min-width: 32px;
 }
 
 .filetree-header {
@@ -52,6 +58,23 @@
   transition: color 120ms, background 120ms;
 }
 .ft-btn:hover { color: var(--color-text-primary); background: var(--color-surface-elevated); }
+
+.ft-collapse-btn {
+  font-size: 16px;
+  font-weight: 400;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+/* In collapsed state: header is just the toggle button centred */
+.cockpit-filetree.collapsed .filetree-header {
+  justify-content: center;
+  padding: 0;
+}
+.cockpit-filetree.collapsed .filetree-scroll,
+.cockpit-filetree.collapsed .cockpit-project-footer {
+  display: none;
+}
 
 .filetree-scroll {
   flex: 1;
@@ -261,6 +284,26 @@
 .terminal-instance .xterm,
 .terminal-instance .xterm-screen { height: 100% !important; }
 .terminal-instance .xterm-viewport { background: var(--color-terminal-bg) !important; }
+
+/* Dark-mode scrollbar for the xterm viewport — thin, subtle, fits the terminal bg */
+.terminal-instance .xterm-viewport::-webkit-scrollbar {
+  width: 6px;
+}
+.terminal-instance .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+.terminal-instance .xterm-viewport::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
+}
+.terminal-instance .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+/* Firefox */
+.terminal-instance .xterm-viewport {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.12) transparent;
+}
 
 /* Overlay: file editor / git / workspace panels — sit on top of terminals */
 .content-overlay {

@@ -15,12 +15,10 @@
 /* Logo */
 .sidebar-logo-area {
   padding: 10px 12px 8px;
-  cursor: pointer;
   flex-shrink: 0;
   display: flex;
   align-items: center;
 }
-.sidebar-logo-area:hover { opacity: 0.85; }
 
 .sidebar-divider {
   height: 1px;

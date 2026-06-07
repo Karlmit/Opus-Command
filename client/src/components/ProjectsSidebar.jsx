@@ -233,8 +233,8 @@ export default function ProjectsSidebar() {
 
   return (
     <nav className="projects-sidebar" aria-label="Projects">
-      {/* Horizontal logo */}
-      <div className="sidebar-logo-area" onClick={() => navigate('/')} title="Opus Command" role="button" tabIndex={0}>
+      {/* Horizontal logo — static, not a nav button */}
+      <div className="sidebar-logo-area">
         <img src="/logo-dark.svg" alt="Opus Command" height="28" style={{ maxWidth: 160 }} />
       </div>
 

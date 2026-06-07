@@ -93,7 +93,15 @@ function TerminalInstance({ sessionId, active, termRefs }) {
   useEffect(() => {
     if (!divRef.current || xtermRef.current) return;
     const term = new XTerm({
-      theme: { background:'#1E2024', foreground:'#E8EAED', cursor:'#3B82F6', selectionBackground:'rgba(59,130,246,0.30)' },
+      theme: {
+        background: '#1E2024',
+        foreground: '#E8EAED',
+        cursor: '#3B82F6',
+        selectionBackground: 'rgba(59,130,246,0.30)',
+        scrollbarSliderBackground: 'rgba(255,255,255,0.10)',
+        scrollbarSliderHoverBackground: 'rgba(255,255,255,0.20)',
+        scrollbarSliderActiveBackground: 'rgba(255,255,255,0.30)',
+      },
       fontFamily: "'JetBrains Mono','Cascadia Code',ui-monospace,monospace",
       fontSize: 14, lineHeight: 1.0, cursorBlink: true, cursorStyle: 'block', scrollback: 5000,
     });
@@ -334,6 +342,7 @@ export default function ProjectCockpit() {
   const [reconSecs, setReconSecs] = useState(0);
   const [deleting, setDeleting]   = useState(false);
   const [showDelete, setShowDelete] = useState(false);
+  const [treeCollapsed, setTreeCollapsed] = useState(false);
 
   const termRefs   = useRef({});
   const activeRef  = useRef(null);
@@ -453,13 +462,18 @@ export default function ProjectCockpit() {
 
   return (
     <div className="cockpit">
-      {/* File tree */}
-      <div className="cockpit-filetree">
+      {/* File tree — collapsible */}
+      <div className={`cockpit-filetree${treeCollapsed ? ' collapsed' : ''}`}>
         <div className="filetree-header">
-          <span className="filetree-title">FILES</span>
+          {!treeCollapsed && <span className="filetree-title">FILES</span>}
           <div className="filetree-actions">
-            <button className="ft-btn" title="New file" onClick={async () => { const n = prompt('File name:'); if (!n) return; await fetch(`/api/projects/${projectId}/files/create`, { method:'POST', headers:{'Content-Type':'application/json','X-CSRF-Token':csrfToken}, body: JSON.stringify({ filePath: n, type:'file' }) }); loadTree(); }}>+F</button>
-            <button className="ft-btn" title="New folder" onClick={async () => { const n = prompt('Folder name:'); if (!n) return; await fetch(`/api/projects/${projectId}/files/create`, { method:'POST', headers:{'Content-Type':'application/json','X-CSRF-Token':csrfToken}, body: JSON.stringify({ filePath: n, type:'dir' }) }); loadTree(); }}>+D</button>
+            {!treeCollapsed && <>
+              <button className="ft-btn" title="New file" onClick={async () => { const n = prompt('File name:'); if (!n) return; await fetch(`/api/projects/${projectId}/files/create`, { method:'POST', headers:{'Content-Type':'application/json','X-CSRF-Token':csrfToken}, body: JSON.stringify({ filePath: n, type:'file' }) }); loadTree(); }}>+F</button>
+              <button className="ft-btn" title="New folder" onClick={async () => { const n = prompt('Folder name:'); if (!n) return; await fetch(`/api/projects/${projectId}/files/create`, { method:'POST', headers:{'Content-Type':'application/json','X-CSRF-Token':csrfToken}, body: JSON.stringify({ filePath: n, type:'dir' }) }); loadTree(); }}>+D</button>
+            </>}
+            <button className="ft-btn ft-collapse-btn" title={treeCollapsed ? 'Expand files' : 'Collapse files'} onClick={() => setTreeCollapsed(c => !c)}>
+              {treeCollapsed ? '›' : '‹'}
+            </button>
           </div>
         </div>
         <div className="filetree-scroll">
