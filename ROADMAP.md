@@ -95,7 +95,7 @@
 | 🟢 | Notification within 5 seconds |
 | 🟢 | Pulsing "Waiting" badge on terminal tab |
 | 🟢 | Pulsing "Waiting" badge on project card |
-| 🟢 | Click badge to navigate to waiting terminal |
+| 🟡 | Click badge to navigate to waiting terminal — tab badge works; project card badge navigates to the project, not the specific terminal |
 | 🟢 | Visual distinction between active AI tab and plain terminal tab |
 | 🟢 | Optional sound notification — configurable in Settings, default off |
 | 🟢 | Pattern file at `/app/data/agent-patterns.json` — edit without restart |
@@ -144,7 +144,7 @@
 | 🟢 | Markdown — Edit / Preview / Split toggle |
 | 🟢 | JSON pretty-print Format button |
 | 🟢 | Image viewer — PNG, JPG, GIF, SVG, WebP |
-| 🟢 | Auto-save configurable in Settings (default off) |
+| 🔴 | Auto-save configurable in Settings (default off) |
 | 🟢 | "This file cannot be displayed." for binary files |
 | 🔴 | Syntax highlighting (CodeMirror integration) |
 | 🔴 | YAML pretty-print Format button |
@@ -197,10 +197,10 @@
 | 🟢 | File browser full-screen on mobile |
 | 🟢 | AI waiting badge visible on mobile |
 | 🟢 | Terminal sessions started on desktop reconnectable on mobile |
-| 🟢 | Session switcher accessible on mobile via bottom sheet |
+| 🔴 | Session switcher accessible on mobile via bottom sheet |
 | 🟢 | iOS Safari: 100dvh, overscroll-behavior:none |
 | 🟢 | Android Chrome: window.visualViewport for keyboard height |
-| 🟢 | Mobile terminal toolbar |
+| 🟡 | Mobile terminal toolbar — quick-key row (Enter, Ctrl+C, Esc, arrows, Tab) + input bar; no session name / Paste / Keyboard / Sessions buttons |
 | 🟢 | Minimum 44×44px touch targets |
 
 ---

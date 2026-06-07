@@ -117,7 +117,7 @@ Open **http://localhost:3000**. First startup shows a setup screen to create you
 - Detects active AI sessions (Claude Code, Codex CLI, OpenCode) from output patterns
 - Detects waiting-for-input state — requires 1 second of silence after trigger pattern
 - Notification within 5 seconds: pulsing accent badge on terminal tab and project card
-- Click badge to navigate directly to the waiting terminal
+- Clicking a terminal tab with the waiting badge activates that terminal
 - Optional audio notification — configurable in Settings, default off
 - Pattern file is hot-reloaded every 5 seconds — add new agents without restarting
 
