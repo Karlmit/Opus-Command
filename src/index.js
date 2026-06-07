@@ -131,15 +131,18 @@ async function main() {
 
     // terminal:join — client explicitly wants scrollback (fresh xterm, session switch, project nav).
     socket.on('terminal:join', async ({ sessionId }) => {
-      socket.join(`session:${sessionId}`);
-      terminal.clientJoinSession(sessionId, socket.id);
-
+      // Wait for proxy readiness BEFORE joining the room. Joining first means live
+      // terminal:data events reach this socket during the await, and those same bytes
+      // then appear again in the scrollback snapshot — producing duplicate output.
       if (!terminal.isProxyReady()) {
         console.log(`[socket] terminal:join before proxy ready — holding, session=${sessionId.slice(0,8)}`);
         socket.emit('terminal:proxy-restoring', { sessionId });
         await terminal.waitForProxyReady();
         if (!socket.connected) return;
       }
+
+      socket.join(`session:${sessionId}`);
+      terminal.clientJoinSession(sessionId, socket.id);
 
       const alive = terminal.isSessionAlive(sessionId);
       console.log(`[socket] join session=${sessionId.slice(0,8)} socket=${socket.id.slice(0,8)} pty_alive=${alive}`);

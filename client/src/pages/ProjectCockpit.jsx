@@ -236,6 +236,7 @@ function TerminalInstance({ sessionId, active, termRefs }) {
     termRefs.current[sessionId] = {
       write:   d  => term.write(d),
       clear:   () => term.clear(),
+      reset:   () => term.reset(),
       focus:   () => term.focus(),
       fit:     () => { try { fit.fit(); } catch (_) {} },
       getSize: () => term.cols ? { cols: term.cols, rows: term.rows } : null,
@@ -586,7 +587,9 @@ export default function ProjectCockpit() {
       const bytes = typeof data === 'string' ? data.length : 0;
       console.log(`[terminal] Replaying ${bytes} bytes history for session ${sessionId.slice(0,8)}`);
       const ref = termRefs.current[sessionId];
-      if (ref) { ref.clear(); ref.write(data); }
+      // reset() wipes the scrollback buffer before replaying; clear() only
+      // scrolls content up into the buffer, causing duplicate output on scroll.
+      if (ref) { ref.reset(); ref.write(data); }
     }
 
     function onExit({ sessionId }) {

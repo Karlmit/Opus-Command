@@ -400,6 +400,32 @@
   font-size: var(--font-size-sm);
 }
 
+/* ── Git status indicators in file tree ── */
+.file-tree-row { position: relative; }
+
+.file-git-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-left: auto;
+  margin-right: 4px;
+}
+
+.file-git-dot.git-M { background: var(--color-warning); }
+.file-git-dot.git-A { background: var(--color-success); }
+.file-git-dot.git-D { background: var(--color-error); }
+.file-git-dot.git-R { background: var(--color-accent); }
+.file-git-dot.git-U { background: var(--color-text-dim); }
+.file-git-dot.dir-changed { background: var(--color-warning); opacity: 0.5; }
+
+/* Tint file names by status */
+.file-tree-name.git-M { color: var(--color-warning) !important; }
+.file-tree-name.git-A { color: var(--color-success) !important; }
+.file-tree-name.git-D { color: var(--color-error) !important; opacity: 0.7; }
+.file-tree-name.git-R { color: var(--color-accent) !important; }
+.file-tree-name.git-U { color: var(--color-text-secondary) !important; opacity: 0.7; }
+
 @media (max-width: 599px) {
   .file-tree-panel {
     width: 100%;

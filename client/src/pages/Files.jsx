@@ -14,7 +14,7 @@ function FileIcon({ name, isDir }) {
   return <span className="file-icon">{icons[ext] || '📄'}</span>;
 }
 
-function FileTreeNode({ node, depth, projectId, csrfToken, onSelect, selectedPath, onRefresh, addToast }) {
+function FileTreeNode({ node, depth, projectId, csrfToken, onSelect, selectedPath, onRefresh, addToast, gitStatusMap }) {
   const [expanded, setExpanded] = useState(depth < 2);
   const [children, setChildren] = useState(node.children || []);
   const [contextMenu, setContextMenu] = useState(null);
@@ -100,11 +100,14 @@ function FileTreeNode({ node, depth, projectId, csrfToken, onSelect, selectedPat
   }
 
   const active = selectedPath === node.path;
+  const gitStatus = !isDir ? gitStatusMap?.[node.path] : null;
+  const dirHasChanges = isDir && gitStatusMap && Object.keys(gitStatusMap).some(p => p.startsWith(node.path + '/'));
+  const statusClass = gitStatus === 'M' ? 'git-M' : gitStatus === 'A' ? 'git-A' : gitStatus === 'D' ? 'git-D' : gitStatus === 'R' ? 'git-R' : gitStatus === '??' || gitStatus === '?' ? 'git-U' : null;
 
   return (
     <div className="file-tree-node">
       <div
-        className={`file-tree-row${active ? ' active' : ''}`}
+        className={`file-tree-row${active ? ' active' : ''}${statusClass ? ' has-git-status' : ''}`}
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
         onClick={handleClick}
         onContextMenu={handleContextMenu}
@@ -113,7 +116,9 @@ function FileTreeNode({ node, depth, projectId, csrfToken, onSelect, selectedPat
           <span className={`tree-chevron${expanded ? ' expanded' : ''}`}>▶</span>
         )}
         <FileIcon name={node.name} isDir={isDir} />
-        <span className="file-tree-name">{node.name}</span>
+        <span className={`file-tree-name${statusClass ? ' ' + statusClass : ''}`}>{node.name}</span>
+        {statusClass && <span className={`file-git-dot ${statusClass}`} title={gitStatus} />}
+        {dirHasChanges && !statusClass && <span className="file-git-dot dir-changed" title="Contains changes" />}
       </div>
 
       {isDir && expanded && node.children && (
@@ -129,6 +134,7 @@ function FileTreeNode({ node, depth, projectId, csrfToken, onSelect, selectedPat
               selectedPath={selectedPath}
               onRefresh={onRefresh}
               addToast={addToast}
+              gitStatusMap={gitStatusMap}
             />
           ))}
           {node.children.length === 0 && (
@@ -320,14 +326,26 @@ export default function FilesPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState(null);
   const [dragOver, setDragOver] = useState(false);
+  const [gitStatusMap, setGitStatusMap] = useState({});
 
-  useEffect(() => { loadTree(); }, [projectId]);
+  useEffect(() => { loadTree(); loadGitStatus(); }, [projectId]);
 
   // Refresh tree every 2s for AI-agent changes
   useEffect(() => {
-    const interval = setInterval(loadTree, 2000);
+    const interval = setInterval(() => { loadTree(); loadGitStatus(); }, 2000);
     return () => clearInterval(interval);
   }, [projectId]);
+
+  async function loadGitStatus() {
+    try {
+      const res = await fetch(`/api/projects/${projectId}/git/status`);
+      const data = await res.json();
+      if (!data.initialized || !data.files) { setGitStatusMap({}); return; }
+      const map = {};
+      for (const f of data.files) { map[f.path] = (f.status || '?').trim(); }
+      setGitStatusMap(map);
+    } catch (_) { setGitStatusMap({}); }
+  }
 
   async function loadTree() {
     try {
@@ -442,6 +460,7 @@ export default function FilesPage() {
                 selectedPath={selectedFile?.path}
                 onRefresh={loadTree}
                 addToast={addToast}
+                gitStatusMap={gitStatusMap}
               />
             ))}
           </div>

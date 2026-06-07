@@ -264,4 +264,117 @@ router.post('/restore', requireAuth, async (req, res) => {
   }
 });
 
+// GET /api/projects/:projectId/git/log
+router.get('/log', requireAuth, async (req, res) => {
+  const project = getProjectInfo(req.params.projectId);
+  if (!project) return res.status(404).json({ error: 'Project not found.' });
+
+  const contName = containerName(project.id);
+  try {
+    // Use \x1f (unit separator) as field delimiter — safe in commit metadata
+    const result = await execInContainer(contName,
+      String.raw`git -C /workspace log --format="%H%x1f%h%x1f%s%x1f%an%x1f%ar%x1f%D" -40 2>/dev/null`
+    );
+    const commits = result.stdout.split('\n').filter(Boolean).map(line => {
+      const p = line.split('\x1f');
+      return {
+        hash: p[0] || '',
+        shortHash: p[1] || '',
+        subject: p[2] || '',
+        author: p[3] || '',
+        relativeDate: p[4] || '',
+        refs: p[5] || '',
+      };
+    }).filter(c => c.hash);
+    res.json({ commits });
+  } catch (err) {
+    res.json({ commits: [] });
+  }
+});
+
+// GET /api/projects/:projectId/git/remote
+router.get('/remote', requireAuth, async (req, res) => {
+  const project = getProjectInfo(req.params.projectId);
+  if (!project) return res.status(404).json({ error: 'Project not found.' });
+
+  const contName = containerName(project.id);
+  try {
+    const urlResult = await execInContainer(contName,
+      'git -C /workspace remote get-url origin 2>/dev/null || echo ""'
+    );
+    const remoteUrl = urlResult.stdout.trim();
+    if (!remoteUrl) return res.json({ hasRemote: false });
+
+    const [trackingResult, aheadResult, behindResult] = await Promise.all([
+      execInContainer(contName, 'git -C /workspace rev-parse --abbrev-ref HEAD@{upstream} 2>/dev/null || echo ""'),
+      execInContainer(contName, 'git -C /workspace rev-list HEAD@{upstream}..HEAD --count 2>/dev/null || echo "0"'),
+      execInContainer(contName, 'git -C /workspace rev-list HEAD..HEAD@{upstream} --count 2>/dev/null || echo "0"'),
+    ]);
+
+    res.json({
+      hasRemote: true,
+      remoteUrl: remoteUrl,
+      tracking: trackingResult.stdout.trim(),
+      ahead: parseInt(aheadResult.stdout.trim()) || 0,
+      behind: parseInt(behindResult.stdout.trim()) || 0,
+    });
+  } catch (err) {
+    res.json({ hasRemote: false });
+  }
+});
+
+// POST /api/projects/:projectId/git/fetch
+router.post('/fetch', requireAuth, async (req, res) => {
+  const project = getProjectInfo(req.params.projectId);
+  if (!project) return res.status(404).json({ error: 'Project not found.' });
+
+  const contName = containerName(project.id);
+  try {
+    const result = await execInContainer(contName, 'git -C /workspace fetch --prune 2>&1');
+    const output = (result.stdout + ' ' + result.stderr).trim();
+    if (output.includes('fatal:') || output.includes('error:')) {
+      return res.status(400).json({ error: output });
+    }
+    res.json({ success: true, output });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/projects/:projectId/git/pull
+router.post('/pull', requireAuth, async (req, res) => {
+  const project = getProjectInfo(req.params.projectId);
+  if (!project) return res.status(404).json({ error: 'Project not found.' });
+
+  const contName = containerName(project.id);
+  try {
+    const result = await execInContainer(contName, 'git -C /workspace pull 2>&1');
+    const output = (result.stdout + ' ' + result.stderr).trim();
+    if (output.includes('fatal:') || output.includes('error:')) {
+      return res.status(400).json({ error: output });
+    }
+    res.json({ success: true, output });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/projects/:projectId/git/push
+router.post('/push', requireAuth, async (req, res) => {
+  const project = getProjectInfo(req.params.projectId);
+  if (!project) return res.status(404).json({ error: 'Project not found.' });
+
+  const contName = containerName(project.id);
+  try {
+    const result = await execInContainer(contName, 'git -C /workspace push 2>&1');
+    const output = (result.stdout + ' ' + result.stderr).trim();
+    if (output.includes('fatal:') || output.includes('error:')) {
+      return res.status(400).json({ error: output });
+    }
+    res.json({ success: true, output });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
