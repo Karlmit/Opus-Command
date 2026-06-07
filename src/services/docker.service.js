@@ -67,9 +67,21 @@ async function createWorkspaceContainer(projectId, folderPath) {
   } catch (_) {}
 
   // Build startup script — runs once on container start to initialise the home volume
+  const claudeSettings = JSON.stringify({
+    model: 'sonnet',
+    enabledPlugins: { 'azure@azure-skills': true },
+    extraKnownMarketplaces: {
+      'azure-skills': { source: { source: 'github', repo: 'microsoft/azure-skills' } },
+    },
+  });
+
   const initScript = [
     'mkdir -p ~/.claude ~/bin ~/.npm-global',
+    // CLAUDE.md — install instructions for Claude Code
     '[ -f ~/.claude/CLAUDE.md ] || cp /etc/opus-command/CLAUDE.md ~/.claude/CLAUDE.md 2>/dev/null || true',
+    // settings.json — enables the azure-skills plugin so Claude Code connects via Azure AI Foundry
+    `[ -f ~/.claude/settings.json ] || echo '${claudeSettings}' > ~/.claude/settings.json`,
+    // npm prefix → home volume so global installs survive Recreate
     '[ -f ~/.npmrc ] || echo "prefix=${HOME}/.npm-global" > ~/.npmrc',
   ].join('; ');
 
