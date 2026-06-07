@@ -403,7 +403,7 @@ async function selfUpdate(onProgress) {
       const next = await docker.createContainer({
         name: ${JSON.stringify(originalName)},
         Image: ${JSON.stringify(imageName)},
-        Env: ${JSON.stringify(selfInfo.Config.Env)},
+        Env: ${JSON.stringify(selfInfo.Config.Env.filter(e => !e.startsWith('APP_VERSION=')))},
         HostConfig: ${JSON.stringify(selfInfo.HostConfig)},
         Labels: ${JSON.stringify(selfInfo.Config.Labels || {})},
       });
