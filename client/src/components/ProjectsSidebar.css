@@ -95,6 +95,8 @@ body.mobile-device .projects-sidebar { display: none; }
 }
 
 .sidebar-project-item.ai-waiting {
+  border-left-color: var(--color-accent);
+  background: var(--color-accent-subtle);
   outline-color: rgba(59, 130, 246, 0.75);
   box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.22);
 }
