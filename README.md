@@ -101,6 +101,7 @@ Open **http://localhost:3000**. First startup shows a setup screen to create you
 - Container logs viewer (live tail)
 - Persistent home volume — tools and config survive restarts and container replacement
 - Workspace containers do not have access to the Docker socket
+- Workspace-scoped `opus` CLI is installed automatically for connector access
 - Managed Opus skills are refreshed under `.opus/skills/` on workspace start, while user-owned `CLAUDE.md` and `AGENTS.md` files are only given a small pointer if missing
 
 #### Terminal System
@@ -130,6 +131,23 @@ Open **http://localhost:3000**. First startup shows a setup screen to create you
 - Drag-and-drop file upload — per-file progress toasts, error toasts per failed file
 - File name search — filters tree in real time as you type
 - Full-text content search across all text files
+
+#### Opus Connector
+- Windows connector installer: one-file NSIS installer for `C:\OpusConnector`
+- Connector app stores config, logs, and working data in `C:\ProgramData\OpusConnector`
+- GUI pairing flow: paste the server URL and pairing token, click Connect, and watch Online / Connecting / Error status
+- Settings page can generate pairing tokens and shows both GUI setup values and a PowerShell fallback command
+- Workspaces get connector access through the `opus` CLI, not by talking directly to connector machines
+- Connector jobs run through Opus Command over the connector WebSocket and return stdout, stderr, exit code, and artifacts
+- Existing workspaces receive connector access after Rebuild or Recreate; new workspaces get it automatically
+- Typical usage:
+
+```bash
+opus connectors list
+opus connector run windows -- powershell "Get-ComputerInfo"
+opus connector run windows -- powershell "New-Item -ItemType File C:\ProgramData\OpusConnector\test.txt"
+opus connector artifacts get <job-id>
+```
 
 #### Code Editor
 - Simple text editor with Ctrl+S / Cmd+S save and explicit Save button
@@ -196,6 +214,7 @@ Open **http://localhost:3000**. First startup shows a setup screen to create you
 | **Notifications** | Badge + sound only when the browser tab is open — no background push notifications |
 | **Mobile terminal** | Log viewer works for simple commands but not full-screen TUIs (Claude Code, htop, vim). Mobile terminal is read-only with command input; it does not render cursor-addressed output correctly |
 | **Bundle size** | JS bundle is ~560 KB (xterm.js is the main contributor) — loads fast on LAN |
+| **Connector workspace rollout** | Existing workspace containers must be Rebuilt or Recreated once after upgrading to get the `opus` CLI and workspace token |
 
 ---
 
@@ -206,7 +225,7 @@ Open **http://localhost:3000**. First startup shows a setup screen to create you
 - **Stash / unstash, cherry-pick, interactive rebase** — advanced git operations from the panel
 - **Multi-terminal split view** — side-by-side terminal panes
 - **Push notifications** — notify your phone when Claude Code is waiting for input, without needing the browser open
-- **Opus Connector** — companion product for cross-device background AI notifications (see `OpusConnector_ProjectSpec.md`)
+- **Additional Opus Connector targets** — macOS, Linux desktop, Android, and richer artifact workflows
 - **Additional workspace templates** — community-contributed templates for Rust, Go, Java, etc.
 - **AI session timeline** — history of AI sessions per project with diffs at each checkpoint
 - **Web app preview** — embedded browser preview inside the cockpit for web projects
@@ -277,6 +296,77 @@ Also read:
 
 This lets Opus update connector and future platform guidance across existing workspaces without overwriting custom `CLAUDE.md` or `AGENTS.md` content. Future Opus features that need agent instructions should add or update files in `.opus/skills/`, then reference them through the same pointer block rather than replacing the main agent files.
 
+## Opus Connector
+
+Opus Connector lets a Windows machine act as a remote execution environment for
+Opus workspaces. The connector connects outbound to Opus Command, then
+workspaces run jobs through Opus Command using the `opus` CLI.
+
+```text
+Workspace
+  ↕ opus CLI + workspace token
+Opus Command
+  ↕ connector WebSocket
+Opus Connector on Windows
+  ↕ PowerShell / CMD / local tools
+Windows filesystem, Android tools, Visual Studio, hardware, etc.
+```
+
+### Install and pair a Windows connector
+
+1. Install `OpusConnector-Setup-0.1.3.exe` on the Windows machine.
+2. Open Opus Connector from the Start menu or `C:\OpusConnector\OpusConnector.exe`.
+3. In Opus Command, open Settings → Opus Connectors.
+4. Create a pairing token.
+5. Paste the server URL, pairing token, name, and labels into the connector GUI.
+6. Click Connect.
+
+The connector GUI shows the current status and recent logs. When it is paired
+successfully, it should show `Online`, and the Settings connector list should
+update within 10 seconds.
+
+Windows install layout:
+
+| Path | Purpose |
+|------|---------|
+| `C:\OpusConnector` | Installed app files |
+| `C:\ProgramData\OpusConnector` | Connector config, logs, working folders, artifacts |
+
+### Use connectors from workspaces
+
+New workspaces get the `opus` CLI and connector skill automatically. Existing
+workspaces need one Rebuild or Recreate after upgrading to Opus Command
+`v0.4.8` or newer.
+
+```bash
+opus connectors list
+```
+
+Run PowerShell or CMD through a matching connector name or label:
+
+```bash
+opus connector run windows -- powershell "Get-ComputerInfo"
+opus connector run windows -- cmd "whoami"
+```
+
+Create files or run scripts on the Windows connector:
+
+```bash
+opus connector run windows -- powershell "Set-Content -Path 'C:\ProgramData\OpusConnector\hello.txt' -Value 'hello from workspace'"
+```
+
+Connector artifacts can be fetched into the project:
+
+```bash
+opus connector artifacts get <job-id>
+```
+
+Artifacts are written under:
+
+```text
+.opus/artifacts/<job-id>
+```
+
 ## AI Agent Detection
 
 Pattern matching runs against `/app/data/agent-patterns.json`. Edit this file to add new agents — changes are picked up within 5 seconds without a restart.
@@ -297,7 +387,7 @@ All data in `/app/data` is preserved across updates.
 
 ## Roadmap
 
-See [`ROADMAP.md`](ROADMAP.md) for the full feature status — what's done, what's planned for V1, and the post-V1 **Opus Connector** (remote execution environments for Windows, macOS, Android and more).
+See [`ROADMAP.md`](ROADMAP.md) for the full feature status — what's done, what's planned for V1, and future **Opus Connector** targets such as macOS, Linux desktop, Android, and richer artifact workflows.
 
 ## License
 
