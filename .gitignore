@@ -10,5 +10,6 @@ data/
 .DS_Store
 *.log
 dist/
+OpusConnector-Setup-*.exe
 .cache/
 .claude/

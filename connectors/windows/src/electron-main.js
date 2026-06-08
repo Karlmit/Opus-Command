@@ -5,7 +5,7 @@ const { app, BrowserWindow, Menu, Tray, ipcMain, shell } = require('electron');
 const connector = require('./index');
 
 const DEFAULT_HOME = process.platform === 'win32'
-  ? 'C:\\OpusConnector'
+  ? path.join(process.env.ProgramData || 'C:\\ProgramData', 'OpusConnector')
   : path.join(os.homedir(), '.opus-connector');
 
 let tray;

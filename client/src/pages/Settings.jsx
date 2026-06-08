@@ -592,6 +592,10 @@ function ConnectorsSection({ csrfToken, addToast }) {
     return value.split(',').map(v => v.trim()).filter(Boolean);
   }
 
+  function psQuote(value) {
+    return `'${String(value || '').replace(/'/g, "''")}'`;
+  }
+
   async function createToken() {
     setLoading(true);
     setPairingToken(null);
@@ -603,9 +607,10 @@ function ConnectorsSection({ csrfToken, addToast }) {
       });
       const data = await res.json();
       if (data.token) {
+        const name = pairName || 'Windows Connector';
         setPairingToken({
           ...data,
-          command: `OpusConnector.exe --server ${window.location.origin} --pair ${data.token} --name "${pairName || 'Windows Connector'}" --labels "${pairLabels}"`,
+          command: `& 'C:\\OpusConnector\\OpusConnector.exe' --server ${psQuote(window.location.origin)} --pair ${psQuote(data.token)} --name ${psQuote(name)} --labels ${psQuote(pairLabels)} --home 'C:\\ProgramData\\OpusConnector'`,
         });
       } else {
         addToast(data.error || 'Could not create pairing token.', 'error');
