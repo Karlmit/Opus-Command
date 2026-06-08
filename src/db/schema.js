@@ -41,4 +41,64 @@ const activityLog = sqliteTable('activity_log', {
   createdAt: integer('created_at').notNull(),
 });
 
-module.exports = { users, settings, projects, terminalSessions, activityLog };
+const connectors = sqliteTable('connectors', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  secretHash: text('secret_hash').notNull(),
+  platform: text('platform').default('windows'),
+  hostname: text('hostname').default(''),
+  version: text('version').default(''),
+  labels: text('labels').default('[]'),
+  status: text('status').default('offline'),
+  lastSeenAt: integer('last_seen_at'),
+  createdAt: integer('created_at').notNull(),
+});
+
+const connectorPairingTokens = sqliteTable('connector_pairing_tokens', {
+  id: text('id').primaryKey(),
+  tokenHash: text('token_hash').notNull(),
+  name: text('name'),
+  expiresAt: integer('expires_at').notNull(),
+  usedAt: integer('used_at'),
+  createdBy: integer('created_by'),
+  createdAt: integer('created_at').notNull(),
+});
+
+const connectorJobs = sqliteTable('connector_jobs', {
+  id: text('id').primaryKey(),
+  connectorId: text('connector_id').notNull(),
+  projectId: integer('project_id'),
+  userId: integer('user_id'),
+  shell: text('shell').notNull(),
+  command: text('command').notNull(),
+  cwd: text('cwd'),
+  status: text('status').default('queued'),
+  stdout: text('stdout').default(''),
+  stderr: text('stderr').default(''),
+  exitCode: integer('exit_code'),
+  startedAt: integer('started_at'),
+  endedAt: integer('ended_at'),
+  createdAt: integer('created_at').notNull(),
+});
+
+const connectorArtifacts = sqliteTable('connector_artifacts', {
+  id: text('id').primaryKey(),
+  jobId: text('job_id').notNull(),
+  connectorId: text('connector_id').notNull(),
+  name: text('name').notNull(),
+  path: text('path').notNull(),
+  size: integer('size').notNull(),
+  createdAt: integer('created_at').notNull(),
+});
+
+module.exports = {
+  users,
+  settings,
+  projects,
+  terminalSessions,
+  activityLog,
+  connectors,
+  connectorPairingTokens,
+  connectorJobs,
+  connectorArtifacts,
+};

@@ -57,9 +57,17 @@ function buildWorkspaceCmd(image) {
     },
   });
 
+  const opusSkillPointer = '\\n## Opus Managed Skills\\n\\nAlso read:\\n- .opus/skills/connectors.md\\n';
+
   const initScript = [
-    'mkdir -p ~/.claude ~/bin ~/.npm-global',
+    'mkdir -p ~/.claude ~/bin ~/.npm-global /workspace/.opus/skills',
+    '[ -f /etc/opus-command/skills/connectors.md ] && cp /etc/opus-command/skills/connectors.md /workspace/.opus/skills/connectors.md 2>/dev/null || true',
     '[ -f ~/.claude/CLAUDE.md ] || cp /etc/opus-command/CLAUDE.md ~/.claude/CLAUDE.md 2>/dev/null || true',
+    '[ -f /workspace/CLAUDE.md ] || cp /etc/opus-command/CLAUDE.md /workspace/CLAUDE.md 2>/dev/null || true',
+    '[ -f /workspace/AGENTS.md ] || cp /etc/opus-command/AGENTS.md /workspace/AGENTS.md 2>/dev/null || true',
+    `grep -q ".opus/skills/connectors.md" ~/.claude/CLAUDE.md 2>/dev/null || printf '${opusSkillPointer}' >> ~/.claude/CLAUDE.md`,
+    `grep -q ".opus/skills/connectors.md" /workspace/CLAUDE.md 2>/dev/null || printf '${opusSkillPointer}' >> /workspace/CLAUDE.md`,
+    `grep -q ".opus/skills/connectors.md" /workspace/AGENTS.md 2>/dev/null || printf '${opusSkillPointer}' >> /workspace/AGENTS.md`,
     `[ -f ~/.claude/settings.json ] || echo '${claudeSettings}' > ~/.claude/settings.json`,
     '[ -f ~/.npmrc ] || echo "prefix=${HOME}/.npm-global" > ~/.npmrc',
     // CLAUDE_CODE_USE_FOUNDRY=1 is required to activate Azure AI Foundry mode in Claude Code.

@@ -1,0 +1,31 @@
+{
+  "name": "opus-windows-connector",
+  "version": "0.1.0",
+  "main": "src/electron-main.js",
+  "bin": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "start:gui": "electron .",
+    "build:ico": "node scripts/svg-to-ico.js",
+    "build:console": "pkg src/index.js --targets node18-win-x64 --output ../../dist/OpusConnector-console.exe",
+    "build:exe": "npm run build:ico && electron-packager . OpusConnector --platform=win32 --arch=x64 --out=../../dist --overwrite --icon=assets/mark-dark.ico --ignore='node_modules/(electron|@electron|electron-packager|pkg|sharp|png-to-ico)'"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@electron/packager": "^18.3.6",
+    "electron": "^31.7.0",
+    "pkg": "^5.8.1",
+    "png-to-ico": "^3.0.1",
+    "sharp": "^0.34.5"
+  },
+  "pkg": {
+    "scripts": [
+      "src/**/*.js"
+    ],
+    "assets": [
+      "assets/**/*"
+    ]
+  }
+}

@@ -16,6 +16,10 @@ function csrfMiddleware(req, res, next) {
     return next();
   }
 
+  if (req.path === '/api/connectors/register') {
+    return next();
+  }
+
   const token = req.headers['x-csrf-token'] || (req.body && req.body._csrf);
   if (!token || !req.session.csrfToken || token !== req.session.csrfToken) {
     return res.status(403).json({ error: 'Invalid CSRF token' });

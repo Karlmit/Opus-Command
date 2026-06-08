@@ -12,6 +12,7 @@ const { initDB, getSQLite } = require('./db');
 const SQLiteSessionStore = require('./middleware/sessionStore');
 const { csrfMiddleware } = require('./middleware/csrf');
 const { registerRoutes } = require('./routes');
+const { setupConnectorWebSocket } = require('./services/connectors.service');
 
 const DEFAULT_AGENT_PATTERNS = {
   version: 1,
@@ -105,6 +106,7 @@ async function main() {
   app.use(csrfMiddleware);
 
   registerRoutes(app);
+  setupConnectorWebSocket(server);
 
   // Serve React frontend
   const staticDir = path.join(__dirname, '../public');

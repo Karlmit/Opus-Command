@@ -101,6 +101,7 @@ Open **http://localhost:3000**. First startup shows a setup screen to create you
 - Container logs viewer (live tail)
 - Persistent home volume — tools and config survive restarts and container replacement
 - Workspace containers do not have access to the Docker socket
+- Managed Opus skills are refreshed under `.opus/skills/` on workspace start, while user-owned `CLAUDE.md` and `AGENTS.md` files are only given a small pointer if missing
 
 #### Terminal System
 - Multiple named PTY sessions per project, running inside workspace containers
@@ -242,6 +243,39 @@ Workspace containers are isolated Docker environments per project:
 | PowerShell | `mcr.microsoft.com/powershell:7.4` | PowerShell 7, Git |
 
 All templates: install Claude Code inside the terminal after first start with `npm install -g @anthropic-ai/claude-code`. Credentials persist in the named home volume.
+
+## Managed Workspace Skills
+
+Opus Command treats project-level agent instruction files as user-owned:
+
+- `/workspace/CLAUDE.md`
+- `/workspace/AGENTS.md`
+- `~/.claude/CLAUDE.md`
+
+These files may grow over time as Claude, Codex, or the user adds project-specific guidance. Recreate, Rebuild, and Reset Environment must not replace them.
+
+Instead, Opus-owned guidance is written to managed skill files under:
+
+```text
+.opus/skills/
+```
+
+Current managed skills:
+
+```text
+.opus/skills/connectors.md
+```
+
+On workspace start, Opus refreshes the managed skill files from the workspace image. It then checks the user-owned agent instruction files and appends this pointer only if it is missing:
+
+```md
+## Opus Managed Skills
+
+Also read:
+- .opus/skills/connectors.md
+```
+
+This lets Opus update connector and future platform guidance across existing workspaces without overwriting custom `CLAUDE.md` or `AGENTS.md` content. Future Opus features that need agent instructions should add or update files in `.opus/skills/`, then reference them through the same pointer block rather than replacing the main agent files.
 
 ## AI Agent Detection
 

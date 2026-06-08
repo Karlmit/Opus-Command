@@ -50,6 +50,56 @@ CREATE TABLE IF NOT EXISTS activity_log (
   created_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS connectors (
+  id TEXT PRIMARY KEY NOT NULL,
+  name TEXT NOT NULL,
+  secret_hash TEXT NOT NULL,
+  platform TEXT DEFAULT 'windows',
+  hostname TEXT DEFAULT '',
+  version TEXT DEFAULT '',
+  labels TEXT DEFAULT '[]',
+  status TEXT DEFAULT 'offline',
+  last_seen_at INTEGER,
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS connector_pairing_tokens (
+  id TEXT PRIMARY KEY NOT NULL,
+  token_hash TEXT NOT NULL,
+  name TEXT,
+  expires_at INTEGER NOT NULL,
+  used_at INTEGER,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS connector_jobs (
+  id TEXT PRIMARY KEY NOT NULL,
+  connector_id TEXT NOT NULL REFERENCES connectors(id) ON DELETE CASCADE,
+  project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  shell TEXT NOT NULL,
+  command TEXT NOT NULL,
+  cwd TEXT,
+  status TEXT DEFAULT 'queued',
+  stdout TEXT DEFAULT '',
+  stderr TEXT DEFAULT '',
+  exit_code INTEGER,
+  started_at INTEGER,
+  ended_at INTEGER,
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS connector_artifacts (
+  id TEXT PRIMARY KEY NOT NULL,
+  job_id TEXT NOT NULL REFERENCES connector_jobs(id) ON DELETE CASCADE,
+  connector_id TEXT NOT NULL REFERENCES connectors(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  path TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS sessions (
   sid TEXT PRIMARY KEY NOT NULL,
   data TEXT NOT NULL,
@@ -93,6 +143,7 @@ function initDB() {
   sqlite.exec(SCHEMA_SQL);
   // Add avatar column to existing installations
   try { sqlite.exec("ALTER TABLE projects ADD COLUMN avatar TEXT DEFAULT ''"); } catch (_) {}
+  try { sqlite.exec("ALTER TABLE connectors ADD COLUMN labels TEXT DEFAULT '[]'"); } catch (_) {}
   runMigrations(sqlite);
 
   db = drizzle(sqlite, { schema });

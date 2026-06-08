@@ -1,0 +1,161 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Opus Connector</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: "Segoe UI", system-ui, sans-serif;
+        background: #111318;
+        color: #f4f7fb;
+      }
+
+      body {
+        margin: 0;
+        background: #111318;
+      }
+
+      main {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+        padding: 22px;
+      }
+
+      header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      img {
+        width: 36px;
+        height: 36px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 20px;
+        font-weight: 650;
+      }
+
+      .status {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        color: #9ca8ba;
+        font-size: 13px;
+      }
+
+      .dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 999px;
+        background: #4ade80;
+      }
+
+      section {
+        border: 1px solid #273040;
+        border-radius: 8px;
+        background: #171b23;
+        padding: 14px;
+      }
+
+      dl {
+        display: grid;
+        grid-template-columns: 110px minmax(0, 1fr);
+        gap: 8px 12px;
+        margin: 0;
+        font-size: 13px;
+      }
+
+      dt {
+        color: #8f9aab;
+      }
+
+      dd {
+        margin: 0;
+        min-width: 0;
+        overflow-wrap: anywhere;
+      }
+
+      pre {
+        margin: 0;
+        max-height: 220px;
+        overflow: auto;
+        white-space: pre-wrap;
+        font: 12px/1.45 Consolas, "Cascadia Mono", monospace;
+        color: #d7deea;
+      }
+
+      button {
+        align-self: flex-start;
+        border: 1px solid #334155;
+        border-radius: 6px;
+        background: #1f2937;
+        color: #f8fafc;
+        padding: 8px 12px;
+        font: inherit;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <img src="../assets/mark-dark.svg" alt="" />
+        <div>
+          <h1>Opus Connector</h1>
+          <div class="status"><span class="dot"></span><span id="status">Starting</span></div>
+        </div>
+      </header>
+
+      <section>
+        <dl>
+          <dt>Name</dt><dd id="name">-</dd>
+          <dt>Server</dt><dd id="server">-</dd>
+          <dt>Connector ID</dt><dd id="connectorId">-</dd>
+          <dt>Home</dt><dd id="home">-</dd>
+        </dl>
+      </section>
+
+      <button id="openHome">Open Connector Folder</button>
+
+      <section>
+        <pre id="logs"></pre>
+      </section>
+    </main>
+
+    <script>
+      const fields = {
+        status: document.getElementById('status'),
+        name: document.getElementById('name'),
+        server: document.getElementById('server'),
+        connectorId: document.getElementById('connectorId'),
+        home: document.getElementById('home'),
+        logs: document.getElementById('logs'),
+      };
+
+      function render(state) {
+        fields.status.textContent = state.paired ? 'Running' : 'Not paired';
+        fields.name.textContent = state.name || '-';
+        fields.server.textContent = state.server || '-';
+        fields.connectorId.textContent = state.connectorId || '-';
+        fields.home.textContent = state.home || '-';
+        fields.logs.textContent = (state.logs || []).join('\n');
+      }
+
+      window.opusConnector.getState().then(render);
+      window.opusConnector.onState(render);
+      window.opusConnector.onLog((line) => {
+        fields.logs.textContent += `${line}\n`;
+        fields.logs.scrollTop = fields.logs.scrollHeight;
+      });
+      document.getElementById('openHome').addEventListener('click', () => {
+        window.opusConnector.openHome();
+      });
+    </script>
+  </body>
+</html>

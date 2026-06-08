@@ -43,8 +43,10 @@ export PATH="$HOME/bin:$HOME/.npm-global/bin:$HOME/.local/bin:$PATH"\n\
 export NPM_CONFIG_PREFIX="$HOME/.npm-global"\n\
 cd() { builtin cd "${@:-/workspace}"; }\n' >> /etc/bash.bashrc
 
-# Bundle the CLAUDE.md template so the startup command can copy it to ~/.claude/
+# Bundle agent instruction templates so workspace startup can copy them into place.
 COPY CLAUDE.md /etc/opus-command/CLAUDE.md
+COPY AGENTS.md /etc/opus-command/AGENTS.md
+COPY skills/connectors.md /etc/opus-command/skills/connectors.md
 
 WORKDIR /workspace
 

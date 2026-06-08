@@ -564,6 +564,152 @@ function GitHubSection({ csrfToken, addToast }) {
   );
 }
 
+function ConnectorsSection({ csrfToken, addToast }) {
+  const [connectors, setConnectors] = useState([]);
+  const [pairingToken, setPairingToken] = useState(null);
+  const [pairName, setPairName] = useState('');
+  const [pairLabels, setPairLabels] = useState('windows,vm');
+  const [loading, setLoading] = useState(false);
+  const [savingId, setSavingId] = useState(null);
+
+  async function loadConnectors() {
+    try {
+      const res = await fetch('/api/connectors');
+      const data = await res.json();
+      setConnectors(data.connectors || []);
+    } catch {
+      addToast('Could not load connectors.', 'error');
+    }
+  }
+
+  useEffect(() => {
+    loadConnectors();
+    const timer = setInterval(loadConnectors, 10000);
+    return () => clearInterval(timer);
+  }, []);
+
+  function labelsToArray(value) {
+    return value.split(',').map(v => v.trim()).filter(Boolean);
+  }
+
+  async function createToken() {
+    setLoading(true);
+    setPairingToken(null);
+    try {
+      const res = await fetch('/api/connectors/pairing-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ name: pairName || 'Windows Connector', ttlMinutes: 30 }),
+      });
+      const data = await res.json();
+      if (data.token) {
+        setPairingToken({
+          ...data,
+          command: `OpusConnector.exe --server ${window.location.origin} --pair ${data.token} --name "${pairName || 'Windows Connector'}" --labels "${pairLabels}"`,
+        });
+      } else {
+        addToast(data.error || 'Could not create pairing token.', 'error');
+      }
+    } catch {
+      addToast('Could not create pairing token.', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function saveConnector(connector) {
+    setSavingId(connector.id);
+    try {
+      const res = await fetch(`/api/connectors/${connector.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({
+          name: connector.name,
+          labels: labelsToArray(connector.labelText ?? connector.labels.join(',')),
+        }),
+      });
+      const data = await res.json();
+      if (data.connector) {
+        setConnectors(prev => prev.map(item => item.id === data.connector.id ? data.connector : item));
+        addToast('Connector updated.');
+      } else {
+        addToast(data.error || 'Connector update failed.', 'error');
+      }
+    } catch {
+      addToast('Connector update failed.', 'error');
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  function updateLocal(id, changes) {
+    setConnectors(prev => prev.map(connector => connector.id === id ? { ...connector, ...changes } : connector));
+  }
+
+  return (
+    <div className="settings-section connectors-section">
+      <h2 className="settings-section-title">OPUS CONNECTORS</h2>
+
+      <div className="connector-pairing">
+        <div className="form-group">
+          <label className="form-label">New connector name</label>
+          <input className="input" value={pairName} onChange={e => setPairName(e.target.value)} placeholder="Windows VM" />
+        </div>
+        <div className="form-group">
+          <label className="form-label">Default labels</label>
+          <input className="input" value={pairLabels} onChange={e => setPairLabels(e.target.value)} placeholder="windows,android,adb" />
+        </div>
+        <button className="btn btn-primary" onClick={createToken} disabled={loading}>
+          {loading ? 'Creating…' : 'Create Pairing Token'}
+        </button>
+      </div>
+
+      {pairingToken && (
+        <div className="connector-token">
+          <span className="settings-label">Pairing command</span>
+          <code>{pairingToken.command}</code>
+        </div>
+      )}
+
+      <div className="connector-list">
+        {connectors.length === 0 ? (
+          <p className="panel-hint">No connectors paired yet.</p>
+        ) : connectors.map(connector => (
+          <div key={connector.id} className="connector-row">
+            <div className="connector-row-header">
+              <span className={`connector-status ${connector.status === 'online' ? 'online' : ''}`} />
+              <input
+                className="input connector-name-input"
+                value={connector.name}
+                onChange={e => updateLocal(connector.id, { name: e.target.value })}
+              />
+              <button className="btn btn-ghost" onClick={() => saveConnector(connector)} disabled={savingId === connector.id}>
+                {savingId === connector.id ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+            <div className="connector-meta">
+              <span>{connector.platform || 'windows'}</span>
+              <span>{connector.hostname || 'unknown host'}</span>
+              <span>{connector.status}</span>
+            </div>
+            <input
+              className="input connector-label-input"
+              value={connector.labelText ?? connector.labels.join(',')}
+              onChange={e => updateLocal(connector.id, { labelText: e.target.value })}
+              placeholder="windows,android,adb"
+            />
+            <div className="connector-labels">
+              {(connector.labelText ? labelsToArray(connector.labelText) : connector.labels).map(label => (
+                <span key={label} className="connector-label">{label}</span>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function DeviceSection() {
   const { isMobile, override, setOverride, nativeMobile } = useDevice();
   const detected = nativeMobile ? 'touch/mobile' : 'mouse/desktop';
@@ -613,6 +759,7 @@ export default function Settings() {
       <div className="settings-content">
         <GitHubSection csrfToken={csrfToken} addToast={addToast} />
         <ClaudeSection csrfToken={csrfToken} addToast={addToast} />
+        <ConnectorsSection csrfToken={csrfToken} addToast={addToast} />
         <AccountSection csrfToken={csrfToken} addToast={addToast} />
         <AppearanceSection csrfToken={csrfToken} addToast={addToast} />
         <DeviceSection />

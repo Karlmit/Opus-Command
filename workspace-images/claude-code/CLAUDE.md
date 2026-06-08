@@ -67,6 +67,14 @@ The following are already in `PATH` in this workspace:
 
 ---
 
+## Opus Managed Skills
+
+Also read the managed Opus skill files in this project:
+
+- `.opus/skills/connectors.md`
+
+---
+
 ## Summary
 
 | Tool | Persistent command |
