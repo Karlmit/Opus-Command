@@ -2,7 +2,7 @@ Unicode True
 ManifestDPIAware True
 
 !define PRODUCT_NAME "Opus Connector"
-!define PRODUCT_VERSION "0.1.2"
+!define PRODUCT_VERSION "0.1.3"
 !define PUBLISHER "Opus Command"
 !define APP_EXE "OpusConnector.exe"
 !define SOURCE_DIR "..\..\dist\OpusConnector-win32-x64"

@@ -685,7 +685,7 @@ function ConnectorsSection({ csrfToken, addToast }) {
           <span className="settings-label">Pairing command</span>
           <code>{pairingToken.command}</code>
           <p className="connector-token-hint">
-            Or open Opus Connector 0.1.2, paste this server URL and token into the setup window, and click Connect. The connector should show Online, and this list updates within 10 seconds.
+            Or open Opus Connector 0.1.3, paste this server URL and token into the setup window, and click Connect. The connector should show Online, and this list updates within 10 seconds.
           </p>
         </div>
       )}

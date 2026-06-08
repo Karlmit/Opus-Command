@@ -7,6 +7,7 @@ const connector = require('./index');
 const DEFAULT_HOME = process.platform === 'win32'
   ? path.join(process.env.ProgramData || 'C:\\ProgramData', 'OpusConnector')
   : path.join(os.homedir(), '.opus-connector');
+const APP_ICON = path.join(__dirname, '..', 'assets', 'mark-dark.ico');
 
 let tray;
 let window;
@@ -25,6 +26,17 @@ function connectorHome() {
 
 function configPath() {
   return path.join(connectorHome(), 'config', 'connector.json');
+}
+
+function logPath() {
+  return path.join(connectorHome(), 'logs', 'connector.log');
+}
+
+function appendStartupLog(message) {
+  try {
+    fs.mkdirSync(path.dirname(logPath()), { recursive: true });
+    fs.appendFileSync(logPath(), `[${new Date().toISOString()}] ${message}\n`);
+  } catch (_) {}
 }
 
 function readConfig() {
@@ -100,7 +112,7 @@ function createWindow() {
     minWidth: 420,
     minHeight: 420,
     title: 'Opus Connector',
-    icon: path.join(__dirname, '..', 'assets', 'mark-dark.svg'),
+    icon: APP_ICON,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -118,7 +130,7 @@ function createWindow() {
 }
 
 function createTray() {
-  tray = new Tray(path.join(__dirname, '..', 'assets', 'mark-dark.svg'));
+  tray = new Tray(APP_ICON);
   tray.setToolTip('Opus Connector');
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Open Opus Connector', click: createWindow },
@@ -169,8 +181,13 @@ ipcMain.handle('connector:pair', async (_event, payload) => {
 
 app.whenReady().then(() => {
   patchConsole();
-  createTray();
   createWindow();
+  try {
+    createTray();
+  } catch (err) {
+    appendStartupLog(`[error] Tray failed: ${err.message}`);
+    pushLog(`[error] Tray failed: ${err.message}`);
+  }
   const args = process.argv.slice(1);
   if (readConfig() || args.includes('--pair')) {
     startConnector(args).catch(() => {});
@@ -182,4 +199,15 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', (event) => {
   event.preventDefault();
+});
+
+process.on('uncaughtException', (err) => {
+  appendStartupLog(`[error] Uncaught exception: ${err.stack || err.message}`);
+  pushLog(`[error] ${err.message}`);
+});
+
+process.on('unhandledRejection', (err) => {
+  const message = err?.stack || err?.message || String(err);
+  appendStartupLog(`[error] Unhandled rejection: ${message}`);
+  pushLog(`[error] ${err?.message || String(err)}`);
 });

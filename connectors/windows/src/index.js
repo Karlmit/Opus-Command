@@ -5,7 +5,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
 
-const VERSION = '0.1.2';
+const VERSION = '0.1.3';
 const WINDOWS_INSTALL_HOME = 'C:\\OpusConnector';
 const DEFAULT_HOME = process.platform === 'win32'
   ? path.join(process.env.ProgramData || 'C:\\ProgramData', 'OpusConnector')
