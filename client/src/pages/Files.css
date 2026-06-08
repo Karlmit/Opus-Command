@@ -147,13 +147,22 @@
   padding: 4px 0;
 }
 
-/* Context menu */
-.context-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 200;
+/* Inline rename input */
+.file-tree-rename-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-family: inherit;
+  padding: 1px 4px;
+  outline: none;
+  height: 20px;
 }
 
+/* Context menu */
 .context-menu {
   position: fixed;
   z-index: 201;

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../components/Toast';
+import { getSocket } from '../lib/socket';
 import './Files.css';
 
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp']);
@@ -14,92 +15,71 @@ function FileIcon({ name, isDir }) {
   return <span className="file-icon">{icons[ext] || '📄'}</span>;
 }
 
-function FileTreeNode({ node, depth, projectId, csrfToken, onSelect, selectedPath, onRefresh, addToast, gitStatusMap }) {
+function FileTreeNode({
+  node, depth, onSelect, selectedPath, addToast, gitStatusMap,
+  onContextMenu, renamingPath, onStartRename, onRenameSubmit, onRenameCancel,
+}) {
   const [expanded, setExpanded] = useState(depth < 2);
-  const [children, setChildren] = useState(node.children || []);
-  const [contextMenu, setContextMenu] = useState(null);
-  const [childrenLoaded, setChildrenLoaded] = useState(false);
+  const [renameValue, setRenameValue] = useState('');
+  const renameInputRef = useRef(null);
+  const doneRef = useRef(false); // prevents double-submit from Enter→blur or Escape→blur
 
   const isDir = node.type === 'dir';
+  const isRenaming = renamingPath === node.path;
+  const active = selectedPath === node.path;
 
-  async function loadChildren() {
-    if (!isDir || childrenLoaded) return;
-    try {
-      const res = await fetch(`/api/projects/${projectId}/files?path=${encodeURIComponent(node.path)}`);
-      // The tree API returns the full tree from root; we traverse it
-      setChildrenLoaded(true);
-    } catch (_) {}
-  }
+  useEffect(() => {
+    if (isRenaming) {
+      setRenameValue(node.name);
+      doneRef.current = false;
+      requestAnimationFrame(() => {
+        renameInputRef.current?.select();
+      });
+    }
+  }, [isRenaming, node.name]);
 
   function handleClick(e) {
     e.stopPropagation();
-    if (isDir) {
-      setExpanded(e => !e);
-    } else {
-      onSelect(node);
-    }
+    if (isRenaming) return;
+    if (isDir) setExpanded(x => !x);
+    else onSelect(node);
   }
 
-  function handleContextMenu(e) {
+  function handleContextMenuEvent(e) {
     e.preventDefault();
     e.stopPropagation();
-    setContextMenu({ x: e.clientX, y: e.clientY });
+    onContextMenu(node, e.clientX, e.clientY);
   }
 
-  async function handleContextAction(action) {
-    setContextMenu(null);
-    if (action === 'copy-path') {
-      try {
-        await navigator.clipboard.writeText(`/projects/${node.path}`);
-        addToast('Path copied to clipboard.');
-      } catch {
-        addToast('Could not copy to clipboard.', 'error');
-      }
-    } else if (action === 'new-file') {
-      const name = prompt('File name:');
-      if (!name) return;
-      const newPath = `${node.path}/${name}`;
-      await fetch(`/api/projects/${projectId}/files/create`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-        body: JSON.stringify({ filePath: newPath, type: 'file' }),
-      });
-      onRefresh();
-    } else if (action === 'new-folder') {
-      const name = prompt('Folder name:');
-      if (!name) return;
-      const newPath = `${node.path}/${name}`;
-      await fetch(`/api/projects/${projectId}/files/create`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-        body: JSON.stringify({ filePath: newPath, type: 'dir' }),
-      });
-      onRefresh();
-    } else if (action === 'rename') {
-      const name = prompt('New name:', node.name);
-      if (!name || name === node.name) return;
-      const parentPath = node.path.substring(0, node.path.lastIndexOf('/'));
-      const newPath = parentPath ? `${parentPath}/${name}` : name;
-      await fetch(`/api/projects/${projectId}/files/rename`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-        body: JSON.stringify({ oldPath: node.path, newPath }),
-      });
-      onRefresh();
-    } else if (action === 'delete') {
-      if (!confirm(`Delete "${node.name}"?`)) return;
-      await fetch(`/api/projects/${projectId}/files`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-        body: JSON.stringify({ path: node.path }),
-      });
-      onRefresh();
-    } else if (action === 'download') {
-      window.open(`/api/projects/${projectId}/files/download?path=${encodeURIComponent(node.path)}`);
+  function handleRowKeyDown(e) {
+    if (e.key === 'F2') {
+      e.preventDefault();
+      onStartRename(node);
     }
   }
 
-  const active = selectedPath === node.path;
+  function handleRenameKeyDown(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (!doneRef.current) {
+        doneRef.current = true;
+        onRenameSubmit(node, renameValue);
+      }
+    } else if (e.key === 'Escape') {
+      if (!doneRef.current) {
+        doneRef.current = true;
+        onRenameCancel();
+      }
+    }
+  }
+
+  function handleRenameBlur() {
+    if (!doneRef.current) {
+      doneRef.current = true;
+      onRenameSubmit(node, renameValue);
+    }
+  }
+
   const gitStatus = !isDir ? gitStatusMap?.[node.path] : null;
   const dirHasChanges = isDir && gitStatusMap && Object.keys(gitStatusMap).some(p => p.startsWith(node.path + '/'));
   const statusClass = gitStatus === 'M' ? 'git-M' : gitStatus === 'A' ? 'git-A' : gitStatus === 'D' ? 'git-D' : gitStatus === 'R' ? 'git-R' : gitStatus === '??' || gitStatus === '?' ? 'git-U' : null;
@@ -109,16 +89,30 @@ function FileTreeNode({ node, depth, projectId, csrfToken, onSelect, selectedPat
       <div
         className={`file-tree-row${active ? ' active' : ''}${statusClass ? ' has-git-status' : ''}`}
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
+        tabIndex={0}
         onClick={handleClick}
-        onContextMenu={handleContextMenu}
+        onContextMenu={handleContextMenuEvent}
+        onKeyDown={handleRowKeyDown}
       >
         {isDir && (
           <span className={`tree-chevron${expanded ? ' expanded' : ''}`}>▶</span>
         )}
         <FileIcon name={node.name} isDir={isDir} />
-        <span className={`file-tree-name${statusClass ? ' ' + statusClass : ''}`}>{node.name}</span>
-        {statusClass && <span className={`file-git-dot ${statusClass}`} title={gitStatus} />}
-        {dirHasChanges && !statusClass && <span className="file-git-dot dir-changed" title="Contains changes" />}
+        {isRenaming ? (
+          <input
+            ref={renameInputRef}
+            className="file-tree-rename-input"
+            value={renameValue}
+            onChange={e => setRenameValue(e.target.value)}
+            onKeyDown={handleRenameKeyDown}
+            onBlur={handleRenameBlur}
+            onClick={e => e.stopPropagation()}
+          />
+        ) : (
+          <span className={`file-tree-name${statusClass ? ' ' + statusClass : ''}`}>{node.name}</span>
+        )}
+        {!isRenaming && statusClass && <span className={`file-git-dot ${statusClass}`} title={gitStatus} />}
+        {!isRenaming && dirHasChanges && !statusClass && <span className="file-git-dot dir-changed" title="Contains changes" />}
       </div>
 
       {isDir && expanded && node.children && (
@@ -128,13 +122,15 @@ function FileTreeNode({ node, depth, projectId, csrfToken, onSelect, selectedPat
               key={child.path}
               node={child}
               depth={depth + 1}
-              projectId={projectId}
-              csrfToken={csrfToken}
               onSelect={onSelect}
               selectedPath={selectedPath}
-              onRefresh={onRefresh}
               addToast={addToast}
               gitStatusMap={gitStatusMap}
+              onContextMenu={onContextMenu}
+              renamingPath={renamingPath}
+              onStartRename={onStartRename}
+              onRenameSubmit={onRenameSubmit}
+              onRenameCancel={onRenameCancel}
             />
           ))}
           {node.children.length === 0 && (
@@ -143,25 +139,6 @@ function FileTreeNode({ node, depth, projectId, csrfToken, onSelect, selectedPat
             </div>
           )}
         </div>
-      )}
-
-      {contextMenu && (
-        <>
-          <div className="context-backdrop" onClick={() => setContextMenu(null)} />
-          <div
-            className="context-menu"
-            style={{ top: contextMenu.y, left: contextMenu.x }}
-            role="menu"
-          >
-            {isDir && <button role="menuitem" onClick={() => handleContextAction('new-file')}>New File</button>}
-            {isDir && <button role="menuitem" onClick={() => handleContextAction('new-folder')}>New Folder</button>}
-            <button role="menuitem" onClick={() => handleContextAction('rename')}>Rename</button>
-            <button role="menuitem" onClick={() => handleContextAction('copy-path')}>Copy Path</button>
-            {!isDir && <button role="menuitem" onClick={() => handleContextAction('download')}>Download</button>}
-            <div className="context-separator" />
-            <button role="menuitem" className="context-danger" onClick={() => handleContextAction('delete')}>Delete</button>
-          </div>
-        </>
       )}
     </div>
   );
@@ -327,14 +304,27 @@ export default function FilesPage() {
   const [searchResults, setSearchResults] = useState(null);
   const [dragOver, setDragOver] = useState(false);
   const [gitStatusMap, setGitStatusMap] = useState({});
+  const [contextMenu, setContextMenu] = useState(null); // { node, x, y }
+  const [renamingPath, setRenamingPath] = useState(null);
 
   useEffect(() => { loadTree(); loadGitStatus(); }, [projectId]);
 
-  // Refresh tree every 2s for AI-agent changes
   useEffect(() => {
     const interval = setInterval(() => { loadTree(); loadGitStatus(); }, 2000);
     return () => clearInterval(interval);
   }, [projectId]);
+
+  // Close context menu on any click/right-click outside a tree node
+  useEffect(() => {
+    if (!contextMenu) return;
+    function close() { setContextMenu(null); }
+    document.addEventListener('click', close);
+    document.addEventListener('contextmenu', close);
+    return () => {
+      document.removeEventListener('click', close);
+      document.removeEventListener('contextmenu', close);
+    };
+  }, [!!contextMenu]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadGitStatus() {
     try {
@@ -400,6 +390,86 @@ export default function FilesPage() {
     else addToast(data.error || 'Create failed.', 'error');
   }
 
+  function handleNodeContextMenu(node, x, y) {
+    setContextMenu({ node, x, y });
+  }
+
+  function handleStartRename(node) {
+    setRenamingPath(node.path);
+    setContextMenu(null);
+  }
+
+  async function handleRenameSubmit(node, newName) {
+    setRenamingPath(null);
+    if (!newName || newName === node.name) return;
+    const parentPath = node.path.substring(0, node.path.lastIndexOf('/'));
+    const newPath = parentPath ? `${parentPath}/${newName}` : newName;
+    await fetch(`/api/projects/${projectId}/files/rename`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      body: JSON.stringify({ oldPath: node.path, newPath }),
+    });
+    loadTree();
+  }
+
+  async function handleContextAction(action) {
+    const node = contextMenu?.node;
+    setContextMenu(null);
+    if (!node) return;
+
+    if (action === 'copy-path') {
+      try {
+        await navigator.clipboard.writeText(node.path);
+        addToast('Path copied to clipboard.');
+      } catch {
+        addToast('Could not copy to clipboard.', 'error');
+      }
+    } else if (action === 'reference') {
+      try {
+        const res = await fetch(`/api/projects/${projectId}/terminals`);
+        const data = await res.json();
+        const sessions = data.sessions || [];
+        if (sessions.length === 0) {
+          addToast('No terminal sessions open — open a terminal first.', 'error');
+          return;
+        }
+        getSocket().emit('terminal:input', { sessionId: sessions[0].id, data: node.path });
+      } catch {
+        addToast('Could not send path to terminal.', 'error');
+      }
+    } else if (action === 'new-file') {
+      const name = prompt('File name:');
+      if (!name) return;
+      await fetch(`/api/projects/${projectId}/files/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ filePath: `${node.path}/${name}`, type: 'file' }),
+      });
+      loadTree();
+    } else if (action === 'new-folder') {
+      const name = prompt('Folder name:');
+      if (!name) return;
+      await fetch(`/api/projects/${projectId}/files/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ filePath: `${node.path}/${name}`, type: 'dir' }),
+      });
+      loadTree();
+    } else if (action === 'rename') {
+      setRenamingPath(node.path);
+    } else if (action === 'delete') {
+      if (!confirm(`Delete "${node.name}"?`)) return;
+      await fetch(`/api/projects/${projectId}/files`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ path: node.path }),
+      });
+      loadTree();
+    } else if (action === 'download') {
+      window.open(`/api/projects/${projectId}/files/download?path=${encodeURIComponent(node.path)}`);
+    }
+  }
+
   return (
     <div className="files-page">
       {/* File tree panel */}
@@ -454,13 +524,15 @@ export default function FilesPage() {
                 key={node.path}
                 node={node}
                 depth={0}
-                projectId={projectId}
-                csrfToken={csrfToken}
                 onSelect={setSelectedFile}
                 selectedPath={selectedFile?.path}
-                onRefresh={loadTree}
                 addToast={addToast}
                 gitStatusMap={gitStatusMap}
+                onContextMenu={handleNodeContextMenu}
+                renamingPath={renamingPath}
+                onStartRename={handleStartRename}
+                onRenameSubmit={handleRenameSubmit}
+                onRenameCancel={() => setRenamingPath(null)}
               />
             ))}
           </div>
@@ -484,6 +556,26 @@ export default function FilesPage() {
           </div>
         )}
       </div>
+
+      {/* Global context menu — only one at a time */}
+      {contextMenu && (
+        <div
+          className="context-menu"
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          role="menu"
+          onClick={e => e.stopPropagation()}
+          onContextMenu={e => { e.preventDefault(); e.stopPropagation(); }}
+        >
+          {contextMenu.node.type === 'dir' && <button role="menuitem" onClick={() => handleContextAction('new-file')}>New File</button>}
+          {contextMenu.node.type === 'dir' && <button role="menuitem" onClick={() => handleContextAction('new-folder')}>New Folder</button>}
+          <button role="menuitem" onClick={() => handleContextAction('rename')}>Rename</button>
+          <button role="menuitem" onClick={() => handleContextAction('reference')}>Reference</button>
+          <button role="menuitem" onClick={() => handleContextAction('copy-path')}>Copy Path</button>
+          {contextMenu.node.type !== 'dir' && <button role="menuitem" onClick={() => handleContextAction('download')}>Download</button>}
+          <div className="context-separator" />
+          <button role="menuitem" className="context-danger" onClick={() => handleContextAction('delete')}>Delete</button>
+        </div>
+      )}
     </div>
   );
 }
