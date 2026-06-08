@@ -1,0 +1,71 @@
+.syntax-editor {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--color-surface-elevated);
+}
+
+.syntax-editor-highlight,
+.syntax-editor-textarea {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  border: none;
+  outline: none;
+  padding: var(--spacing-md);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-regular);
+  line-height: var(--leading-normal);
+  letter-spacing: 0;
+  tab-size: 2;
+  white-space: pre-wrap;
+  word-break: normal;
+  overflow-wrap: break-word;
+}
+
+.syntax-editor-highlight {
+  overflow: auto;
+  color: var(--color-text-primary);
+  pointer-events: none;
+}
+
+.syntax-editor-highlight code {
+  font: inherit;
+}
+
+.syntax-editor .syntax-editor-textarea {
+  z-index: 1;
+  resize: none;
+  overflow: auto;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--color-terminal-cursor);
+  -webkit-text-fill-color: transparent;
+}
+
+.syntax-editor .syntax-editor-textarea::selection {
+  background: var(--color-terminal-selection);
+}
+
+.syntax-editor .syntax-editor-textarea::placeholder {
+  color: var(--color-text-tertiary);
+  -webkit-text-fill-color: var(--color-text-tertiary);
+}
+
+.syntax-line {
+  min-height: 1lh;
+}
+
+.syntax-comment { color: #7f8794; }
+.syntax-string { color: #9cdc8c; }
+.syntax-number { color: #b5cea8; }
+.syntax-keyword { color: #82aaff; }
+.syntax-function { color: #dcdcaa; }
+.syntax-variable { color: #c586c0; }
+.syntax-key { color: #9cdcfe; }
+.syntax-tag { color: #f07178; }
+.syntax-punctuation { color: var(--color-text-secondary); }

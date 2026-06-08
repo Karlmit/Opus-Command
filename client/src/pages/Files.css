@@ -342,6 +342,10 @@
   padding: var(--spacing-md);
 }
 
+.editor-content .syntax-editor {
+  flex: 1;
+}
+
 .editor-preview {
   flex: 1;
   overflow-y: auto;

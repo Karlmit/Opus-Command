@@ -10,6 +10,7 @@ import { useMobileUI } from '../context/MobileUIContext';
 import { useDevice } from '../context/DeviceContext';
 import { getSocket } from '../lib/socket';
 import MobileTerminalView from '../components/MobileTerminalView';
+import SyntaxHighlightedEditor from '../components/SyntaxHighlightedEditor';
 import GitPage from './Git';
 import '@xterm/xterm/css/xterm.css';
 import './ProjectCockpit.css';
@@ -1056,7 +1057,9 @@ export default function ProjectCockpit() {
                     <span className="file-editor-name">{activeFileTab.name}</span>
                     <button className="btn btn-primary" onClick={() => saveFile(activeFileTab.path)}>Save</button>
                   </div>
-                  <textarea className="file-editor-area" spellCheck={false}
+                  <SyntaxHighlightedEditor
+                    fileName={activeFileTab.name}
+                    spellCheck={false}
                     value={fileContent[activeFileTab.path] || ''}
                     onChange={e => { setFileContent(p=>({...p,[activeFileTab.path]:e.target.value})); setDirty(p=>({...p,[activeFileTab.path]:true})); }} />
                 </div>

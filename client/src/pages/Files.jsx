@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../components/Toast';
 import { getSocket } from '../lib/socket';
+import SyntaxHighlightedEditor from '../components/SyntaxHighlightedEditor';
 import './Files.css';
 
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp']);
@@ -260,8 +261,9 @@ function SimpleEditor({ file, projectId, csrfToken, addToast, onClose }) {
 
       <div className={`editor-content${previewMode === 'split' ? ' split' : ''}`}>
         {(previewMode === 'edit' || previewMode === 'split') && (
-          <textarea
-            className="editor-textarea"
+          <SyntaxHighlightedEditor
+            fileName={file.name}
+            textareaClassName="editor-textarea"
             value={content}
             onChange={e => { setContent(e.target.value); setSaved(false); }}
             spellCheck={false}
