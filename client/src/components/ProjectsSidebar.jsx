@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { useToast } from './Toast';
+import { getNotificationSocket } from '../context/NotificationsContext';
 import './ProjectsSidebar.css';
 
 /* ── Constants ──────────────────────────────────── */
@@ -310,6 +310,21 @@ export default function ProjectsSidebar() {
     return () => clearInterval(t);
   }, []);
 
+  useEffect(() => {
+    const sock = getNotificationSocket();
+
+    function onProjectAIState({ projectId, terminalCount, aiActive, aiWaiting, aiBusy }) {
+      setProjects(prev => prev.map(project => (
+        String(project.id) === String(projectId)
+          ? { ...project, terminalCount, aiActive, aiWaiting, aiBusy }
+          : project
+      )));
+    }
+
+    sock.on('project:ai-state', onProjectAIState);
+    return () => sock.off('project:ai-state', onProjectAIState);
+  }, []);
+
   async function load() {
     try { const r = await fetch('/api/projects'); const d = await r.json(); setProjects(d.projects || []); } catch (_) {}
   }
@@ -333,10 +348,12 @@ export default function ProjectsSidebar() {
         {projects.length === 0 && !isCollapsed && <p className="sidebar-empty">No projects yet</p>}
         {projects.map(project => {
           const isActive = String(project.id) === String(activeId);
+          const aiWaiting = (project.aiWaiting || 0) > 0;
+          const aiActive = !aiWaiting && (project.aiActive || project.aiBusy || 0) > 0;
           return (
             <div key={project.id}
               data-id={project.id}
-              className={`sidebar-project-item${isActive ? ' active' : ''}`}
+              className={`sidebar-project-item${isActive ? ' active' : ''}${aiActive ? ' ai-active' : ''}${aiWaiting ? ' ai-waiting' : ''}`}
               onClick={() => navigate(`/project/${project.id}`)}
               onContextMenu={e => handleContext(e, project)}
               title={isCollapsed ? project.name : undefined}
@@ -344,7 +361,7 @@ export default function ProjectsSidebar() {
               <div className="sidebar-avatar-wrap">
                 <ProjectAvatar project={project} size={34} />
                 <span className={`sidebar-status-dot status-${project.status}`} />
-                {project.aiWaiting > 0 && <span className="sidebar-ai-dot" />}
+                {aiWaiting && <span className="sidebar-ai-dot" />}
               </div>
               {!isCollapsed && (
                 <div className="sidebar-project-meta">

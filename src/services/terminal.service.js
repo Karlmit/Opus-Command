@@ -23,6 +23,7 @@ const { containerName } = require('./docker.service');
 const AGENT_PORT   = parseInt(process.env.TERMINAL_AGENT_PORT || '7681', 10);
 const MAX_BUFFER   = 500_000; // bytes
 const CONNECT_TIMEOUT_MS = 5_000;
+const AI_IDLE_TIMEOUT_MS = 3500;
 
 // Map<sessionId, ProxyEntry>
 const activeProxies = new Map();
@@ -141,6 +142,8 @@ function _connectProxy(projectId, sessionId, io) {
     buffer: '',
     name: '',
     aiState: 'none',
+    aiAgent: null,
+    inputBuffer: '',
     alive: false,
     lastOutputTime: Date.now(),
   };
@@ -180,6 +183,7 @@ function _connectProxy(projectId, sessionId, io) {
 
     } else if (msg.type === 'exit') {
       console.log(`[terminal] session ${sessionId.slice(0, 8)} exited`);
+      _setAIState(sessionId, 'none', ioRef, { force: true });
       entry.alive = false;
       _persistScrollback(sessionId, entry, true);
       activeProxies.delete(sessionId);
@@ -287,6 +291,7 @@ function _sleep(ms) {
 function _doWrite(sessionId, data) {
   const proxy = activeProxies.get(sessionId);
   if (proxy?.ws?.readyState === WebSocket.OPEN) {
+    _detectAICommandInput(sessionId, data, _io);
     proxy.ws.send(JSON.stringify({ type: 'input', data }));
   } else {
     console.warn(`[terminal] INPUT DROPPED — no active proxy for session ${sessionId.slice(0, 8)}`);
@@ -328,6 +333,7 @@ function isSessionAlive(sessionId) {
 
 function killSession(sessionId) {
   const proxy = activeProxies.get(sessionId);
+  const projectId = proxy?.projectId || _getSessionProjectId(sessionId);
   if (proxy) {
     fetch(`${agentHttp(proxy.projectId)}/sessions/${sessionId}`, {
       method: 'DELETE',
@@ -339,6 +345,7 @@ function killSession(sessionId) {
   try {
     getDB().delete(terminalSessions).where(eq(terminalSessions.id, sessionId)).run();
   } catch (_) {}
+  if (projectId) _emitProjectAISummary(projectId, _io);
 }
 
 function getSessionScrollback(sessionId) {
@@ -372,8 +379,32 @@ function listSessions(projectId) {
     name:     activeProxies.get(s.id)?.name || s.name,
     active:   isSessionAlive(s.id),
     aiState:  activeProxies.get(s.id)?.aiState || s.aiState || 'none',
+    aiAgent:  activeProxies.get(s.id)?.aiAgent || null,
     projectId: s.projectId,
   }));
+}
+
+function getProjectAISummary(projectId) {
+  const db = getDB();
+  const rows = db.select().from(terminalSessions)
+    .where(eq(terminalSessions.projectId, projectId)).all();
+
+  let aiActive = 0;
+  let aiWaiting = 0;
+
+  for (const row of rows) {
+    const state = activeProxies.get(row.id)?.aiState || row.aiState || 'none';
+    if (state === 'active') aiActive++;
+    else if (state === 'waiting') aiWaiting++;
+  }
+
+  return {
+    projectId,
+    terminalCount: rows.length,
+    aiActive,
+    aiWaiting,
+    aiBusy: aiActive + aiWaiting,
+  };
 }
 
 function clientJoinSession(sessionId, socketId) {
@@ -408,37 +439,78 @@ function _persistScrollback(sessionId, proxy, immediate = false) {
 // ── AI state detection ───────────────────────────────────────────────────────
 
 const _waitingTimers = {};
+const _idleTimers = {};
+
+function _stripAnsi(data) {
+  return String(data || '')
+    .replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/g, '');
+}
+
+function _findPatternAgent(patterns, type, text) {
+  for (const agent of patterns.agents || []) {
+    const list = agent[type] || [];
+    if (list.some(p => text.includes(p))) return agent;
+  }
+  return null;
+}
+
+function _agentFromCommand(command) {
+  if (/^\s*(?:npx\s+)?claude(?:\s|$)/i.test(command)) return 'Claude Code';
+  if (/^\s*(?:npx\s+)?codex(?:\s|$)/i.test(command)) return 'Codex CLI';
+  return null;
+}
+
+function _detectAICommandInput(sessionId, data, io) {
+  const proxy = activeProxies.get(sessionId);
+  if (!proxy) return;
+
+  const chunk = String(data || '');
+  if (proxy.aiState === 'waiting' && chunk.includes('\r')) {
+    _setAIState(sessionId, 'active', io, { agentName: proxy.aiAgent });
+  }
+
+  for (const char of chunk) {
+    if (char === '\r' || char === '\n') {
+      const agentName = _agentFromCommand(proxy.inputBuffer);
+      proxy.inputBuffer = '';
+      if (agentName) _setAIState(sessionId, 'active', io, { agentName });
+    } else if (char === '\u007f' || char === '\b') {
+      proxy.inputBuffer = proxy.inputBuffer.slice(0, -1);
+    } else if (char >= ' ') {
+      proxy.inputBuffer += char;
+      if (proxy.inputBuffer.length > 300) proxy.inputBuffer = proxy.inputBuffer.slice(-300);
+    }
+  }
+}
 
 function _detectAIState(sessionId, data, io) {
   const proxy = activeProxies.get(sessionId);
   if (!proxy) return;
 
   const { loadPatterns } = require('./patterns.service');
-  const patterns  = loadPatterns();
-  const allActive  = patterns.agents.flatMap(a => a.activePatterns  || []);
-  const allWaiting = patterns.agents.flatMap(a => a.waitingPatterns || []);
+  const patterns = loadPatterns();
+  const text = _stripAnsi(data);
   const wasWaiting = proxy.aiState === 'waiting';
+  const activeAgent = _findPatternAgent(patterns, 'activePatterns', text);
+  const waitingAgent = _findPatternAgent(patterns, 'waitingPatterns', text);
 
-  if (allActive.some(p => data.includes(p))) {
-    if (proxy.aiState !== 'waiting') {
-      proxy.aiState = 'active';
-      _updateAIState(sessionId, 'active', io);
-    }
+  if (activeAgent && proxy.aiState !== 'waiting') {
+    _setAIState(sessionId, 'active', io, { agentName: activeAgent.name });
+  } else if (proxy.aiState === 'active' && text.trim()) {
+    _setAIState(sessionId, 'active', io, { agentName: proxy.aiAgent });
   }
 
-  if (allWaiting.some(p => data.includes(p))) {
+  if (waitingAgent) {
     if (_waitingTimers[sessionId]) clearTimeout(_waitingTimers[sessionId]);
     _waitingTimers[sessionId] = setTimeout(() => {
       const px = activeProxies.get(sessionId);
       if (!px) return;
       if (Date.now() - px.lastOutputTime >= 900) {
-        px.aiState = 'waiting';
-        _updateAIState(sessionId, 'waiting', io || _io);
+        _setAIState(sessionId, 'waiting', io || _io, { agentName: waitingAgent.name });
       }
     }, 1000);
-  } else if (wasWaiting && data.trim()) {
-    proxy.aiState = 'active';
-    _updateAIState(sessionId, 'active', io);
+  } else if (wasWaiting && text.trim()) {
+    _setAIState(sessionId, 'active', io, { agentName: proxy.aiAgent });
     if (_waitingTimers[sessionId]) {
       clearTimeout(_waitingTimers[sessionId]);
       delete _waitingTimers[sessionId];
@@ -446,11 +518,62 @@ function _detectAIState(sessionId, data, io) {
   }
 }
 
-function _updateAIState(sessionId, state, io) {
+function _setAIState(sessionId, state, io, options = {}) {
+  const proxy = activeProxies.get(sessionId);
+  const previousState = proxy?.aiState;
+  const previousAgent = proxy?.aiAgent || null;
+  const agentName = options.agentName || previousAgent;
+
+  if (proxy) {
+    proxy.aiState = state;
+    proxy.aiAgent = state === 'none' ? null : agentName;
+  }
+
+  if (_idleTimers[sessionId]) {
+    clearTimeout(_idleTimers[sessionId]);
+    delete _idleTimers[sessionId];
+  }
+  if (state !== 'waiting' && _waitingTimers[sessionId]) {
+    clearTimeout(_waitingTimers[sessionId]);
+    delete _waitingTimers[sessionId];
+  }
+  if (state === 'active') {
+    _idleTimers[sessionId] = setTimeout(() => {
+      const px = activeProxies.get(sessionId);
+      if (!px || px.aiState !== 'active') return;
+      _setAIState(sessionId, 'none', io || _io);
+    }, AI_IDLE_TIMEOUT_MS);
+  }
+
+  if (!options.force && previousState === state && previousAgent === (proxy?.aiAgent || null)) return;
+
   try {
     getDB().update(terminalSessions).set({ aiState: state })
       .where(eq(terminalSessions.id, sessionId)).run();
-    (io || _io)?.emit('terminal:ai-state', { sessionId, state });
+    const projectId = proxy?.projectId || _getSessionProjectId(sessionId);
+    (io || _io)?.emit('terminal:ai-state', {
+      sessionId,
+      projectId,
+      state,
+      agent: state === 'none' ? null : agentName,
+    });
+    if (projectId) _emitProjectAISummary(projectId, io || _io);
+  } catch (_) {}
+}
+
+function _getSessionProjectId(sessionId) {
+  try {
+    const rows = getDB().select().from(terminalSessions)
+      .where(eq(terminalSessions.id, sessionId)).all();
+    return rows[0]?.projectId || null;
+  } catch {
+    return null;
+  }
+}
+
+function _emitProjectAISummary(projectId, io) {
+  try {
+    (io || _io)?.emit('project:ai-state', getProjectAISummary(projectId));
   } catch (_) {}
 }
 
@@ -464,6 +587,7 @@ module.exports = {
   getSessionScrollback,
   renameSession,
   listSessions,
+  getProjectAISummary,
   clientJoinSession,
   clientLeaveSession,
   isSessionAlive,

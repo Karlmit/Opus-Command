@@ -8,6 +8,7 @@ const { projects, terminalSessions, activityLog } = require('../db/schema');
 const { eq } = require('drizzle-orm');
 const { PROJECTS_DIR } = require('../config');
 const docker = require('../services/docker.service');
+const terminal = require('../services/terminal.service');
 
 // GET /api/projects — list all projects with live status
 router.get('/', requireAuth, async (req, res) => {
@@ -17,6 +18,7 @@ router.get('/', requireAuth, async (req, res) => {
 
     const projectsWithStatus = await Promise.all(rows.map(async p => {
       const status = await docker.getContainerStatus(p.id).catch(() => 'stopped');
+      const aiSummary = terminal.getProjectAISummary(p.id);
       return {
         id: p.id,
         name: p.name,
@@ -24,9 +26,10 @@ router.get('/', requireAuth, async (req, res) => {
         template: p.template,
         avatar: p.avatar || '',
         status,
-        terminalCount: 0,
-        aiWaiting: 0,
-        aiActive: 0,
+        terminalCount: aiSummary.terminalCount,
+        aiWaiting: aiSummary.aiWaiting,
+        aiActive: aiSummary.aiActive,
+        aiBusy: aiSummary.aiBusy,
       };
     }));
 
@@ -106,6 +109,8 @@ router.post('/', requireAuth, async (req, res) => {
       status: 'starting',
       terminalCount: 0,
       aiWaiting: 0,
+      aiActive: 0,
+      aiBusy: 0,
     });
   } catch (err) {
     console.error('[projects] Create error:', err);
@@ -130,14 +135,19 @@ router.get('/:id', requireAuth, async (req, res) => {
       .slice(-20)
       .reverse();
 
+    const aiSummary = terminal.getProjectAISummary(p.id);
+
     res.json({
       id: p.id,
       name: p.name,
       folderPath: p.folderPath,
       template: p.template,
       status,
-      terminalCount: 0,
-      aiCount: 0,
+      terminalCount: aiSummary.terminalCount,
+      aiCount: aiSummary.aiBusy,
+      aiActive: aiSummary.aiActive,
+      aiWaiting: aiSummary.aiWaiting,
+      aiBusy: aiSummary.aiBusy,
       gitBranch: null,
       changedFiles: 0,
       activity,

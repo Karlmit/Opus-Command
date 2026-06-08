@@ -5,6 +5,13 @@ const NotificationsContext = createContext(null);
 
 let globalSocket = null;
 
+export function getNotificationSocket() {
+  if (!globalSocket) {
+    globalSocket = io({ autoConnect: true, reconnection: true });
+  }
+  return globalSocket;
+}
+
 export function NotificationsProvider({ children }) {
   const [aiNotifications, setAiNotifications] = useState({}); // sessionId -> 'active'|'waiting'|'none'
   const soundSettingsRef = useRef({ enabled: false, sound: 'chime' });
@@ -15,10 +22,7 @@ export function NotificationsProvider({ children }) {
       soundSettingsRef.current = { enabled: d.enabled, sound: d.sound || 'chime' };
     }).catch(() => {});
 
-    if (!globalSocket) {
-      globalSocket = io({ autoConnect: true, reconnection: true });
-    }
-    const sock = globalSocket;
+    const sock = getNotificationSocket();
 
     sock.on('terminal:ai-state', ({ sessionId, state }) => {
       setAiNotifications(prev => ({ ...prev, [sessionId]: state }));

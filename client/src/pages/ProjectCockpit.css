@@ -580,7 +580,7 @@
 .badge-A { color: var(--color-success); }
 .badge-D { color: var(--color-error); }
 .badge-R { color: var(--color-accent); }
-.badge-? { color: var(--color-text-dim); }
+.badge-\? { color: var(--color-text-dim); }
 
 .git-file-name {
   font-family: var(--font-mono);
