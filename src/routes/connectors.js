@@ -1,6 +1,7 @@
 const express = require('express');
+const fs = require('fs');
 const router = express.Router();
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requireAuthOrWorkspaceToken } = require('../middleware/auth');
 const connectors = require('../services/connectors.service');
 
 router.post('/register', (req, res) => {
@@ -19,7 +20,7 @@ router.post('/register', (req, res) => {
   }
 });
 
-router.get('/', requireAuth, (req, res) => {
+router.get('/', requireAuthOrWorkspaceToken, (req, res) => {
   res.json({ connectors: connectors.listConnectors() });
 });
 
@@ -36,13 +37,21 @@ router.post('/pairing-token', requireAuth, (req, res) => {
   }
 });
 
-router.get('/jobs/:jobId', requireAuth, (req, res) => {
+router.get('/jobs/:jobId', requireAuthOrWorkspaceToken, (req, res) => {
   const job = connectors.getJob(req.params.jobId);
   if (!job) return res.status(404).json({ error: 'Job not found.' });
   res.json({ job });
 });
 
-router.get('/:connectorId', requireAuth, (req, res) => {
+router.get('/artifacts/:artifactId/download', requireAuthOrWorkspaceToken, (req, res) => {
+  const artifact = connectors.getArtifact(req.params.artifactId);
+  if (!artifact || !fs.existsSync(artifact.path)) {
+    return res.status(404).json({ error: 'Artifact not found.' });
+  }
+  res.download(artifact.path, artifact.name);
+});
+
+router.get('/:connectorId', requireAuthOrWorkspaceToken, (req, res) => {
   const connector = connectors.getConnector(req.params.connectorId);
   if (!connector) return res.status(404).json({ error: 'Connector not found.' });
   res.json({ connector });
@@ -60,7 +69,7 @@ router.patch('/:connectorId', requireAuth, (req, res) => {
   }
 });
 
-router.post('/:connectorId/jobs', requireAuth, async (req, res) => {
+router.post('/:connectorId/jobs', requireAuthOrWorkspaceToken, async (req, res) => {
   try {
     const { command, shell, cwd, projectId, timeoutMs } = req.body;
     if (!command || !command.trim()) {
@@ -69,7 +78,7 @@ router.post('/:connectorId/jobs', requireAuth, async (req, res) => {
 
     const { job, completion } = connectors.createJob({
       connectorId: req.params.connectorId,
-      userId: req.session.userId,
+      userId: req.session?.userId || null,
       projectId,
       shell,
       command,

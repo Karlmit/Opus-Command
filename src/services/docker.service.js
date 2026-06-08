@@ -1,7 +1,8 @@
 const Dockerode = require('dockerode');
-const { PROJECTS_DIR, HOST_PROJECTS_DIR } = require('../config');
+const { PROJECTS_DIR, HOST_PROJECTS_DIR, PORT } = require('../config');
 const path = require('path');
 const os   = require('os');
+const fs = require('fs');
 
 const docker = new Dockerode({ socketPath: '/var/run/docker.sock' });
 
@@ -49,6 +50,14 @@ async function getWorkspaceImage() {
 // Shared startup Cmd — used by createWorkspaceContainer AND recreateContainer
 // so every container (new, recreated, rebuilt, reset) runs the same init script.
 function buildWorkspaceCmd(image) {
+  const opusCliPath = path.join(__dirname, '..', 'workspace', 'opus-cli.js');
+  const opusCliBase64 = fs.existsSync(opusCliPath)
+    ? Buffer.from(fs.readFileSync(opusCliPath, 'utf8')).toString('base64')
+    : '';
+  const connectorSkillPath = path.join(__dirname, '..', 'workspace', 'connectors.md');
+  const connectorSkillBase64 = fs.existsSync(connectorSkillPath)
+    ? Buffer.from(fs.readFileSync(connectorSkillPath, 'utf8')).toString('base64')
+    : '';
   const claudeSettings = JSON.stringify({
     model: 'sonnet',
     enabledPlugins: { 'azure@azure-skills': true },
@@ -61,7 +70,12 @@ function buildWorkspaceCmd(image) {
 
   const initScript = [
     'mkdir -p ~/.claude ~/bin ~/.npm-global /workspace/.opus/skills',
-    '[ -f /etc/opus-command/skills/connectors.md ] && cp /etc/opus-command/skills/connectors.md /workspace/.opus/skills/connectors.md 2>/dev/null || true',
+    opusCliBase64
+      ? `printf '%s' '${opusCliBase64}' | base64 -d > ~/bin/opus && chmod +x ~/bin/opus`
+      : 'true',
+    connectorSkillBase64
+      ? `printf '%s' '${connectorSkillBase64}' | base64 -d > /workspace/.opus/skills/connectors.md`
+      : '[ -f /etc/opus-command/skills/connectors.md ] && cp /etc/opus-command/skills/connectors.md /workspace/.opus/skills/connectors.md 2>/dev/null || true',
     '[ -f ~/.claude/CLAUDE.md ] || cp /etc/opus-command/CLAUDE.md ~/.claude/CLAUDE.md 2>/dev/null || true',
     '[ -f /workspace/CLAUDE.md ] || cp /etc/opus-command/CLAUDE.md /workspace/CLAUDE.md 2>/dev/null || true',
     '[ -f /workspace/AGENTS.md ] || cp /etc/opus-command/AGENTS.md /workspace/AGENTS.md 2>/dev/null || true',
@@ -138,7 +152,10 @@ async function ensureInternalNetwork() {
   // can be addressed by their container name (Docker user-defined network DNS).
   const selfId = os.hostname(); // Docker sets hostname to short container ID
   try {
-    await docker.getNetwork(INTERNAL_NETWORK).connect({ Container: selfId });
+    await docker.getNetwork(INTERNAL_NETWORK).connect({
+      Container: selfId,
+      EndpointConfig: { Aliases: ['opus-command'] },
+    });
     console.log(`[docker] Connected self (${selfId.slice(0, 12)}) to ${INTERNAL_NETWORK}`);
   } catch (err) {
     if (!err.message?.includes('already exists') && !err.message?.includes('already connected')) {
@@ -166,8 +183,12 @@ async function createWorkspaceContainer(projectId, folderPath) {
   const homeVol = homeVolumeName(projectId);
   const projectHostPath = path.join(HOST_PROJECTS_DIR, folderPath);
 
-  const { getWorkspaceEnvVars } = require('./auth.service');
-  const userEnv = getWorkspaceEnvVars().map(({ key, value }) => `${key}=${value}`);
+  const { getWorkspaceEnvVars, getWorkspaceAccessToken } = require('./auth.service');
+  const userEnv = [
+    ...getWorkspaceEnvVars().map(({ key, value }) => `${key}=${value}`),
+    `OPUS_COMMAND_URL=${process.env.OPUS_WORKSPACE_COMMAND_URL || `http://opus-command:${PORT}`}`,
+    `OPUS_WORKSPACE_TOKEN=${getWorkspaceAccessToken()}`,
+  ];
 
   try {
     await docker.getVolume(homeVol).inspect();
@@ -223,8 +244,12 @@ async function recreateContainer(projectId, folderPath) {
   const name = containerName(projectId);
   const projectHostPath = path.join(HOST_PROJECTS_DIR, folderPath);
 
-  const { getWorkspaceEnvVars } = require('./auth.service');
-  const userEnv = getWorkspaceEnvVars().map(({ key, value }) => `${key}=${value}`);
+  const { getWorkspaceEnvVars, getWorkspaceAccessToken } = require('./auth.service');
+  const userEnv = [
+    ...getWorkspaceEnvVars().map(({ key, value }) => `${key}=${value}`),
+    `OPUS_COMMAND_URL=${process.env.OPUS_WORKSPACE_COMMAND_URL || `http://opus-command:${PORT}`}`,
+    `OPUS_WORKSPACE_TOKEN=${getWorkspaceAccessToken()}`,
+  ];
 
   try {
     const existing = docker.getContainer(name);

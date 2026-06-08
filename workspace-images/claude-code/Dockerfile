@@ -47,6 +47,8 @@ cd() { builtin cd "${@:-/workspace}"; }\n' >> /etc/bash.bashrc
 COPY CLAUDE.md /etc/opus-command/CLAUDE.md
 COPY AGENTS.md /etc/opus-command/AGENTS.md
 COPY skills/connectors.md /etc/opus-command/skills/connectors.md
+COPY opus-cli.js /usr/local/bin/opus
+RUN chmod +x /usr/local/bin/opus
 
 WORKDIR /workspace
 

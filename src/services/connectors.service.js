@@ -362,6 +362,18 @@ function getJob(jobId) {
   };
 }
 
+function getArtifact(artifactId) {
+  const row = getSQLite().prepare('SELECT id, job_id, name, path, size FROM connector_artifacts WHERE id = ?').get(artifactId);
+  if (!row) return null;
+  return {
+    id: row.id,
+    jobId: row.job_id,
+    name: row.name,
+    path: row.path,
+    size: row.size,
+  };
+}
+
 module.exports = {
   createPairingToken,
   registerConnector,
@@ -370,5 +382,6 @@ module.exports = {
   updateConnector,
   createJob,
   getJob,
+  getArtifact,
   setupConnectorWebSocket,
 };

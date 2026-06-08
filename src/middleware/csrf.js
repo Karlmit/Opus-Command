@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { isWorkspaceTokenRequest } = require('../services/auth.service');
 
 function csrfMiddleware(req, res, next) {
   if (!req.session) return next();
@@ -17,6 +18,10 @@ function csrfMiddleware(req, res, next) {
   }
 
   if (req.path === '/api/connectors/register') {
+    return next();
+  }
+
+  if (req.path.startsWith('/api/connectors') && isWorkspaceTokenRequest(req)) {
     return next();
   }
 

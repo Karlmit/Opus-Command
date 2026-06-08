@@ -1,4 +1,5 @@
 const bcrypt = require('bcrypt');
+const crypto = require('crypto');
 const { getDB, getSQLite } = require('../db');
 const { users, settings } = require('../db/schema');
 const { eq } = require('drizzle-orm');
@@ -63,4 +64,44 @@ function getWorkspaceEnvVars() {
   }
 }
 
-module.exports = { hasAdminAccount, createAdminAccount, verifyCredentials, changePassword, getSetting, setSetting, getWorkspaceEnvVars };
+function getWorkspaceAccessToken() {
+  let token = getSetting('workspace_access_token');
+  if (!token) {
+    token = `opus_ws_${crypto.randomBytes(32).toString('base64url')}`;
+    setSetting('workspace_access_token', token);
+  }
+  return token;
+}
+
+function timingSafeEqual(a, b) {
+  const left = Buffer.from(String(a || ''));
+  const right = Buffer.from(String(b || ''));
+  return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
+function workspaceTokenFromRequest(req) {
+  const auth = String(req.headers.authorization || '');
+  if (auth.toLowerCase().startsWith('bearer ')) return auth.slice(7).trim();
+  return String(req.headers['x-opus-workspace-token'] || '').trim();
+}
+
+function isValidWorkspaceToken(token) {
+  const expected = getSetting('workspace_access_token');
+  return !!expected && timingSafeEqual(token, expected);
+}
+
+function isWorkspaceTokenRequest(req) {
+  return isValidWorkspaceToken(workspaceTokenFromRequest(req));
+}
+
+module.exports = {
+  hasAdminAccount,
+  createAdminAccount,
+  verifyCredentials,
+  changePassword,
+  getSetting,
+  setSetting,
+  getWorkspaceEnvVars,
+  getWorkspaceAccessToken,
+  isWorkspaceTokenRequest,
+};
