@@ -144,7 +144,7 @@ function FileNode({ node, depth, projectId, csrfToken, onOpenFile, activeFilePat
 /* ── Terminal instance ─────────────────────────── */
 let _xtermInstanceCounter = 0;
 
-function TerminalInstance({ sessionId, active, termRefs }) {
+function TerminalInstance({ sessionId, active, termRefs, pendingScrollback }) {
   const divRef = useRef(null);
 
   useEffect(() => {
@@ -154,15 +154,12 @@ function TerminalInstance({ sessionId, active, termRefs }) {
     console.log(`[xterm:${instanceId}] Opening for session ${sessionId.slice(0,8)}`);
 
     const term = new XTerm({
-      // Font — Cascadia Mono matches Windows Terminal exactly
       fontFamily: '"Cascadia Mono", monospace',
       fontSize: 16,
       fontWeight: 400,
       fontWeightBold: 700,
       lineHeight: 1.0,
       letterSpacing: 0,
-
-      // Theme
       theme: {
         background: '#1E2024',
         foreground: '#E8EAED',
@@ -173,7 +170,6 @@ function TerminalInstance({ sessionId, active, termRefs }) {
         scrollbarSliderHoverBackground: 'rgba(255,255,255,0.20)',
         scrollbarSliderActiveBackground: 'rgba(255,255,255,0.30)',
       },
-
       cursorBlink: true,
       cursorStyle: 'block',
       scrollback: 5000,
@@ -185,76 +181,83 @@ function TerminalInstance({ sessionId, active, termRefs }) {
     term.loadAddon(new WebLinksAddon());
 
     let ro = null;
-    // TerminalInstance is never rendered on mobile devices; this guard is defensive.
     const isDeviceMobile = () => document.body.classList.contains('mobile-device');
     const onWinResize = () => {
       try { fit.fit(); } catch (_) {}
       if (!isDeviceMobile()) doResizeEmit();
     };
-
     const doResizeEmit = () => {
       const sock = getSocket();
       if (term.cols && term.rows && sock.connected) {
         sock.emit('terminal:resize', { sessionId, cols: term.cols, rows: term.rows });
       }
     };
-
     const doFit = () => {
       try { fit.fit(); } catch (_) {}
       if (!isDeviceMobile()) doResizeEmit();
     };
 
-    // Open the terminal immediately so termRefs is set before any socket
-    // events (scrollback) can arrive. The server responds to terminal:join
-    // very quickly — deferring open() risks the scrollback arriving while
-    // the ref is still undefined, causing it to be silently discarded.
-    term.open(divRef.current);
-
-    term.onData(data => {
-      if (getSocket().connected) getSocket().emit('terminal:input', { sessionId, data });
-    });
-
-    // Register ref right away — this is what onScrollback writes into.
-    termRefs.current[sessionId] = {
-      write:   d  => term.write(d),
-      clear:   () => term.clear(),
-      reset:   () => term.reset(),
-      focus:   () => term.focus(),
-      fit:     () => { try { fit.fit(); } catch (_) {} },
-      getSize: () => term.cols ? { cols: term.cols, rows: term.rows } : null,
-    };
-
-    // Fit and wire up observers only after fonts are loaded so glyph widths
-    // are measured correctly. Double rAF ensures the flex layout has settled
-    // before FitAddon measures the container (fixes wrong size on refresh).
-    const setupFit = () => {
+    // open() is called inside fonts.ready so glyph widths are measured with
+    // the correct font. If we call term.open() before fonts load (e.g. on a
+    // hard refresh where fonts must be re-downloaded), xterm measures character
+    // width using the fallback monospace font, which is narrower than Cascadia
+    // Mono. FitAddon then calculates too many columns and text overflows the
+    // container. Deferring until fonts.ready guarantees correct measurements.
+    //
+    // The tradeoff: the server can respond to terminal:join with scrollback
+    // before open() runs. onScrollback stores that data in pendingScrollback
+    // and we replay it immediately after open() below.
+    const open = () => {
       if (cancelled || !divRef.current) return;
-      doFit();
 
-      // ResizeObserver MUST be set up AFTER open() — before open, there
-      // is no canvas to resize, and fit.fit() would throw.
-      ro = new ResizeObserver(doFit);
-      ro.observe(divRef.current);
+      term.open(divRef.current);
 
-      // Also observe the parent container — catches layout changes from
-      // sidebar resize and file tree collapse that reflow the flex tree
-      const parent = divRef.current?.parentElement;
-      if (parent) ro.observe(parent);
+      term.onData(data => {
+        if (getSocket().connected) getSocket().emit('terminal:input', { sessionId, data });
+      });
 
-      window.addEventListener('resize', onWinResize);
+      // Register ref so live terminal:data events can write to the terminal.
+      termRefs.current[sessionId] = {
+        write:   d  => term.write(d),
+        clear:   () => term.clear(),
+        reset:   () => term.reset(),
+        focus:   () => term.focus(),
+        fit:     () => { try { fit.fit(); } catch (_) {} },
+        getSize: () => term.cols ? { cols: term.cols, rows: term.rows } : null,
+      };
+
+      // Apply any scrollback that arrived while fonts were still loading.
+      const pending = pendingScrollback?.current?.[sessionId];
+      if (pending !== undefined) {
+        delete pendingScrollback.current[sessionId];
+        term.reset();
+        term.write(pending);
+      }
+
+      // Double rAF: ensures the flex layout has fully settled before FitAddon
+      // measures the container. A single rAF is not enough after a hard refresh
+      // because the browser hasn't finished computing flex dimensions yet.
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (cancelled || !divRef.current) return;
+        doFit();
+        ro = new ResizeObserver(doFit);
+        ro.observe(divRef.current);
+        const parent = divRef.current?.parentElement;
+        if (parent) ro.observe(parent);
+        window.addEventListener('resize', onWinResize);
+      }));
     };
 
     if (typeof document !== 'undefined' && document.fonts?.ready) {
-      document.fonts.ready.then(() => {
-        if (cancelled) return;
-        requestAnimationFrame(() => requestAnimationFrame(setupFit));
-      });
+      document.fonts.ready.then(open);
     } else {
-      requestAnimationFrame(() => requestAnimationFrame(setupFit));
+      open();
     }
 
     return () => {
       cancelled = true;
+      // Clear any pending scrollback so stale data isn't replayed on remount.
+      if (pendingScrollback?.current) delete pendingScrollback.current[sessionId];
       console.log(`[xterm:${instanceId}] Disposing for session ${sessionId.slice(0,8)}`);
       ro?.disconnect();
       window.removeEventListener('resize', onWinResize);
@@ -522,6 +525,9 @@ export default function ProjectCockpit() {
   // Guard: scrollback can only be written once per xterm instance.
   // Cleared alongside joinedSessions so a reconnect gets a fresh replay.
   const historyReplayed  = useRef(new Set());
+  // Scrollback that arrived before TerminalInstance finished opening (fonts still loading).
+  // TerminalInstance reads and clears this once term.open() completes.
+  const pendingScrollback = useRef({});
   // Tracks the current projectId so async callbacks can detect stale results.
   const currentProjectId = useRef(projectId);
 
@@ -603,9 +609,17 @@ export default function ProjectCockpit() {
       const bytes = typeof data === 'string' ? data.length : 0;
       console.log(`[terminal] Replaying ${bytes} bytes history for session ${sessionId.slice(0,8)}`);
       const ref = termRefs.current[sessionId];
-      // reset() wipes the scrollback buffer before replaying; clear() only
-      // scrolls content up into the buffer, causing duplicate output on scroll.
-      if (ref) { ref.reset(); ref.write(data); }
+      if (ref) {
+        // Terminal already open — apply immediately.
+        // reset() wipes the scrollback buffer before replaying; clear() only
+        // scrolls content up into the buffer, causing duplicate output on scroll.
+        ref.reset();
+        ref.write(data);
+      } else {
+        // Terminal not open yet (fonts still loading or first render not committed).
+        // Store for TerminalInstance to pick up once term.open() completes.
+        pendingScrollback.current[sessionId] = data;
+      }
     }
 
     function onExit({ sessionId }) {
@@ -843,7 +857,7 @@ export default function ProjectCockpit() {
               /* Desktop: full interactive xterm — owns PTY resize */
               <>
                 {termTabs.map(t => (
-                  <TerminalInstance key={t.id} sessionId={t.id} active={activeTab === `term-${t.id}`} termRefs={termRefs} />
+                  <TerminalInstance key={t.id} sessionId={t.id} active={activeTab === `term-${t.id}`} termRefs={termRefs} pendingScrollback={pendingScrollback} />
                 ))}
                 {termTabs.length === 0 && !showOverlay && (
                   <div className="cockpit-empty">
