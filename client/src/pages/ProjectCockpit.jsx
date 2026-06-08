@@ -61,82 +61,13 @@ function FileIcon({ name, isDir, open }) {
   );
 }
 
-function FileNode({ node, depth, projectId, csrfToken, onOpenFile, activeFilePath, onRefresh }) {
+function FileNode({
+  node, depth, onOpenFile, activeFilePath,
+  onOpenContextMenu, onOpenRenameDialog,
+}) {
   const [open, setOpen] = useState(depth < 1);
-  const [menu, setMenu] = useState(null);
-  const [renaming, setRenaming] = useState(false);
-  const [renameValue, setRenameValue] = useState('');
-  const renameInputRef = useRef(null);
-  const doneRef = useRef(false);
-  const { addToast } = useToast();
   const isDir = node.type === 'dir';
   const isActive = activeFilePath === node.path;
-
-  useEffect(() => {
-    if (renaming) {
-      setRenameValue(node.name);
-      doneRef.current = false;
-      requestAnimationFrame(() => renameInputRef.current?.select());
-    }
-  }, [renaming, node.name]);
-
-  async function create(type) {
-    setMenu(null);
-    const name = prompt(type === 'dir' ? 'Folder name:' : 'File name:');
-    if (!name) return;
-    const filePath = isDir ? `${node.path}/${name}` : name;
-    const r = await fetch(`/api/projects/${projectId}/files/create`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-      body: JSON.stringify({ filePath, type }),
-    });
-    if ((await r.json()).success) onRefresh(); else addToast('Create failed.', 'error');
-  }
-
-  async function remove() {
-    setMenu(null);
-    if (!confirm(`Delete "${node.name}"?`)) return;
-    const r = await fetch(`/api/projects/${projectId}/files`, {
-      method: 'DELETE', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-      body: JSON.stringify({ path: node.path }),
-    });
-    if ((await r.json()).success) onRefresh(); else addToast('Delete failed.', 'error');
-  }
-
-  async function doRename(newName) {
-    setRenaming(false);
-    if (!newName || newName === node.name) return;
-    const parentPath = node.path.substring(0, node.path.lastIndexOf('/'));
-    const newPath = parentPath ? `${parentPath}/${newName}` : newName;
-    const r = await fetch(`/api/projects/${projectId}/files/rename`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-      body: JSON.stringify({ oldPath: node.path, newPath }),
-    });
-    if ((await r.json()).success) onRefresh(); else addToast('Rename failed.', 'error');
-  }
-
-  async function doReference() {
-    setMenu(null);
-    try {
-      const res = await fetch(`/api/projects/${projectId}/terminals`);
-      const data = await res.json();
-      const sessions = data.sessions || [];
-      if (!sessions.length) { addToast('No terminal sessions open — open a terminal first.', 'error'); return; }
-      getSocket().emit('terminal:input', { sessionId: sessions[0].id, data: node.path });
-    } catch { addToast('Could not send path to terminal.', 'error'); }
-  }
-
-  function handleRenameKeyDown(e) {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      if (!doneRef.current) { doneRef.current = true; doRename(renameValue); }
-    } else if (e.key === 'Escape') {
-      if (!doneRef.current) { doneRef.current = true; setRenaming(false); }
-    }
-  }
-
-  function handleRenameBlur() {
-    if (!doneRef.current) { doneRef.current = true; doRename(renameValue); }
-  }
 
   return (
     <div className="file-node-wrap">
@@ -144,9 +75,18 @@ function FileNode({ node, depth, projectId, csrfToken, onOpenFile, activeFilePat
         className={`file-node${isActive ? ' active' : ''}`}
         style={{ paddingLeft: depth * 16 + 6 }}
         tabIndex={0}
-        onClick={() => { if (renaming) return; isDir ? setOpen(o => !o) : onOpenFile(node); }}
-        onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setMenu({ x: e.clientX, y: e.clientY }); }}
-        onKeyDown={e => { if (e.key === 'F2') { e.preventDefault(); setMenu(null); setRenaming(true); } }}
+        onClick={() => { isDir ? setOpen(o => !o) : onOpenFile(node); }}
+        onContextMenu={e => {
+          e.preventDefault();
+          e.stopPropagation();
+          onOpenContextMenu(node, e.clientX, e.clientY);
+        }}
+        onKeyDown={e => {
+          if (e.key === 'F2') {
+            e.preventDefault();
+            onOpenRenameDialog(node);
+          }
+        }}
       >
         {isDir && (
           <span className={`fn-chevron${open ? ' open' : ''}`}>
@@ -157,19 +97,7 @@ function FileNode({ node, depth, projectId, csrfToken, onOpenFile, activeFilePat
         )}
         {!isDir && <span className="fn-chevron-gap" />}
         <FileIcon name={node.name} isDir={isDir} open={open} />
-        {renaming ? (
-          <input
-            ref={renameInputRef}
-            className="fn-rename-input"
-            value={renameValue}
-            onChange={e => setRenameValue(e.target.value)}
-            onKeyDown={handleRenameKeyDown}
-            onBlur={handleRenameBlur}
-            onClick={e => e.stopPropagation()}
-          />
-        ) : (
-          <span className="file-node-name">{node.name}</span>
-        )}
+        <span className="file-node-name">{node.name}</span>
       </div>
 
       {isDir && open && (
@@ -181,27 +109,13 @@ function FileNode({ node, depth, projectId, csrfToken, onOpenFile, activeFilePat
           )}
           {node.children?.map(c => (
             <FileNode key={c.path} node={c} depth={depth + 1}
-              projectId={projectId} csrfToken={csrfToken}
-              onOpenFile={onOpenFile} activeFilePath={activeFilePath} onRefresh={onRefresh} />
+              onOpenFile={onOpenFile}
+              activeFilePath={activeFilePath}
+              onOpenContextMenu={onOpenContextMenu}
+              onOpenRenameDialog={onOpenRenameDialog}
+            />
           ))}
         </div>
-      )}
-
-      {menu && (
-        <>
-          <div className="context-backdrop" onClick={() => setMenu(null)} />
-          <div className="context-menu" style={{ top: menu.y, left: menu.x }} role="menu"
-            onClick={e => e.stopPropagation()} onContextMenu={e => { e.preventDefault(); e.stopPropagation(); }}>
-            {isDir && <button role="menuitem" onClick={() => create('file')}>New File</button>}
-            {isDir && <button role="menuitem" onClick={() => create('dir')}>New Folder</button>}
-            <button role="menuitem" onClick={() => { setMenu(null); setRenaming(true); }}>Rename</button>
-            <button role="menuitem" onClick={doReference}>Reference</button>
-            <button role="menuitem" onClick={() => { setMenu(null); navigator.clipboard.writeText(node.path); }}>Copy Path</button>
-            {!isDir && <button role="menuitem" onClick={() => { setMenu(null); window.open(`/api/projects/${projectId}/files/download?path=${encodeURIComponent(node.path)}`); }}>Download</button>}
-            <div className="context-separator" />
-            <button role="menuitem" className="context-danger" onClick={remove}>Delete</button>
-          </div>
-        </>
       )}
     </div>
   );
@@ -582,6 +496,9 @@ export default function ProjectCockpit() {
   const [deleting, setDeleting]   = useState(false);
   const [showDelete, setShowDelete] = useState(false);
   const [treeCollapsed, setTreeCollapsed] = useState(false);
+  const [fileContextMenu, setFileContextMenu] = useState(null); // { node, x, y }
+  const [renameDialog, setRenameDialog] = useState(null); // { node, value }
+  const renameInputRef = useRef(null);
 
   const termRefs         = useRef({});
   const activeRef        = useRef(null);
@@ -601,6 +518,25 @@ export default function ProjectCockpit() {
   const { mobileTab, setMobileTab } = useMobileUI();
   const { isMobile } = useDevice();
   const prevMobileTab = useRef(null);
+
+  useEffect(() => {
+    if (!renameDialog) return;
+    requestAnimationFrame(() => renameInputRef.current?.select());
+  }, [renameDialog?.node.path]);
+
+  useEffect(() => {
+    if (!fileContextMenu) return;
+    function closeMenu() { setFileContextMenu(null); }
+    function closeOnEscape(e) {
+      if (e.key === 'Escape') closeMenu();
+    }
+    document.addEventListener('click', closeMenu);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('click', closeMenu);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [!!fileContextMenu]);
 
   // Handle ?tab= from context menu (desktop right-click)
   useEffect(() => {
@@ -819,6 +755,86 @@ export default function ProjectCockpit() {
     if ((await r.json()).success) setDirty(p => ({ ...p, [path]: false })); else addToast('Save failed.', 'error');
   }
 
+  function openFileContextMenu(node, x, y) {
+    setRenameDialog(null);
+    setFileContextMenu({ node, x, y });
+  }
+
+  function openRenameDialog(node) {
+    setFileContextMenu(null);
+    setRenameDialog({ node, value: node.name });
+  }
+
+  async function createInNode(node, type) {
+    const name = prompt(type === 'dir' ? 'Folder name:' : 'File name:');
+    if (!name) return;
+    const filePath = node.type === 'dir' ? `${node.path}/${name}` : name;
+    const r = await fetch(`/api/projects/${projectId}/files/create`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      body: JSON.stringify({ filePath, type }),
+    });
+    if ((await r.json()).success) loadTree();
+    else addToast('Create failed.', 'error');
+  }
+
+  async function removeFileNode(node) {
+    if (!confirm(`Delete "${node.name}"?`)) return;
+    const r = await fetch(`/api/projects/${projectId}/files`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      body: JSON.stringify({ path: node.path }),
+    });
+    if ((await r.json()).success) loadTree();
+    else addToast('Delete failed.', 'error');
+  }
+
+  async function referenceFileNode(node) {
+    try {
+      const res = await fetch(`/api/projects/${projectId}/terminals`);
+      const data = await res.json();
+      const sessions = data.sessions || [];
+      if (!sessions.length) { addToast('No terminal sessions open — open a terminal first.', 'error'); return; }
+      getSocket().emit('terminal:input', { sessionId: sessions[0].id, data: node.path });
+    } catch { addToast('Could not send path to terminal.', 'error'); }
+  }
+
+  async function handleFileContextAction(action) {
+    const node = fileContextMenu?.node;
+    setFileContextMenu(null);
+    if (!node) return;
+
+    if (action === 'new-file') await createInNode(node, 'file');
+    else if (action === 'new-folder') await createInNode(node, 'dir');
+    else if (action === 'rename') openRenameDialog(node);
+    else if (action === 'reference') await referenceFileNode(node);
+    else if (action === 'copy-path') {
+      try { await navigator.clipboard.writeText(node.path); }
+      catch { addToast('Could not copy path.', 'error'); }
+    } else if (action === 'download') {
+      window.open(`/api/projects/${projectId}/files/download?path=${encodeURIComponent(node.path)}`);
+    } else if (action === 'delete') {
+      await removeFileNode(node);
+    }
+  }
+
+  async function submitRenameDialog() {
+    const node = renameDialog?.node;
+    const newName = renameDialog?.value.trim();
+    setRenameDialog(null);
+    if (!node || !newName || newName === node.name) return;
+
+    const parentPath = node.path.substring(0, node.path.lastIndexOf('/'));
+    const newPath = parentPath ? `${parentPath}/${newName}` : newName;
+    const r = await fetch(`/api/projects/${projectId}/files/rename`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      body: JSON.stringify({ oldPath: node.path, newPath }),
+    });
+    if ((await r.json()).success) loadTree();
+    else addToast('Rename failed.', 'error');
+  }
+
   function closeFile(path) {
     setFileTabs(p => p.filter(t => t.path !== path));
     if (activeTab === `file-${path}`) { const first = termTabs[0]; if (first) activateTerm(first.id); else setActiveTab(null); }
@@ -860,7 +876,17 @@ export default function ProjectCockpit() {
         </div>
         <div className="filetree-scroll">
           {tree.length === 0 && <p className="filetree-empty">Empty project</p>}
-          {tree.map(n => <FileNode key={n.path} node={n} depth={0} projectId={projectId} csrfToken={csrfToken} onOpenFile={openFile} activeFilePath={activeFileTab?.path} onRefresh={loadTree} />)}
+          {tree.map(n => (
+            <FileNode
+              key={n.path}
+              node={n}
+              depth={0}
+              onOpenFile={openFile}
+              activeFilePath={activeFileTab?.path}
+              onOpenContextMenu={openFileContextMenu}
+              onOpenRenameDialog={openRenameDialog}
+            />
+          ))}
         </div>
         <div className="cockpit-project-footer">
           {project && <ProjectAvatar project={project} size={22} />}
@@ -983,6 +1009,67 @@ export default function ProjectCockpit() {
           )}
         </div>
       </div>
+
+      {fileContextMenu && (
+        <div
+          className="context-menu"
+          style={{ top: fileContextMenu.y, left: fileContextMenu.x }}
+          role="menu"
+          onClick={e => e.stopPropagation()}
+          onContextMenu={e => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+        >
+          {fileContextMenu.node.type === 'dir' && <button role="menuitem" onClick={() => handleFileContextAction('new-file')}>New File</button>}
+          {fileContextMenu.node.type === 'dir' && <button role="menuitem" onClick={() => handleFileContextAction('new-folder')}>New Folder</button>}
+          <button role="menuitem" onClick={() => handleFileContextAction('rename')}>Rename</button>
+          <button role="menuitem" onClick={() => handleFileContextAction('reference')}>Reference</button>
+          <button role="menuitem" onClick={() => handleFileContextAction('copy-path')}>Copy Path</button>
+          {fileContextMenu.node.type !== 'dir' && <button role="menuitem" onClick={() => handleFileContextAction('download')}>Download</button>}
+          <div className="context-separator" />
+          <button role="menuitem" className="context-danger" onClick={() => handleFileContextAction('delete')}>Delete</button>
+        </div>
+      )}
+
+      {renameDialog && (
+        <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && setRenameDialog(null)}>
+          <form
+            className="modal rename-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="rename-modal-title"
+            onSubmit={e => {
+              e.preventDefault();
+              submitRenameDialog();
+            }}
+            onKeyDown={e => {
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                setRenameDialog(null);
+              }
+            }}
+          >
+            <div className="modal-header">
+              <h2 className="modal-title" id="rename-modal-title">Rename</h2>
+            </div>
+            <div className="modal-body">
+              <label className="rename-modal-label" htmlFor="rename-file-input">Name</label>
+              <input
+                id="rename-file-input"
+                ref={renameInputRef}
+                className="rename-modal-input"
+                value={renameDialog.value}
+                onChange={e => setRenameDialog(d => d ? { ...d, value: e.target.value } : d)}
+              />
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="btn btn-ghost" onClick={() => setRenameDialog(null)}>Cancel</button>
+              <button type="submit" className="btn btn-primary">Rename</button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {/* Delete modal */}
       {showDelete && (

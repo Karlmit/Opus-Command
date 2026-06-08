@@ -167,6 +167,116 @@
   font-style: italic;
 }
 
+.context-menu {
+  position: fixed;
+  z-index: 201;
+  min-width: 150px;
+  padding: 4px 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  box-shadow: var(--shadow-3);
+}
+
+.context-menu button {
+  width: 100%;
+  padding: 7px 12px;
+  text-align: left;
+  background: none;
+  border: 0;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.context-menu button:hover,
+.context-menu button:focus-visible {
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  outline: none;
+}
+
+.context-menu .context-danger {
+  color: var(--color-error);
+}
+
+.context-separator {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--color-border);
+}
+
+/* Rename dialog */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.48);
+}
+
+.modal {
+  width: min(420px, 100%);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-3);
+  overflow: hidden;
+}
+
+.modal-header,
+.modal-body,
+.modal-footer {
+  padding: 16px;
+}
+
+.modal-header {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.modal-title {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 16px;
+  font-weight: var(--font-weight-semibold);
+}
+
+.modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  border-top: 1px solid var(--color-border);
+}
+
+.rename-modal-label {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.rename-modal-input {
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  background: var(--color-surface-base, #1a1c1f);
+  border: 1px solid var(--color-accent);
+  border-radius: 4px;
+  color: var(--color-text-primary);
+  font: inherit;
+  outline: none;
+}
+
 /* Project info strip at bottom of file tree */
 .cockpit-project-info {
   display: flex;
