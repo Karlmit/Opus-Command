@@ -215,6 +215,13 @@
   word-break: break-word;
 }
 
+.connector-token-hint {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  line-height: var(--leading-normal);
+}
+
 .connector-list {
   display: flex;
   flex-direction: column;

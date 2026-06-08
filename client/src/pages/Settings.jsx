@@ -593,7 +593,7 @@ function ConnectorsSection({ csrfToken, addToast }) {
   }
 
   function psQuote(value) {
-    return `'${String(value || '').replace(/'/g, "''")}'`;
+    return `"${String(value || '').replace(/`/g, '``').replace(/"/g, '`"')}"`;
   }
 
   async function createToken() {
@@ -610,7 +610,7 @@ function ConnectorsSection({ csrfToken, addToast }) {
         const name = pairName || 'Windows Connector';
         setPairingToken({
           ...data,
-          command: `& 'C:\\OpusConnector\\OpusConnector.exe' --server ${psQuote(window.location.origin)} --pair ${psQuote(data.token)} --name ${psQuote(name)} --labels ${psQuote(pairLabels)} --home 'C:\\ProgramData\\OpusConnector'`,
+          command: `& "C:\\OpusConnector\\OpusConnector.exe" --server ${psQuote(window.location.origin)} --pair ${data.token} --name ${psQuote(name)} --labels ${psQuote(pairLabels)}`,
         });
       } else {
         addToast(data.error || 'Could not create pairing token.', 'error');
@@ -673,6 +673,9 @@ function ConnectorsSection({ csrfToken, addToast }) {
         <div className="connector-token">
           <span className="settings-label">Pairing command</span>
           <code>{pairingToken.command}</code>
+          <p className="connector-token-hint">
+            Run this in PowerShell after installing Opus Connector 0.1.1. The connector window should show Running, and this list updates within 10 seconds.
+          </p>
         </div>
       )}
 
