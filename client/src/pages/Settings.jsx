@@ -608,9 +608,13 @@ function ConnectorsSection({ csrfToken, addToast }) {
       const data = await res.json();
       if (data.token) {
         const name = pairName || 'Windows Connector';
+        const server = window.location.origin;
         setPairingToken({
           ...data,
-          command: `& "C:\\OpusConnector\\OpusConnector.exe" --server ${psQuote(window.location.origin)} --pair ${data.token} --name ${psQuote(name)} --labels ${psQuote(pairLabels)}`,
+          server,
+          name,
+          labels: pairLabels,
+          command: `& "C:\\OpusConnector\\OpusConnector.exe" --server ${psQuote(server)} --pair ${data.token} --name ${psQuote(name)} --labels ${psQuote(pairLabels)}`,
         });
       } else {
         addToast(data.error || 'Could not create pairing token.', 'error');
@@ -671,10 +675,17 @@ function ConnectorsSection({ csrfToken, addToast }) {
 
       {pairingToken && (
         <div className="connector-token">
+          <span className="settings-label">GUI setup values</span>
+          <div className="connector-token-grid">
+            <span>Server URL</span><code>{pairingToken.server}</code>
+            <span>Pairing token</span><code>{pairingToken.token}</code>
+            <span>Name</span><code>{pairingToken.name}</code>
+            <span>Labels</span><code>{pairingToken.labels}</code>
+          </div>
           <span className="settings-label">Pairing command</span>
           <code>{pairingToken.command}</code>
           <p className="connector-token-hint">
-            Run this in PowerShell after installing Opus Connector 0.1.1. The connector window should show Running, and this list updates within 10 seconds.
+            Or open Opus Connector 0.1.2, paste this server URL and token into the setup window, and click Connect. The connector should show Online, and this list updates within 10 seconds.
           </p>
         </div>
       )}

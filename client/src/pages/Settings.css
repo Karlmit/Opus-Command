@@ -215,6 +215,18 @@
   word-break: break-word;
 }
 
+.connector-token-grid {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: var(--spacing-xs) var(--spacing-sm);
+  align-items: baseline;
+}
+
+.connector-token-grid span {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+}
+
 .connector-token-hint {
   margin: 0;
   color: var(--color-text-tertiary);

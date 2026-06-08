@@ -11,6 +11,9 @@ const DEFAULT_HOME = process.platform === 'win32'
 let tray;
 let window;
 let quitting = false;
+let connectorStarted = false;
+let connectionStatus = 'starting';
+let lastError = '';
 const logLines = [];
 
 function connectorHome() {
@@ -32,10 +35,22 @@ function readConfig() {
   }
 }
 
+function setStatus(status, error = '') {
+  connectionStatus = status;
+  lastError = error;
+  if (window && !window.isDestroyed()) {
+    window.webContents.send('connector:state', state());
+  }
+}
+
 function pushLog(line) {
   const text = String(line);
   logLines.push(text);
   while (logLines.length > 80) logLines.shift();
+  if (text.includes('Connecting to ')) setStatus('connecting');
+  if (text.includes('Connector online.')) setStatus('online');
+  if (text.includes('Connector offline.')) setStatus('offline');
+  if (text.startsWith('[error]')) setStatus('error', text.replace(/^\[error\]\s*/, ''));
   if (window && !window.isDestroyed()) {
     window.webContents.send('connector:log', text);
     window.webContents.send('connector:state', state());
@@ -47,11 +62,29 @@ function state() {
   return {
     home: connectorHome(),
     paired: !!config,
+    status: connectionStatus,
+    error: lastError,
     server: config?.server || '',
     connectorId: config?.connectorId || '',
     name: config?.name || '',
     logs: logLines,
   };
+}
+
+async function startConnector(args = []) {
+  if (connectorStarted) return;
+  connectorStarted = true;
+  setStatus('connecting');
+  try {
+    await connector.main(args);
+  } catch (err) {
+    connectorStarted = false;
+    const message = err.message || String(err);
+    if (message.includes('No connector config found')) setStatus('not_paired', message);
+    else setStatus('error', message);
+    pushLog(`[error] ${message}`);
+    throw err;
+  }
 }
 
 function createWindow() {
@@ -117,14 +150,34 @@ function patchConsole() {
 
 ipcMain.handle('connector:get-state', () => state());
 ipcMain.handle('connector:open-home', () => shell.openPath(connectorHome()));
+ipcMain.handle('connector:pair', async (_event, payload) => {
+  try {
+    const args = [
+      '--server', String(payload.server || '').trim(),
+      '--pair', String(payload.token || '').trim(),
+      '--name', String(payload.name || os.hostname()).trim(),
+      '--labels', String(payload.labels || 'windows,vm').trim(),
+    ];
+    if (!args[1]) throw new Error('Server URL is required.');
+    if (!args[3]) throw new Error('Pairing token is required.');
+    await startConnector(args);
+    return { ok: true, state: state() };
+  } catch (err) {
+    return { ok: false, error: err.message || String(err), state: state() };
+  }
+});
 
 app.whenReady().then(() => {
   patchConsole();
   createTray();
   createWindow();
-  connector.main(process.argv.slice(1)).catch((err) => {
-    pushLog(`[error] ${err.message}`);
-  });
+  const args = process.argv.slice(1);
+  if (readConfig() || args.includes('--pair')) {
+    startConnector(args).catch(() => {});
+  } else {
+    setStatus('not_paired');
+    pushLog('Connector is not paired. Enter your Opus server and pairing token.');
+  }
 });
 
 app.on('window-all-closed', (event) => {

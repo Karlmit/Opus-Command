@@ -20,7 +20,7 @@
       main {
         display: flex;
         flex-direction: column;
-        gap: 18px;
+        gap: 14px;
         padding: 22px;
       }
 
@@ -56,11 +56,49 @@
         background: #4ade80;
       }
 
+      .dot.not-paired,
+      .dot.error {
+        background: #f87171;
+      }
+
+      .dot.connecting,
+      .dot.offline {
+        background: #fbbf24;
+      }
+
       section {
         border: 1px solid #273040;
         border-radius: 8px;
         background: #171b23;
         padding: 14px;
+      }
+
+      form {
+        display: grid;
+        gap: 10px;
+      }
+
+      label {
+        display: grid;
+        gap: 5px;
+        color: #9ca8ba;
+        font-size: 12px;
+      }
+
+      input {
+        min-width: 0;
+        border: 1px solid #334155;
+        border-radius: 6px;
+        background: #0f131a;
+        color: #f8fafc;
+        padding: 8px 10px;
+        font: 13px "Segoe UI", system-ui, sans-serif;
+      }
+
+      .form-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 10px;
       }
 
       dl {
@@ -100,6 +138,22 @@
         font: inherit;
         cursor: pointer;
       }
+
+      button:disabled {
+        cursor: wait;
+        opacity: 0.65;
+      }
+
+      .error-text {
+        margin: 0;
+        color: #fca5a5;
+        font-size: 12px;
+        overflow-wrap: anywhere;
+      }
+
+      .hidden {
+        display: none;
+      }
     </style>
   </head>
   <body>
@@ -108,9 +162,34 @@
         <img src="../assets/mark-dark.svg" alt="" />
         <div>
           <h1>Opus Connector</h1>
-          <div class="status"><span class="dot"></span><span id="status">Starting</span></div>
+          <div class="status"><span id="dot" class="dot"></span><span id="status">Starting</span></div>
         </div>
       </header>
+
+      <section id="pairingSection">
+        <form id="pairForm">
+          <label>
+            Opus Command URL
+            <input id="serverInput" name="server" placeholder="https://opus.jabba.se" autocomplete="url" />
+          </label>
+          <label>
+            Pairing token
+            <input id="tokenInput" name="token" placeholder="opus_pair_..." autocomplete="off" />
+          </label>
+          <div class="form-grid">
+            <label>
+              Name
+              <input id="nameInput" name="name" placeholder="Windows PC" autocomplete="off" />
+            </label>
+            <label>
+              Labels
+              <input id="labelsInput" name="labels" value="windows,vm" autocomplete="off" />
+            </label>
+          </div>
+          <button id="pairButton" type="submit">Connect</button>
+          <p id="pairError" class="error-text hidden"></p>
+        </form>
+      </section>
 
       <section>
         <dl>
@@ -131,20 +210,44 @@
     <script>
       const fields = {
         status: document.getElementById('status'),
+        dot: document.getElementById('dot'),
         name: document.getElementById('name'),
         server: document.getElementById('server'),
         connectorId: document.getElementById('connectorId'),
         home: document.getElementById('home'),
         logs: document.getElementById('logs'),
+        pairingSection: document.getElementById('pairingSection'),
+        pairForm: document.getElementById('pairForm'),
+        pairButton: document.getElementById('pairButton'),
+        pairError: document.getElementById('pairError'),
+        serverInput: document.getElementById('serverInput'),
+        tokenInput: document.getElementById('tokenInput'),
+        nameInput: document.getElementById('nameInput'),
+        labelsInput: document.getElementById('labelsInput'),
       };
 
+      function statusText(state) {
+        if (state.status === 'online') return 'Online';
+        if (state.status === 'connecting') return 'Connecting';
+        if (state.status === 'offline') return 'Offline - reconnecting';
+        if (state.status === 'error') return 'Error';
+        if (state.status === 'not_paired') return 'Not paired';
+        return state.paired ? 'Running' : 'Not paired';
+      }
+
       function render(state) {
-        fields.status.textContent = state.paired ? 'Running' : 'Not paired';
+        fields.status.textContent = statusText(state);
+        fields.dot.className = `dot ${(state.status || '').replace('_', '-')}`;
         fields.name.textContent = state.name || '-';
         fields.server.textContent = state.server || '-';
         fields.connectorId.textContent = state.connectorId || '-';
         fields.home.textContent = state.home || '-';
         fields.logs.textContent = (state.logs || []).join('\n');
+        fields.pairingSection.classList.toggle('hidden', state.paired && state.status !== 'error');
+        fields.pairError.textContent = state.error || '';
+        fields.pairError.classList.toggle('hidden', !state.error);
+        if (state.server && !fields.serverInput.value) fields.serverInput.value = state.server;
+        if (state.name && !fields.nameInput.value) fields.nameInput.value = state.name;
       }
 
       window.opusConnector.getState().then(render);
@@ -155,6 +258,25 @@
       });
       document.getElementById('openHome').addEventListener('click', () => {
         window.opusConnector.openHome();
+      });
+      fields.pairForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        fields.pairButton.disabled = true;
+        fields.pairButton.textContent = 'Connecting...';
+        fields.pairError.classList.add('hidden');
+        const result = await window.opusConnector.pair({
+          server: fields.serverInput.value,
+          token: fields.tokenInput.value,
+          name: fields.nameInput.value,
+          labels: fields.labelsInput.value,
+        });
+        fields.pairButton.disabled = false;
+        fields.pairButton.textContent = 'Connect';
+        if (!result.ok) {
+          fields.pairError.textContent = result.error || 'Pairing failed.';
+          fields.pairError.classList.remove('hidden');
+        }
+        render(result.state);
       });
     </script>
   </body>
