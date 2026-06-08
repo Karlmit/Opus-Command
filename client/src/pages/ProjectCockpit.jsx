@@ -129,6 +129,11 @@ function TerminalInstance({
   onScrollbackApplied, onTerminalDisposed,
 }) {
   const divRef = useRef(null);
+  const activeStateRef = useRef(active);
+
+  useEffect(() => {
+    activeStateRef.current = active;
+  }, [active]);
 
   useEffect(() => {
     if (!divRef.current || termRefs.current[sessionId]) return;
@@ -164,20 +169,49 @@ function TerminalInstance({
     term.loadAddon(new WebLinksAddon());
 
     let ro = null;
+    let fitFrame = null;
+    let lastEmittedSize = null;
     const isDeviceMobile = () => document.body.classList.contains('mobile-device');
     const onWinResize = () => {
-      try { fit.fit(); } catch (_) {}
-      if (!isDeviceMobile()) doResizeEmit();
+      scheduleFit();
     };
     const doResizeEmit = () => {
       const sock = getSocket();
-      if (term.cols && term.rows && sock.connected) {
-        sock.emit('terminal:resize', { sessionId, cols: term.cols, rows: term.rows });
+      if (!activeStateRef.current || isDeviceMobile()) return;
+      if (!term.cols || !term.rows || !sock.connected) return;
+
+      const nextSize = `${term.cols}x${term.rows}`;
+      if (lastEmittedSize === nextSize) return;
+      lastEmittedSize = nextSize;
+      sock.emit('terminal:resize', { sessionId, cols: term.cols, rows: term.rows });
+    };
+    const runFit = () => {
+      fitFrame = null;
+      if (!activeStateRef.current || cancelled || !divRef.current) return;
+      try { fit.fit(); } catch (_) {}
+      doResizeEmit();
+    };
+    const scheduleFit = () => {
+      if (fitFrame || !activeStateRef.current) return;
+      fitFrame = requestAnimationFrame(runFit);
+    };
+    const fitActive = () => {
+      if (!activeStateRef.current) return;
+      try { fit.fit(); } catch (_) {}
+      doResizeEmit();
+    };
+    const getSize = () => {
+      if (!activeStateRef.current) return null;
+      return term.cols ? { cols: term.cols, rows: term.rows } : null;
+    };
+    const emitInput = data => {
+      const sock = getSocket();
+      if (sock.connected) {
+        sock.emit('terminal:input', { sessionId, data });
       }
     };
-    const doFit = () => {
-      try { fit.fit(); } catch (_) {}
-      if (!isDeviceMobile()) doResizeEmit();
+    const emitResize = () => {
+      doResizeEmit();
     };
 
     // open() is called inside fonts.ready so glyph widths are measured with
@@ -196,7 +230,7 @@ function TerminalInstance({
       term.open(divRef.current);
 
       term.onData(data => {
-        if (getSocket().connected) getSocket().emit('terminal:input', { sessionId, data });
+        emitInput(data);
       });
 
       // Register ref so live terminal:data events can write to the terminal.
@@ -205,8 +239,9 @@ function TerminalInstance({
         clear:   () => term.clear(),
         reset:   () => term.reset(),
         focus:   () => term.focus(),
-        fit:     () => { try { fit.fit(); } catch (_) {} },
-        getSize: () => term.cols ? { cols: term.cols, rows: term.rows } : null,
+        fit:     fitActive,
+        getSize,
+        emitResize,
       };
 
       // Apply any scrollback that arrived while fonts were still loading.
@@ -223,8 +258,8 @@ function TerminalInstance({
       // because the browser hasn't finished computing flex dimensions yet.
       requestAnimationFrame(() => requestAnimationFrame(() => {
         if (cancelled || !divRef.current) return;
-        doFit();
-        ro = new ResizeObserver(doFit);
+        fitActive();
+        ro = new ResizeObserver(scheduleFit);
         ro.observe(divRef.current);
         const parent = divRef.current?.parentElement;
         if (parent) ro.observe(parent);
@@ -240,6 +275,7 @@ function TerminalInstance({
 
     return () => {
       cancelled = true;
+      if (fitFrame) cancelAnimationFrame(fitFrame);
       console.log(`[xterm:${instanceId}] Disposing for session ${sessionId.slice(0,8)}`);
       ro?.disconnect();
       window.removeEventListener('resize', onWinResize);
@@ -256,11 +292,8 @@ function TerminalInstance({
       const ref = termRefs.current[sessionId];
       if (!ref) return;
       ref.fit();
+      ref.emitResize?.();
       ref.focus();
-      const size = ref.getSize();
-      if (size && getSocket().connected) {
-        getSocket().emit('terminal:resize', { sessionId, ...size });
-      }
     }));
   }, [active]);
 
