@@ -76,8 +76,16 @@ function buildWorkspaceCmd(image) {
     'grep -q "GH_TOKEN" ~/.bashrc 2>/dev/null || ' +
     '[ -z "$GH_TOKEN" ] || ' +
     'printf "\\n# GitHub CLI\\nexport GH_TOKEN=$GH_TOKEN\\n" >> ~/.bashrc',
+    // Install gh CLI to ~/bin if not already present — persists via home volume across container recreations
+    '[ -f ~/bin/gh ] || command -v gh >/dev/null 2>&1 || ' +
+    '{ GH_TAG=$(curl -fsSL https://api.github.com/repos/cli/cli/releases/latest 2>/dev/null' +
+    ' | grep \'"tag_name"\' | head -1 | grep -o \'"v[0-9.]*"\' | tr -d \'"\'); ' +
+    'GH_VER=${GH_TAG#v}; ' +
+    '[ -n "$GH_VER" ] && curl -fsSL "https://github.com/cli/cli/releases/download/${GH_TAG}/gh_${GH_VER}_linux_amd64.tar.gz"' +
+    ' | tar -xz -C ~/bin --strip-components=2 "gh_${GH_VER}_linux_amd64/bin/gh"; } 2>/dev/null || true',
     // Configure git to use gh as the credential helper (idempotent)
-    '[ -z "$GH_TOKEN" ] || command -v gh >/dev/null 2>&1 && GH_TOKEN=$GH_TOKEN gh auth setup-git 2>/dev/null || true',
+    // Check ~/bin/gh explicitly since ~/bin isn't in PATH during non-interactive init
+    '[ -z "$GH_TOKEN" ] || { GH=$(command -v gh 2>/dev/null || echo ~/bin/gh); [ -x "$GH" ] && GH_TOKEN=$GH_TOKEN "$GH" auth setup-git 2>/dev/null; } || true',
   ].join('; ');
 
   const fallbackInit = image === FALLBACK_IMAGE
