@@ -149,6 +149,7 @@ function TerminalInstance({ sessionId, active, termRefs }) {
 
   useEffect(() => {
     if (!divRef.current || termRefs.current[sessionId]) return;
+    let cancelled = false;
     const instanceId = ++_xtermInstanceCounter;
     console.log(`[xterm:${instanceId}] Opening for session ${sessionId.slice(0,8)}`);
 
@@ -203,37 +204,17 @@ function TerminalInstance({ sessionId, active, termRefs }) {
       if (!isDeviceMobile()) doResizeEmit();
     };
 
-    // Open terminal — wait for font so glyph width is measured correctly
-    const open = () => {
-      term.open(divRef.current);
-      // rAF: ensures the element is painted before measuring
-      requestAnimationFrame(() => {
-        doFit();
-
-        // ResizeObserver MUST be set up AFTER open() — before open, there
-        // is no canvas to resize, and fit.fit() would throw.
-        ro = new ResizeObserver(doFit);
-        ro.observe(divRef.current);
-
-        // Also observe the parent container — catches layout changes from
-        // sidebar resize and file tree collapse that reflow the flex tree
-        const parent = divRef.current?.parentElement;
-        if (parent) ro.observe(parent);
-
-        window.addEventListener('resize', onWinResize);
-      });
-    };
-
-    if (typeof document !== 'undefined' && document.fonts?.ready) {
-      document.fonts.ready.then(open);
-    } else {
-      open();
-    }
+    // Open the terminal immediately so termRefs is set before any socket
+    // events (scrollback) can arrive. The server responds to terminal:join
+    // very quickly — deferring open() risks the scrollback arriving while
+    // the ref is still undefined, causing it to be silently discarded.
+    term.open(divRef.current);
 
     term.onData(data => {
       if (getSocket().connected) getSocket().emit('terminal:input', { sessionId, data });
     });
 
+    // Register ref right away — this is what onScrollback writes into.
     termRefs.current[sessionId] = {
       write:   d  => term.write(d),
       clear:   () => term.clear(),
@@ -243,7 +224,37 @@ function TerminalInstance({ sessionId, active, termRefs }) {
       getSize: () => term.cols ? { cols: term.cols, rows: term.rows } : null,
     };
 
+    // Fit and wire up observers only after fonts are loaded so glyph widths
+    // are measured correctly. Double rAF ensures the flex layout has settled
+    // before FitAddon measures the container (fixes wrong size on refresh).
+    const setupFit = () => {
+      if (cancelled || !divRef.current) return;
+      doFit();
+
+      // ResizeObserver MUST be set up AFTER open() — before open, there
+      // is no canvas to resize, and fit.fit() would throw.
+      ro = new ResizeObserver(doFit);
+      ro.observe(divRef.current);
+
+      // Also observe the parent container — catches layout changes from
+      // sidebar resize and file tree collapse that reflow the flex tree
+      const parent = divRef.current?.parentElement;
+      if (parent) ro.observe(parent);
+
+      window.addEventListener('resize', onWinResize);
+    };
+
+    if (typeof document !== 'undefined' && document.fonts?.ready) {
+      document.fonts.ready.then(() => {
+        if (cancelled) return;
+        requestAnimationFrame(() => requestAnimationFrame(setupFit));
+      });
+    } else {
+      requestAnimationFrame(() => requestAnimationFrame(setupFit));
+    }
+
     return () => {
+      cancelled = true;
       console.log(`[xterm:${instanceId}] Disposing for session ${sessionId.slice(0,8)}`);
       ro?.disconnect();
       window.removeEventListener('resize', onWinResize);
@@ -511,6 +522,8 @@ export default function ProjectCockpit() {
   // Guard: scrollback can only be written once per xterm instance.
   // Cleared alongside joinedSessions so a reconnect gets a fresh replay.
   const historyReplayed  = useRef(new Set());
+  // Tracks the current projectId so async callbacks can detect stale results.
+  const currentProjectId = useRef(projectId);
 
   // Mobile tab context
   const { mobileTab, setMobileTab } = useMobileUI();
@@ -542,7 +555,9 @@ export default function ProjectCockpit() {
     // 'files' view is CSS-driven via data-mobile-tab attribute
   }, [mobileTab, termTabs]);
 
-  useEffect(() => { loadProject(); loadTree(); loadSessions();
+  useEffect(() => {
+    currentProjectId.current = projectId;
+    loadProject(); loadTree(); loadSessions();
     const t1 = setInterval(loadProject, 5000);
     const t2 = setInterval(loadTree, 2000);
     return () => { clearInterval(t1); clearInterval(t2); };
@@ -628,9 +643,12 @@ export default function ProjectCockpit() {
   async function loadTree() { try { const r = await fetch(`/api/projects/${projectId}/files`); const d = await r.json(); setTree(d.tree || []); } catch (_) {} }
 
   async function loadSessions() {
+    const pid = projectId;
     try {
-      const r = await fetch(`/api/projects/${projectId}/terminals`);
+      const r = await fetch(`/api/projects/${pid}/terminals`);
       const d = await r.json();
+      // Discard if the user navigated away while this fetch was in flight
+      if (currentProjectId.current !== pid) return;
       const sessions = d.sessions || [];
       setTermTabs(sessions.map(s => ({ id: s.id, name: s.name, aiState: s.aiState || 'none' })));
       if (sessions.length > 0) activateTerm(sessions[0].id);
