@@ -124,7 +124,10 @@ function FileNode({
 /* ── Terminal instance ─────────────────────────── */
 let _xtermInstanceCounter = 0;
 
-function TerminalInstance({ sessionId, active, termRefs, pendingScrollback }) {
+function TerminalInstance({
+  sessionId, active, termRefs, pendingScrollback,
+  onScrollbackApplied, onTerminalDisposed,
+}) {
   const divRef = useRef(null);
 
   useEffect(() => {
@@ -212,6 +215,7 @@ function TerminalInstance({ sessionId, active, termRefs, pendingScrollback }) {
         delete pendingScrollback.current[sessionId];
         term.reset();
         term.write(pending);
+        onScrollbackApplied?.(sessionId);
       }
 
       // Double rAF: ensures the flex layout has fully settled before FitAddon
@@ -236,13 +240,12 @@ function TerminalInstance({ sessionId, active, termRefs, pendingScrollback }) {
 
     return () => {
       cancelled = true;
-      // Clear any pending scrollback so stale data isn't replayed on remount.
-      if (pendingScrollback?.current) delete pendingScrollback.current[sessionId];
       console.log(`[xterm:${instanceId}] Disposing for session ${sessionId.slice(0,8)}`);
       ro?.disconnect();
       window.removeEventListener('resize', onWinResize);
       term.dispose();
       delete termRefs.current[sessionId];
+      onTerminalDisposed?.(sessionId);
     };
   }, []);
 
@@ -565,6 +568,16 @@ export default function ProjectCockpit() {
 
   useEffect(() => {
     currentProjectId.current = projectId;
+    activeRef.current = null;
+    termRefs.current = {};
+    pendingScrollback.current = {};
+    joinedSessions.current.clear();
+    historyReplayed.current.clear();
+    setActiveTab(null);
+    setTermTabs([]);
+    setFileTabs([]);
+    setFileContent({});
+    setDirty({});
     loadProject(); loadTree(); loadSessions();
     const t1 = setInterval(loadProject, 5000);
     const t2 = setInterval(loadTree, 2000);
@@ -607,7 +620,6 @@ export default function ProjectCockpit() {
         console.log(`[terminal] SKIPPED duplicate scrollback for session ${sessionId.slice(0,8)}`);
         return;
       }
-      historyReplayed.current.add(sessionId);
       const bytes = typeof data === 'string' ? data.length : 0;
       console.log(`[terminal] Replaying ${bytes} bytes history for session ${sessionId.slice(0,8)}`);
       const ref = termRefs.current[sessionId];
@@ -615,11 +627,14 @@ export default function ProjectCockpit() {
         // Terminal already open — apply immediately.
         // reset() wipes the scrollback buffer before replaying; clear() only
         // scrolls content up into the buffer, causing duplicate output on scroll.
+        historyReplayed.current.add(sessionId);
         ref.reset();
         ref.write(data);
       } else {
         // Terminal not open yet (fonts still loading or first render not committed).
         // Store for TerminalInstance to pick up once term.open() completes.
+        // Do not mark this replayed yet: fast project switching can unmount the
+        // terminal before the pending data is written.
         pendingScrollback.current[sessionId] = data;
       }
     }
@@ -668,8 +683,17 @@ export default function ProjectCockpit() {
       const sessions = d.sessions || [];
       setTermTabs(sessions.map(s => ({ id: s.id, name: s.name, aiState: s.aiState || 'none' })));
       if (sessions.length > 0) activateTerm(sessions[0].id);
-      else createTerminal();
+      else createTerminal(pid);
     } catch (_) {}
+  }
+
+  function markScrollbackApplied(sessionId) {
+    historyReplayed.current.add(sessionId);
+  }
+
+  function handleTerminalDisposed(sessionId) {
+    joinedSessions.current.delete(sessionId);
+    historyReplayed.current.delete(sessionId);
   }
 
   function activateTerm(sessionId) {
@@ -720,11 +744,17 @@ export default function ProjectCockpit() {
     }
   }
 
-  async function createTerminal() {
+  async function createTerminal(pid = projectId) {
     try {
-      const r = await fetch(`/api/projects/${projectId}/terminals`, { method:'POST', headers:{'Content-Type':'application/json','X-CSRF-Token':csrfToken}, body:'{}' });
+      const r = await fetch(`/api/projects/${pid}/terminals`, { method:'POST', headers:{'Content-Type':'application/json','X-CSRF-Token':csrfToken}, body:'{}' });
       const d = await r.json();
-      if (d.sessionId) { setTermTabs(p => [...p, { id: d.sessionId, name: d.name, aiState: 'none' }]); setTimeout(() => activateTerm(d.sessionId), 50); }
+      if (currentProjectId.current !== pid) return;
+      if (d.sessionId) {
+        setTermTabs(p => [...p, { id: d.sessionId, name: d.name, aiState: 'none' }]);
+        setTimeout(() => {
+          if (currentProjectId.current === pid) activateTerm(d.sessionId);
+        }, 50);
+      }
       else addToast(d.error || 'Failed.', 'error');
     } catch (e) { addToast(e.message, 'error'); }
   }
@@ -949,7 +979,15 @@ export default function ProjectCockpit() {
               /* Desktop: full interactive xterm — owns PTY resize */
               <>
                 {termTabs.map(t => (
-                  <TerminalInstance key={t.id} sessionId={t.id} active={activeTab === `term-${t.id}`} termRefs={termRefs} pendingScrollback={pendingScrollback} />
+                  <TerminalInstance
+                    key={t.id}
+                    sessionId={t.id}
+                    active={activeTab === `term-${t.id}`}
+                    termRefs={termRefs}
+                    pendingScrollback={pendingScrollback}
+                    onScrollbackApplied={markScrollbackApplied}
+                    onTerminalDisposed={handleTerminalDisposed}
+                  />
                 ))}
                 {termTabs.length === 0 && !showOverlay && (
                   <div className="cockpit-empty">
