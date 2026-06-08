@@ -64,9 +64,21 @@ function FileIcon({ name, isDir, open }) {
 function FileNode({ node, depth, projectId, csrfToken, onOpenFile, activeFilePath, onRefresh }) {
   const [open, setOpen] = useState(depth < 1);
   const [menu, setMenu] = useState(null);
+  const [renaming, setRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState('');
+  const renameInputRef = useRef(null);
+  const doneRef = useRef(false);
   const { addToast } = useToast();
   const isDir = node.type === 'dir';
   const isActive = activeFilePath === node.path;
+
+  useEffect(() => {
+    if (renaming) {
+      setRenameValue(node.name);
+      doneRef.current = false;
+      requestAnimationFrame(() => renameInputRef.current?.select());
+    }
+  }, [renaming, node.name]);
 
   async function create(type) {
     setMenu(null);
@@ -90,13 +102,51 @@ function FileNode({ node, depth, projectId, csrfToken, onOpenFile, activeFilePat
     if ((await r.json()).success) onRefresh(); else addToast('Delete failed.', 'error');
   }
 
+  async function doRename(newName) {
+    setRenaming(false);
+    if (!newName || newName === node.name) return;
+    const parentPath = node.path.substring(0, node.path.lastIndexOf('/'));
+    const newPath = parentPath ? `${parentPath}/${newName}` : newName;
+    const r = await fetch(`/api/projects/${projectId}/files/rename`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      body: JSON.stringify({ oldPath: node.path, newPath }),
+    });
+    if ((await r.json()).success) onRefresh(); else addToast('Rename failed.', 'error');
+  }
+
+  async function doReference() {
+    setMenu(null);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/terminals`);
+      const data = await res.json();
+      const sessions = data.sessions || [];
+      if (!sessions.length) { addToast('No terminal sessions open — open a terminal first.', 'error'); return; }
+      getSocket().emit('terminal:input', { sessionId: sessions[0].id, data: node.path });
+    } catch { addToast('Could not send path to terminal.', 'error'); }
+  }
+
+  function handleRenameKeyDown(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (!doneRef.current) { doneRef.current = true; doRename(renameValue); }
+    } else if (e.key === 'Escape') {
+      if (!doneRef.current) { doneRef.current = true; setRenaming(false); }
+    }
+  }
+
+  function handleRenameBlur() {
+    if (!doneRef.current) { doneRef.current = true; doRename(renameValue); }
+  }
+
   return (
     <div className="file-node-wrap">
       <div
         className={`file-node${isActive ? ' active' : ''}`}
         style={{ paddingLeft: depth * 16 + 6 }}
-        onClick={() => isDir ? setOpen(o => !o) : onOpenFile(node)}
+        tabIndex={0}
+        onClick={() => { if (renaming) return; isDir ? setOpen(o => !o) : onOpenFile(node); }}
         onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setMenu({ x: e.clientX, y: e.clientY }); }}
+        onKeyDown={e => { if (e.key === 'F2') { e.preventDefault(); setMenu(null); setRenaming(true); } }}
       >
         {isDir && (
           <span className={`fn-chevron${open ? ' open' : ''}`}>
@@ -107,7 +157,19 @@ function FileNode({ node, depth, projectId, csrfToken, onOpenFile, activeFilePat
         )}
         {!isDir && <span className="fn-chevron-gap" />}
         <FileIcon name={node.name} isDir={isDir} open={open} />
-        <span className="file-node-name">{node.name}</span>
+        {renaming ? (
+          <input
+            ref={renameInputRef}
+            className="fn-rename-input"
+            value={renameValue}
+            onChange={e => setRenameValue(e.target.value)}
+            onKeyDown={handleRenameKeyDown}
+            onBlur={handleRenameBlur}
+            onClick={e => e.stopPropagation()}
+          />
+        ) : (
+          <span className="file-node-name">{node.name}</span>
+        )}
       </div>
 
       {isDir && open && (
@@ -128,10 +190,14 @@ function FileNode({ node, depth, projectId, csrfToken, onOpenFile, activeFilePat
       {menu && (
         <>
           <div className="context-backdrop" onClick={() => setMenu(null)} />
-          <div className="context-menu" style={{ top: menu.y, left: menu.x }} role="menu">
+          <div className="context-menu" style={{ top: menu.y, left: menu.x }} role="menu"
+            onClick={e => e.stopPropagation()} onContextMenu={e => { e.preventDefault(); e.stopPropagation(); }}>
             {isDir && <button role="menuitem" onClick={() => create('file')}>New File</button>}
             {isDir && <button role="menuitem" onClick={() => create('dir')}>New Folder</button>}
+            <button role="menuitem" onClick={() => { setMenu(null); setRenaming(true); }}>Rename</button>
+            <button role="menuitem" onClick={doReference}>Reference</button>
             <button role="menuitem" onClick={() => { setMenu(null); navigator.clipboard.writeText(node.path); }}>Copy Path</button>
+            {!isDir && <button role="menuitem" onClick={() => { setMenu(null); window.open(`/api/projects/${projectId}/files/download?path=${encodeURIComponent(node.path)}`); }}>Download</button>}
             <div className="context-separator" />
             <button role="menuitem" className="context-danger" onClick={remove}>Delete</button>
           </div>

@@ -145,6 +145,19 @@
   line-height: 1;
 }
 
+.fn-rename-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--color-surface-base, #1a1c1f);
+  border: 1px solid var(--color-brand, #3b82f6);
+  border-radius: 3px;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 4px;
+  outline: none;
+}
+
 .file-node-children { }
 
 .file-node-empty {
