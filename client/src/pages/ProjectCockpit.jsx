@@ -554,6 +554,11 @@ export default function ProjectCockpit() {
   const { mobileTab, setMobileTab } = useMobileUI();
   const { isMobile } = useDevice();
   const prevMobileTab = useRef(null);
+  const activeTabStateRef = useRef(null);
+
+  useEffect(() => {
+    activeTabStateRef.current = activeTab;
+  }, [activeTab]);
 
   useEffect(() => {
     if (!renameDialog) return;
@@ -612,8 +617,12 @@ export default function ProjectCockpit() {
     setFileContent({});
     setDirty({});
     loadProject(); loadTree(); loadSessions();
-    const t1 = setInterval(loadProject, 5000);
-    const t2 = setInterval(loadTree, 2000);
+    const t1 = setInterval(() => {
+      if (!activeTabStateRef.current?.startsWith('term-')) loadProject();
+    }, 5000);
+    const t2 = setInterval(() => {
+      if (!activeTabStateRef.current?.startsWith('term-')) loadTree();
+    }, 2000);
     return () => { clearInterval(t1); clearInterval(t2); };
   }, [projectId]);
 
