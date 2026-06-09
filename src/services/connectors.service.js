@@ -468,6 +468,32 @@ function streamUploadConnectorFile(connectorId, { filePath, readable, mode }) {
   return promise;
 }
 
+function createFeedback(connectorId, report) {
+  ensureV2LinuxConnector(connectorId, 'Connector feedback');
+  return sendConnectorRequest(connectorId, {
+    type: 'feedback:create',
+    report: report && typeof report === 'object' ? report : {},
+  });
+}
+
+function listFeedback(connectorId, { includeRead = true, limit = 100 } = {}) {
+  ensureV2LinuxConnector(connectorId, 'Connector feedback');
+  return sendConnectorRequest(connectorId, {
+    type: 'feedback:list',
+    includeRead,
+    limit,
+  });
+}
+
+function markFeedbackRead(connectorId, feedbackId, read = true) {
+  ensureV2LinuxConnector(connectorId, 'Connector feedback');
+  return sendConnectorRequest(connectorId, {
+    type: 'feedback:mark-read',
+    feedbackId,
+    read,
+  });
+}
+
 function rejectTransfer(transferId, err) {
   const transfer = pendingTransfers.get(transferId);
   if (!transfer) return;
@@ -830,5 +856,8 @@ module.exports = {
   writeConnectorFile,
   writeConnectorFileBytes,
   streamUploadConnectorFile,
+  createFeedback,
+  listFeedback,
+  markFeedbackRead,
   setupConnectorWebSocket,
 };

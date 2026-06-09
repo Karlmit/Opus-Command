@@ -156,4 +156,47 @@ router.post('/:connectorId/files/upload', requireAuthOrWorkspaceToken, async (re
   }
 });
 
+router.post('/:connectorId/feedback', requireAuthOrWorkspaceToken, async (req, res) => {
+  try {
+    const result = await connectors.createFeedback(req.params.connectorId, {
+      title: req.body.title,
+      message: req.body.message,
+      severity: req.body.severity,
+      reporter: req.body.reporter,
+      workspace: req.body.workspace,
+      command: req.body.command,
+      connectorSelector: req.body.connectorSelector,
+      context: req.body.context,
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message || 'Feedback submission failed.' });
+  }
+});
+
+router.get('/:connectorId/feedback', requireAuthOrWorkspaceToken, async (req, res) => {
+  try {
+    const result = await connectors.listFeedback(req.params.connectorId, {
+      includeRead: req.query.includeRead !== 'false',
+      limit: req.query.limit,
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message || 'Feedback list failed.' });
+  }
+});
+
+router.post('/:connectorId/feedback/:feedbackId/read', requireAuthOrWorkspaceToken, async (req, res) => {
+  try {
+    const result = await connectors.markFeedbackRead(
+      req.params.connectorId,
+      req.params.feedbackId,
+      req.body.read !== false
+    );
+    res.json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message || 'Feedback update failed.' });
+  }
+});
+
 module.exports = router;

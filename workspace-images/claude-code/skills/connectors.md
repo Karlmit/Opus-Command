@@ -69,9 +69,18 @@ opus connector jobs list linux
 opus connector jobs status <job-id>
 opus connector jobs cancel <job-id>
 opus connector artifacts get <job-id>
+opus connector feedback submit linux --title "Issue summary" --message "What failed and what would help"
+opus connector feedback list linux
+opus connector feedback mark-read linux <feedback-id>
 opus browser screenshot linux https://example.com ./screenshot.png
 ```
 
 Linux connector file transfer is chunked through the connector protocol. If a
 connector disconnects during a job, the job status becomes `lost` instead of
 remaining frozen in `running`.
+
+When connector behavior is confusing, broken, or missing a capability, leave a
+feedback report on the connector device instead of relying only on chat context.
+Keep reports specific: include the command attempted, observed output, expected
+behavior, and any suggested improvement. Feedback reports are stored on the
+connector host and can be listed later with `opus connector feedback list`.

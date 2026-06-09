@@ -21,6 +21,9 @@ Usage:
   opus connector put <local-path> <connector>:/remote/path
   opus connector get <connector>:/remote/path ./local-path
   opus connector artifacts get <job-id>
+  opus connector feedback submit <connector> --title "Issue" --message "Details"
+  opus connector feedback list <connector> [--all]
+  opus connector feedback mark-read <connector> <feedback-id>
   opus browser screenshot <connector-label-or-name> <url> [output.png]
 `);
 }
@@ -360,6 +363,93 @@ async function browserScreenshot(args) {
   console.log(outputPath);
 }
 
+function parseFeedbackSubmitArgs(args) {
+  const selector = args[0];
+  if (!selector) {
+    usage();
+    process.exit(1);
+  }
+  const options = {
+    selector,
+    title: '',
+    message: '',
+    severity: 'info',
+    command: '',
+  };
+  for (let i = 1; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === '--title') options.title = args[++i] || '';
+    else if (arg === '--message' || arg === '--body') options.message = args[++i] || '';
+    else if (arg === '--severity') options.severity = args[++i] || 'info';
+    else if (arg === '--command') options.command = args[++i] || '';
+    else fail(`Unknown feedback submit option: ${arg}`);
+  }
+  return options;
+}
+
+async function connectorFeedbackSubmit(args) {
+  const options = parseFeedbackSubmitArgs(args);
+  if (!options.title && !options.message) {
+    usage();
+    fail('Feedback title or message is required.');
+  }
+  const connector = await findConnector(options.selector);
+  const result = await request('POST', `/api/connectors/${connector.id}/feedback`, {
+    title: options.title,
+    message: options.message,
+    severity: options.severity,
+    command: options.command,
+    reporter: 'workspace-agent',
+    workspace: process.cwd(),
+    connectorSelector: options.selector,
+    context: {
+      cwd: process.cwd(),
+      opusCommandUrl: baseUrl,
+    },
+  });
+  const report = result.report;
+  console.log(`${report.id} ${report.status} ${report.title}`);
+}
+
+async function connectorFeedbackList(args) {
+  const selector = args[0];
+  if (!selector) {
+    usage();
+    process.exit(1);
+  }
+  const includeRead = args.includes('--all') || args.includes('--include-read');
+  const connector = await findConnector(selector);
+  const params = new URLSearchParams();
+  params.set('includeRead', includeRead ? 'true' : 'false');
+  const result = await request('GET', `/api/connectors/${connector.id}/feedback?${params}`);
+  const reports = result.reports || [];
+  if (!reports.length) {
+    console.log(includeRead ? 'No feedback reports.' : 'No unread feedback reports.');
+    return;
+  }
+  for (const report of reports) {
+    const status = report.readAt ? 'read' : 'unread';
+    console.log(`${status.padEnd(6)} ${report.id} ${report.createdAt} ${report.title}`);
+    if (report.message) {
+      const firstLine = String(report.message).split('\n')[0].slice(0, 180);
+      console.log(`       ${firstLine}`);
+    }
+  }
+}
+
+async function connectorFeedbackSetRead(args, read) {
+  const selector = args[0];
+  const feedbackId = args[1];
+  if (!selector || !feedbackId) {
+    usage();
+    process.exit(1);
+  }
+  const connector = await findConnector(selector);
+  const result = await request('POST', `/api/connectors/${connector.id}/feedback/${encodeURIComponent(feedbackId)}/read`, { read });
+  const report = result.report;
+  console.log(`${report.id} ${report.status}`);
+}
+
 async function main() {
   const args = process.argv.slice(2);
   if (args[0] === 'connectors' && args[1] === 'list') return listConnectors();
@@ -370,6 +460,10 @@ async function main() {
   if (args[0] === 'connector' && args[1] === 'put') return putFile(args.slice(2));
   if (args[0] === 'connector' && args[1] === 'get') return getFile(args.slice(2));
   if (args[0] === 'connector' && args[1] === 'artifacts' && args[2] === 'get') return getArtifacts(args.slice(3));
+  if (args[0] === 'connector' && args[1] === 'feedback' && args[2] === 'submit') return connectorFeedbackSubmit(args.slice(3));
+  if (args[0] === 'connector' && args[1] === 'feedback' && args[2] === 'list') return connectorFeedbackList(args.slice(3));
+  if (args[0] === 'connector' && args[1] === 'feedback' && args[2] === 'mark-read') return connectorFeedbackSetRead(args.slice(3), true);
+  if (args[0] === 'connector' && args[1] === 'feedback' && args[2] === 'mark-unread') return connectorFeedbackSetRead(args.slice(3), false);
   if (args[0] === 'browser' && args[1] === 'screenshot') return browserScreenshot(args.slice(2));
   usage();
 }

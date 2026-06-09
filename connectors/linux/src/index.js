@@ -16,7 +16,7 @@ const {
   quote,
 } = require('opus-connector-shared');
 
-const VERSION = '0.1.1';
+const VERSION = '0.1.2';
 const DEFAULT_HOME = process.getuid && process.getuid() === 0
   ? '/var/lib/opus-connector'
   : path.join(os.homedir(), '.opus-connector');
@@ -56,6 +56,100 @@ function readRecentLogs(home, maxLines = 120) {
   } catch (_) {
     return [];
   }
+}
+
+function feedbackDir(home) {
+  return path.join(home, 'OpusCommand', 'feedback');
+}
+
+function safeFeedbackId(value) {
+  return String(value || '').replace(/[^\w.-]/g, '');
+}
+
+function feedbackPath(home, id) {
+  const safeId = safeFeedbackId(id);
+  if (!safeId) throw new Error('Feedback id is required.');
+  return path.join(feedbackDir(home), `${safeId}.json`);
+}
+
+function truncateText(value, maxLength) {
+  const text = String(value || '').trim();
+  return text.length > maxLength ? text.slice(0, maxLength) : text;
+}
+
+function readFeedbackFile(file) {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (_) {
+    return null;
+  }
+}
+
+function listFeedback(home, { includeRead = true, limit = 100 } = {}) {
+  const dir = feedbackDir(home);
+  if (!fs.existsSync(dir)) return [];
+  const max = Math.min(Math.max(parseInt(limit, 10) || 100, 1), 500);
+  return fs.readdirSync(dir)
+    .filter(name => name.endsWith('.json'))
+    .map(name => readFeedbackFile(path.join(dir, name)))
+    .filter(Boolean)
+    .filter(item => includeRead || !item.readAt)
+    .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))
+    .slice(0, max);
+}
+
+function createFeedback(home, report = {}) {
+  const title = truncateText(report.title, 160);
+  const message = truncateText(report.message || report.body, 8000);
+  if (!title && !message) throw new Error('Feedback title or message is required.');
+  const id = `fb_${Date.now().toString(36)}_${cryptoRandomHex(6)}`;
+  const createdAt = new Date().toISOString();
+  let context = {};
+  if (report.context && typeof report.context === 'object' && !Array.isArray(report.context)) {
+    try {
+      context = JSON.parse(JSON.stringify(report.context));
+    } catch (_) {
+      context = {};
+    }
+  }
+
+  const item = {
+    id,
+    title: title || message.split('\n')[0].slice(0, 160) || 'Connector feedback',
+    message,
+    severity: truncateText(report.severity || 'info', 32),
+    status: 'unread',
+    readAt: null,
+    createdAt,
+    updatedAt: createdAt,
+    source: {
+      reporter: truncateText(report.reporter || 'agent', 120),
+      workspace: truncateText(report.workspace || '', 240),
+      command: truncateText(report.command || '', 1000),
+      connectorSelector: truncateText(report.connectorSelector || '', 120),
+    },
+    context,
+  };
+  fs.mkdirSync(feedbackDir(home), { recursive: true });
+  fs.writeFileSync(feedbackPath(home, id), `${JSON.stringify(item, null, 2)}\n`);
+  return item;
+}
+
+function markFeedbackRead(home, id, read = true) {
+  const file = feedbackPath(home, id);
+  if (!fs.existsSync(file)) throw new Error('Feedback report not found.');
+  const item = readFeedbackFile(file);
+  if (!item) throw new Error('Feedback report is unreadable.');
+  const nowIso = new Date().toISOString();
+  item.readAt = read ? (item.readAt || nowIso) : null;
+  item.status = read ? 'read' : 'unread';
+  item.updatedAt = nowIso;
+  fs.writeFileSync(file, `${JSON.stringify(item, null, 2)}\n`);
+  return item;
+}
+
+function cryptoRandomHex(bytes) {
+  return require('crypto').randomBytes(bytes).toString('hex');
 }
 
 function wsUrl(server, connectorId, secret) {
@@ -768,6 +862,34 @@ function completeFileUpload(ws, request) {
   });
 }
 
+function handleFeedbackRequest(home, ws, message) {
+  try {
+    if (message.type === 'feedback:create') {
+      const report = createFeedback(home, message.report || {});
+      log(home, `Stored feedback report ${report.id}: ${report.title}`);
+      sendResponse(ws, message.requestId, { report });
+      return;
+    }
+    if (message.type === 'feedback:list') {
+      sendResponse(ws, message.requestId, {
+        reports: listFeedback(home, {
+          includeRead: message.includeRead !== false,
+          limit: message.limit,
+        }),
+      });
+      return;
+    }
+    if (message.type === 'feedback:mark-read') {
+      const report = markFeedbackRead(home, message.feedbackId, message.read !== false);
+      sendResponse(ws, message.requestId, { report });
+      return;
+    }
+    sendErrorResponse(ws, message.requestId, new Error(`Unknown feedback request: ${message.type}`));
+  } catch (err) {
+    sendErrorResponse(ws, message.requestId, err);
+  }
+}
+
 function terminateChildren(home) {
   if (children.size === 0) return;
   log(home, `Stopping ${children.size} running job(s).`);
@@ -841,6 +963,7 @@ function connect(home, config) {
       else if (message.type === 'file:upload:start') startFileUpload(ws, message);
       else if (message.type === 'file:upload:chunk') appendFileUploadChunk(ws, message);
       else if (message.type === 'file:upload:complete') completeFileUpload(ws, message);
+      else if (message.type?.startsWith('feedback:')) handleFeedbackRequest(home, ws, message);
     });
 
     ws.on('close', () => {
@@ -1049,4 +1172,8 @@ if (require.main === module) {
 module.exports = {
   main,
   detectCapabilities,
+  createFeedback,
+  listFeedback,
+  markFeedbackRead,
+  feedbackDir,
 };
