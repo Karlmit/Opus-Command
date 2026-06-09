@@ -394,6 +394,143 @@ function WorkspacePanel({ projectId, project, csrfToken, addToast, onDelete }) {
   );
 }
 
+function CdesktopPanel({ projectId, csrfToken, addToast }) {
+  const [status, setStatus] = useState(null);
+  const [logs, setLogs] = useState('');
+  const [busy, setBusy] = useState(null);
+  const [autoStarted, setAutoStarted] = useState(false);
+  const iframeUrl = `/workspaces/${projectId}/cdesktop/`;
+
+  async function loadStatus() {
+    const r = await fetch(`/api/projects/${projectId}/cdesktop/status`);
+    const d = await r.json();
+    setStatus(d);
+    return d;
+  }
+
+  async function loadLogs() {
+    try {
+      const r = await fetch(`/api/projects/${projectId}/cdesktop/logs?tail=120`);
+      const d = await r.json();
+      setLogs(d.logs || '');
+    } catch (_) {
+      setLogs('');
+    }
+  }
+
+  async function runAction(action) {
+    setBusy(action);
+    try {
+      const r = await fetch(`/api/projects/${projectId}/cdesktop/${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: '{}',
+      });
+      const d = await r.json();
+      setStatus(d);
+      if (!r.ok) {
+        addToast(d.error || `cdesktop ${action} failed.`, 'error');
+        await loadLogs();
+      } else if (action === 'start' || action === 'restart') {
+        setTimeout(loadStatus, 1500);
+      }
+    } catch (err) {
+      addToast(err.message, 'error');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    async function init() {
+      try {
+        const d = await loadStatus();
+        if (cancelled) return;
+        if (!autoStarted && d.status === 'stopped') {
+          setAutoStarted(true);
+          await runAction('start');
+        } else if (d.status === 'error') {
+          await loadLogs();
+        }
+      } catch (err) {
+        if (!cancelled) addToast(err.message, 'error');
+      }
+    }
+    init();
+    const t = setInterval(() => {
+      if (!cancelled) loadStatus().catch(() => {});
+    }, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [projectId]);
+
+  const state = status?.status || 'starting';
+  const isRunning = state === 'running';
+  const isBusy = !!busy || state === 'installing' || state === 'starting';
+  const showSetup = !isRunning;
+
+  return (
+    <div className="cdesktop-panel">
+      <div className="cdesktop-toolbar">
+        <div className={`ws-status-row status-${state}`}>
+          <span className="ws-status-dot" />
+          <span className="ws-status-text">cdesktop {state.replace('_', ' ')}</span>
+          {status?.version && <span className="cdesktop-version">v{status.version}</span>}
+        </div>
+        <div className="cdesktop-actions">
+          <button className="btn btn-ghost" onClick={() => runAction('install')} disabled={isBusy}>
+            {busy === 'install' ? 'Installing...' : 'Install'}
+          </button>
+          <button className="btn btn-primary" onClick={() => runAction('start')} disabled={isBusy || isRunning}>
+            {busy === 'start' ? 'Starting...' : 'Start'}
+          </button>
+          <button className="btn btn-ghost" onClick={() => runAction('restart')} disabled={isBusy}>
+            Restart
+          </button>
+          <button className="btn btn-ghost" onClick={() => runAction('stop')} disabled={isBusy || !isRunning}>
+            Stop
+          </button>
+          <button className="btn btn-ghost" onClick={() => window.open(iframeUrl, '_blank', 'noopener,noreferrer')}>
+            Open
+          </button>
+        </div>
+      </div>
+
+      {showSetup && (
+        <div className="cdesktop-setup">
+          <div className="panel-section">
+            <div className="panel-section-title">Status</div>
+            <p className="panel-hint">
+              {status?.error || status?.message || 'Install cdesktop or start the workspace service.'}
+            </p>
+            {status?.nodeVersion && (
+              <p className="panel-hint">Node: <code>{status.nodeVersion}</code></p>
+            )}
+            <button className="btn btn-ghost" onClick={loadLogs}>Refresh Logs</button>
+          </div>
+          {(logs || status?.error) && (
+            <div className="panel-logs cdesktop-logs">
+              <pre>{logs || status?.error}</pre>
+            </div>
+          )}
+        </div>
+      )}
+
+      {isRunning && (
+        <iframe
+          className="cdesktop-frame"
+          src={iframeUrl}
+          title="cdesktop"
+          allow="clipboard-read; clipboard-write"
+        />
+      )}
+    </div>
+  );
+}
+
 /* ── Git panel ─────────────────────────────────── */
 function GitPanel({ projectId, csrfToken, addToast }) {
   const [status, setStatus] = useState(null);
@@ -527,7 +664,7 @@ export default function ProjectCockpit() {
   const [fileTabs, setFileTabs]   = useState([]);
   const [fileContent, setFileContent] = useState({});
   const [dirtyFiles, setDirty]    = useState({});
-  const [activeTab, setActiveTab] = useState(null); // 'term-{id}' | 'file-{path}' | 'settings' | 'git'
+  const [activeTab, setActiveTab] = useState(null); // 'term-{id}' | 'file-{path}' | 'settings' | 'git' | 'cdesktop'
   const [reconnecting, setRecon]  = useState(false);
   const [reconSecs, setReconSecs] = useState(0);
   const [deleting, setDeleting]   = useState(false);
@@ -585,6 +722,7 @@ export default function ProjectCockpit() {
     const tab = searchParams.get('tab');
     if (tab === 'settings') { setActiveTab('settings'); activeRef.current = 'settings'; setSearchParams({}); }
     else if (tab === 'git') { setActiveTab('git'); activeRef.current = 'git'; setSearchParams({}); }
+    else if (tab === 'cdesktop') { setActiveTab('cdesktop'); activeRef.current = 'cdesktop'; setSearchParams({}); }
   }, [searchParams]);
 
   // Sync mobile tab → cockpit activeTab (only on mobile devices)
@@ -598,6 +736,9 @@ export default function ProjectCockpit() {
     } else if (mobileTab === 'git') {
       setActiveTab('git');
       activeRef.current = 'git';
+    } else if (mobileTab === 'cdesktop') {
+      setActiveTab('cdesktop');
+      activeRef.current = 'cdesktop';
     } else if (mobileTab === 'settings') {
       setActiveTab('settings');
       activeRef.current = 'settings';
@@ -927,7 +1068,7 @@ export default function ProjectCockpit() {
   }
 
   const activeFileTab = fileTabs.find(t => `file-${t.path}` === activeTab);
-  const showOverlay = activeFileTab || activeTab === 'settings' || activeTab === 'git';
+  const showOverlay = activeFileTab || activeTab === 'settings' || activeTab === 'git' || activeTab === 'cdesktop';
   // On mobile, show the active terminal session in the log viewer
   const activeTermId = termTabs.find(t => activeTab === `term-${t.id}`)?.id ?? termTabs[0]?.id ?? null;
 
@@ -997,6 +1138,7 @@ export default function ProjectCockpit() {
 
           {/* Panel tabs (right-aligned) */}
           <div className="tabs-spacer" />
+          <button className={`cockpit-panel-tab${activeTab === 'cdesktop' ? ' active' : ''}`} onClick={() => { setActiveTab('cdesktop'); activeRef.current = 'cdesktop'; }}>cdesktop</button>
           <button className={`cockpit-panel-tab${activeTab === 'git' ? ' active' : ''}`} onClick={() => { setActiveTab('git'); activeRef.current = 'git'; }}>Git</button>
           <button className={`cockpit-panel-tab${activeTab === 'settings' ? ' active' : ''}`} onClick={() => { setActiveTab('settings'); activeRef.current = 'settings'; }}>Workspace</button>
         </div>
@@ -1083,6 +1225,14 @@ export default function ProjectCockpit() {
                 <div className="side-panel">
                   <div className="side-panel-header">WORKSPACE</div>
                   <WorkspacePanel projectId={projectId} project={project} csrfToken={csrfToken} addToast={addToast} onDelete={() => setShowDelete(true)} />
+                </div>
+              )}
+
+              {/* cdesktop panel */}
+              {activeTab === 'cdesktop' && (
+                <div className="side-panel">
+                  <div className="side-panel-header">CDESKTOP</div>
+                  <CdesktopPanel projectId={projectId} csrfToken={csrfToken} addToast={addToast} />
                 </div>
               )}
 
