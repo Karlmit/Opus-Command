@@ -4,6 +4,15 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
+const {
+  parseArgs,
+  ensureLayout,
+  configPath,
+  logPath,
+  readConfig,
+  writeConfig,
+  normalizeServer,
+} = require('opus-connector-shared');
 
 const VERSION = '0.1.3';
 const WINDOWS_INSTALL_HOME = 'C:\\OpusConnector';
@@ -11,54 +20,14 @@ const DEFAULT_HOME = process.platform === 'win32'
   ? path.join(process.env.ProgramData || 'C:\\ProgramData', 'OpusConnector')
   : path.join(os.homedir(), '.opus-connector');
 
-function parseArgs(argv) {
-  const args = {};
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i];
-    if (arg.startsWith('--')) {
-      const key = arg.slice(2);
-      const next = argv[i + 1];
-      if (!next || next.startsWith('--')) {
-        args[key] = true;
-      } else {
-        args[key] = next;
-        i += 1;
-      }
-    }
-  }
-  return args;
-}
-
 function connectorHome(args) {
   return args.home || process.env.OPUS_CONNECTOR_HOME || DEFAULT_HOME;
-}
-
-function ensureLayout(home) {
-  const dirs = [
-    'config',
-    'logs',
-    'OpusCommand',
-    path.join('OpusCommand', 'jobs'),
-    path.join('OpusCommand', 'artifacts'),
-    path.join('OpusCommand', 'temp'),
-  ];
-  for (const dir of dirs) {
-    fs.mkdirSync(path.join(home, dir), { recursive: true });
-  }
-}
-
-function configPath(home) {
-  return path.join(home, 'config', 'connector.json');
 }
 
 function legacyConfigPath() {
   return process.platform === 'win32'
     ? path.join(WINDOWS_INSTALL_HOME, 'config', 'connector.json')
     : null;
-}
-
-function logPath(home) {
-  return path.join(home, 'logs', 'connector.log');
 }
 
 function log(home, message) {
@@ -69,26 +38,12 @@ function log(home, message) {
   } catch (_) {}
 }
 
-function readConfig(home) {
-  const file = configPath(home);
-  if (!fs.existsSync(file)) return null;
-  return JSON.parse(fs.readFileSync(file, 'utf8'));
-}
-
-function writeConfig(home, config) {
-  fs.writeFileSync(configPath(home), JSON.stringify(config, null, 2));
-}
-
 function migrateLegacyConfig(home) {
   const oldPath = legacyConfigPath();
   const newPath = configPath(home);
   if (!oldPath || oldPath === newPath || fs.existsSync(newPath) || !fs.existsSync(oldPath)) return;
   fs.copyFileSync(oldPath, newPath);
   log(home, `Migrated connector config from ${oldPath}`);
-}
-
-function normalizeServer(server) {
-  return (server || '').replace(/\/+$/, '');
 }
 
 function wsUrl(server, connectorId, secret) {

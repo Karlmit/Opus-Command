@@ -12,6 +12,7 @@
     "build:installer": "npm run build:exe && makensis installer.nsi"
   },
   "dependencies": {
+    "opus-connector-shared": "file:../shared/node",
     "ws": "^8.18.0"
   },
   "devDependencies": {

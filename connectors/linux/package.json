@@ -1,0 +1,19 @@
+{
+  "name": "opus-linux-connector",
+  "version": "0.1.0",
+  "description": "Linux connector for Opus Command remote execution",
+  "main": "src/index.js",
+  "bin": {
+    "opus-linux-connector": "src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "preflight": "node src/index.js --preflight",
+    "check": "node --check src/index.js && node --check scripts/build-installer.js",
+    "build:installer": "node scripts/build-installer.js"
+  },
+  "dependencies": {
+    "opus-connector-shared": "file:../shared/node",
+    "ws": "^8.18.0"
+  }
+}

@@ -1,5 +1,6 @@
 const express = require('express');
 const fs = require('fs');
+const path = require('path');
 const router = express.Router();
 const { requireAuth, requireAuthOrWorkspaceToken } = require('../middleware/auth');
 const connectors = require('../services/connectors.service');
@@ -13,6 +14,7 @@ router.post('/register', (req, res) => {
       hostname: req.body.hostname,
       version: req.body.version,
       labels: req.body.labels,
+      capabilities: req.body.capabilities,
     });
     res.json(registration);
   } catch (err) {
@@ -43,6 +45,24 @@ router.get('/jobs/:jobId', requireAuthOrWorkspaceToken, (req, res) => {
   res.json({ job });
 });
 
+router.get('/jobs', requireAuthOrWorkspaceToken, (req, res) => {
+  const jobs = connectors.listJobs({
+    connectorId: req.query.connectorId,
+    projectId: req.query.projectId,
+    limit: req.query.limit,
+  });
+  res.json({ jobs });
+});
+
+router.post('/jobs/:jobId/cancel', requireAuthOrWorkspaceToken, (req, res) => {
+  try {
+    const job = connectors.cancelJob(req.params.jobId);
+    res.json({ job });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message || 'Job cancellation failed.' });
+  }
+});
+
 router.get('/artifacts/:artifactId/download', requireAuthOrWorkspaceToken, (req, res) => {
   const artifact = connectors.getArtifact(req.params.artifactId);
   if (!artifact || !fs.existsSync(artifact.path)) {
@@ -71,9 +91,9 @@ router.patch('/:connectorId', requireAuth, (req, res) => {
 
 router.post('/:connectorId/jobs', requireAuthOrWorkspaceToken, async (req, res) => {
   try {
-    const { command, shell, cwd, projectId, timeoutMs } = req.body;
-    if (!command || !command.trim()) {
-      return res.status(400).json({ error: 'Command is required.' });
+    const { command, shell, cwd, env, args, stdin, script, projectId, timeoutMs } = req.body;
+    if ((!command || !command.trim()) && !script?.content) {
+      return res.status(400).json({ error: 'Command or script is required.' });
     }
 
     const { job, completion } = connectors.createJob({
@@ -83,6 +103,10 @@ router.post('/:connectorId/jobs', requireAuthOrWorkspaceToken, async (req, res) 
       shell,
       command,
       cwd,
+      env,
+      args,
+      stdin,
+      script,
       timeoutMs,
     });
 
@@ -94,6 +118,41 @@ router.post('/:connectorId/jobs', requireAuthOrWorkspaceToken, async (req, res) 
     res.json({ job: result });
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message || 'Connector job failed.' });
+  }
+});
+
+router.get('/:connectorId/files/download', requireAuthOrWorkspaceToken, async (req, res) => {
+  try {
+    const requestedPath = String(req.query.path || '');
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(path.basename(requestedPath) || 'download.bin')}"`);
+    await connectors.streamConnectorFile(req.params.connectorId, requestedPath, res);
+  } catch (err) {
+    if (!res.headersSent) {
+      res.status(err.status || 500).json({ error: err.message || 'File download failed.' });
+    } else {
+      res.destroy(err);
+    }
+  }
+});
+
+router.post('/:connectorId/files/upload', requireAuthOrWorkspaceToken, async (req, res) => {
+  try {
+    const isRaw = (req.headers['content-type'] || '').startsWith('application/octet-stream');
+    const result = isRaw
+      ? await connectors.streamUploadConnectorFile(req.params.connectorId, {
+          filePath: req.query.path || req.headers['x-opus-connector-path'],
+          readable: req,
+          mode: req.query.mode || req.headers['x-opus-connector-mode'],
+        })
+      : await connectors.writeConnectorFile(req.params.connectorId, {
+          filePath: req.body.path,
+          contentBase64: req.body.contentBase64,
+          mode: req.body.mode,
+        });
+    res.json({ file: result });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message || 'File upload failed.' });
   }
 });
 

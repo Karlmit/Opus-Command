@@ -10,6 +10,9 @@ const { DATA_DIR, PROJECTS_DIR } = require('../config');
 const CONNECTOR_PROTOCOL_VERSION = 1;
 const clients = new Map();
 const pendingJobs = new Map();
+const pendingRequests = new Map();
+const pendingTransfers = new Map();
+const TRANSFER_CHUNK_SIZE = 256 * 1024;
 
 function now() {
   return Date.now();
@@ -47,6 +50,24 @@ function parseLabels(value) {
   }
 }
 
+function normalizeCapabilities(capabilities) {
+  if (!capabilities || typeof capabilities !== 'object' || Array.isArray(capabilities)) return {};
+  try {
+    return JSON.parse(JSON.stringify(capabilities));
+  } catch (_) {
+    return {};
+  }
+}
+
+function parseCapabilities(value) {
+  try {
+    const parsed = JSON.parse(value || '{}');
+    return normalizeCapabilities(parsed);
+  } catch (_) {
+    return {};
+  }
+}
+
 function publicConnector(row) {
   return {
     id: row.id,
@@ -55,6 +76,7 @@ function publicConnector(row) {
     hostname: row.hostname,
     version: row.version,
     labels: parseLabels(row.labels),
+    capabilities: parseCapabilities(row.capabilities),
     status: clients.has(row.id) ? 'online' : row.status,
     lastSeenAt: row.last_seen_at,
     createdAt: row.created_at,
@@ -74,7 +96,7 @@ function createPairingToken({ name, createdBy, ttlMinutes = 30 }) {
   return { id, token, expiresAt: createdAt + ttlMinutes * 60 * 1000 };
 }
 
-function registerConnector({ pairingToken, name, platform, hostname, version, labels }) {
+function registerConnector({ pairingToken, name, platform, hostname, version, labels, capabilities }) {
   const sqlite = getSQLite();
   const tokenHash = sha256(pairingToken || '');
   const pairing = sqlite.prepare(`
@@ -93,8 +115,8 @@ function registerConnector({ pairingToken, name, platform, hostname, version, la
   const createdAt = now();
   sqlite.prepare(`
     INSERT INTO connectors
-      (id, name, secret_hash, platform, hostname, version, labels, status, last_seen_at, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 'offline', NULL, ?)
+      (id, name, secret_hash, platform, hostname, version, labels, capabilities, status, last_seen_at, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'offline', NULL, ?)
   `).run(
     connectorId,
     name || pairing.name || hostname || os.hostname(),
@@ -103,6 +125,7 @@ function registerConnector({ pairingToken, name, platform, hostname, version, la
     hostname || '',
     version || '',
     JSON.stringify(normalizeLabels(labels)),
+    JSON.stringify(normalizeCapabilities(capabilities)),
     createdAt
   );
   sqlite.prepare('UPDATE connector_pairing_tokens SET used_at = ? WHERE id = ?').run(createdAt, pairing.id);
@@ -112,6 +135,26 @@ function registerConnector({ pairingToken, name, platform, hostname, version, la
     connectorSecret: secret,
     protocolVersion: CONNECTOR_PROTOCOL_VERSION,
   };
+}
+
+function updateConnectorRuntime(connectorId, { hostname, version, capabilities } = {}) {
+  const sqlite = getSQLite();
+  const updates = ['last_seen_at = ?'];
+  const params = [now()];
+  if (hostname) {
+    updates.push('hostname = ?');
+    params.push(String(hostname));
+  }
+  if (version) {
+    updates.push('version = ?');
+    params.push(String(version));
+  }
+  if (capabilities && typeof capabilities === 'object') {
+    updates.push('capabilities = ?');
+    params.push(JSON.stringify(normalizeCapabilities(capabilities)));
+  }
+  params.push(connectorId);
+  sqlite.prepare(`UPDATE connectors SET ${updates.join(', ')} WHERE id = ?`).run(...params);
 }
 
 function authenticateConnector(connectorId, connectorSecret) {
@@ -155,12 +198,17 @@ function updateConnector(connectorId, { name, labels }) {
   return getConnector(connectorId);
 }
 
-function createJob({ connectorId, userId, projectId, shell, command, cwd, timeoutMs = 30 * 60 * 1000 }) {
+function createJob({ connectorId, userId, projectId, shell, command, cwd, env, args, stdin, script, timeoutMs = 30 * 60 * 1000 }) {
   const sqlite = getSQLite();
-  const connector = sqlite.prepare('SELECT id FROM connectors WHERE id = ?').get(connectorId);
+  const connector = sqlite.prepare('SELECT * FROM connectors WHERE id = ?').get(connectorId);
   if (!connector) {
     const err = new Error('Connector not found.');
     err.status = 404;
+    throw err;
+  }
+  if ((script?.content || typeof stdin === 'string') && connector.platform !== 'linux') {
+    const err = new Error('Script/stdin execution requires a v2 Linux connector.');
+    err.status = 400;
     throw err;
   }
   const client = clients.get(connectorId);
@@ -172,13 +220,24 @@ function createJob({ connectorId, userId, projectId, shell, command, cwd, timeou
 
   const id = randomId('job');
   const createdAt = now();
+  const displayCommand = command || script?.name || '[script]';
   sqlite.prepare(`
     INSERT INTO connector_jobs
       (id, connector_id, project_id, user_id, shell, command, cwd, status, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?)
-  `).run(id, connectorId, projectId || null, userId || null, shell || 'powershell', command, cwd || null, createdAt);
+  `).run(id, connectorId, projectId || null, userId || null, shell || 'powershell', displayCommand, cwd || null, createdAt);
 
-  const job = { id, shell: shell || 'powershell', command, cwd: cwd || null, timeoutMs };
+  const job = {
+    id,
+    shell: shell || 'powershell',
+    command: command || '',
+    cwd: cwd || null,
+    env: env && typeof env === 'object' ? env : undefined,
+    args: Array.isArray(args) ? args : undefined,
+    stdin: typeof stdin === 'string' ? stdin : undefined,
+    script: script && typeof script === 'object' ? script : undefined,
+    timeoutMs,
+  };
   const completion = new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       pendingJobs.delete(id);
@@ -187,13 +246,351 @@ function createJob({ connectorId, userId, projectId, shell, command, cwd, timeou
         SET status = 'timeout', ended_at = ?
         WHERE id = ?
       `).run(now(), id);
-      reject(new Error('Connector job timed out.'));
+      if (client.ws.readyState === 1) {
+        client.ws.send(JSON.stringify({ type: 'job:cancel', jobId: id }));
+      }
+      resolve(getJob(id));
     }, timeoutMs);
     pendingJobs.set(id, { resolve, reject, timeout });
   });
 
   client.ws.send(JSON.stringify({ type: 'job:start', job }));
   return { job, completion };
+}
+
+function listJobs({ connectorId, projectId, limit = 50 } = {}) {
+  const sqlite = getSQLite();
+  const where = [];
+  const params = [];
+  if (connectorId) {
+    where.push('connector_id = ?');
+    params.push(connectorId);
+  }
+  if (projectId) {
+    where.push('project_id = ?');
+    params.push(projectId);
+  }
+  params.push(Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200));
+  const rows = sqlite.prepare(`
+    SELECT id FROM connector_jobs
+    ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+    ORDER BY created_at DESC
+    LIMIT ?
+  `).all(...params);
+  return rows.map(row => getJob(row.id)).filter(Boolean);
+}
+
+function cancelJob(jobId) {
+  const sqlite = getSQLite();
+  const row = sqlite.prepare('SELECT * FROM connector_jobs WHERE id = ?').get(jobId);
+  if (!row) {
+    const err = new Error('Job not found.');
+    err.status = 404;
+    throw err;
+  }
+  if (['succeeded', 'failed', 'timeout', 'canceled', 'lost'].includes(row.status)) {
+    return getJob(jobId);
+  }
+  const connector = sqlite.prepare('SELECT platform FROM connectors WHERE id = ?').get(row.connector_id);
+  if (connector?.platform !== 'linux') {
+    const err = new Error('Job cancellation requires a v2 Linux connector.');
+    err.status = 400;
+    throw err;
+  }
+
+  sqlite.prepare('UPDATE connector_jobs SET status = ? WHERE id = ?').run('canceling', jobId);
+  const client = clients.get(row.connector_id);
+  if (client?.ws?.readyState === 1) {
+    client.ws.send(JSON.stringify({ type: 'job:cancel', jobId }));
+  }
+  return getJob(jobId);
+}
+
+function sendConnectorRequest(connectorId, message, timeoutMs = 60 * 1000) {
+  const client = clients.get(connectorId);
+  if (!client || client.ws.readyState !== 1) {
+    const err = new Error('Connector is offline.');
+    err.status = 409;
+    throw err;
+  }
+
+  const requestId = randomId('req');
+  const payload = { ...message, requestId };
+  const promise = new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      pendingRequests.delete(requestId);
+      reject(new Error('Connector request timed out.'));
+    }, timeoutMs);
+    pendingRequests.set(requestId, { resolve, reject, timeout });
+  });
+  client.ws.send(JSON.stringify(payload));
+  return promise;
+}
+
+function ensureV2LinuxConnector(connectorId, feature) {
+  const connector = getSQLite().prepare('SELECT platform FROM connectors WHERE id = ?').get(connectorId);
+  if (!connector) {
+    const err = new Error('Connector not found.');
+    err.status = 404;
+    throw err;
+  }
+  if (connector.platform !== 'linux') {
+    const err = new Error(`${feature} requires a v2 Linux connector.`);
+    err.status = 400;
+    throw err;
+  }
+  return connector;
+}
+
+async function readConnectorFile(connectorId, filePath) {
+  if (!filePath) {
+    const err = new Error('Path is required.');
+    err.status = 400;
+    throw err;
+  }
+  ensureV2LinuxConnector(connectorId, 'File transfer');
+  return readConnectorFileChunked(connectorId, filePath);
+}
+
+function streamConnectorFile(connectorId, filePath, writable) {
+  if (!filePath) {
+    const err = new Error('Path is required.');
+    err.status = 400;
+    throw err;
+  }
+  ensureV2LinuxConnector(connectorId, 'File transfer');
+  const client = clients.get(connectorId);
+  if (!client || client.ws.readyState !== 1) {
+    const err = new Error('Connector is offline.');
+    err.status = 409;
+    throw err;
+  }
+
+  const transferId = randomId('xfer');
+  const promise = new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      pendingTransfers.delete(transferId);
+      reject(new Error('Connector file download timed out.'));
+    }, 5 * 60 * 1000);
+    pendingTransfers.set(transferId, {
+      direction: 'download-stream',
+      writable,
+      timeout,
+      resolve,
+      reject,
+    });
+  });
+  client.ws.send(JSON.stringify({ type: 'file:download:start', transferId, path: filePath, chunkSize: TRANSFER_CHUNK_SIZE }));
+  return promise;
+}
+
+async function writeConnectorFile(connectorId, { filePath, contentBase64, mode }) {
+  if (!filePath) {
+    const err = new Error('Path is required.');
+    err.status = 400;
+    throw err;
+  }
+  ensureV2LinuxConnector(connectorId, 'File transfer');
+  return writeConnectorFileChunked(connectorId, {
+    filePath,
+    data: Buffer.from(contentBase64 || '', 'base64'),
+    mode,
+  });
+}
+
+async function writeConnectorFileBytes(connectorId, { filePath, data, mode }) {
+  if (!filePath) {
+    const err = new Error('Path is required.');
+    err.status = 400;
+    throw err;
+  }
+  ensureV2LinuxConnector(connectorId, 'File transfer');
+  return writeConnectorFileChunked(connectorId, {
+    filePath,
+    data: Buffer.isBuffer(data) ? data : Buffer.from(data || ''),
+    mode,
+  });
+}
+
+function streamUploadConnectorFile(connectorId, { filePath, readable, mode }) {
+  if (!filePath) {
+    const err = new Error('Path is required.');
+    err.status = 400;
+    throw err;
+  }
+  ensureV2LinuxConnector(connectorId, 'File transfer');
+  const client = clients.get(connectorId);
+  if (!client || client.ws.readyState !== 1) {
+    const err = new Error('Connector is offline.');
+    err.status = 409;
+    throw err;
+  }
+
+  const transferId = randomId('xfer');
+  const promise = new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      pendingTransfers.delete(transferId);
+      reject(new Error('Connector file upload timed out.'));
+    }, 5 * 60 * 1000);
+    pendingTransfers.set(transferId, {
+      direction: 'upload-stream',
+      timeout,
+      resolve,
+      reject,
+    });
+  });
+
+  let offset = 0;
+  client.ws.send(JSON.stringify({
+    type: 'file:upload:start',
+    transferId,
+    path: filePath,
+    mode,
+  }));
+
+  readable.on('data', chunk => {
+    const data = Buffer.from(chunk);
+    client.ws.send(JSON.stringify({
+      type: 'file:upload:chunk',
+      transferId,
+      offset,
+      contentBase64: data.toString('base64'),
+    }));
+    offset += data.length;
+  });
+  readable.on('end', () => {
+    client.ws.send(JSON.stringify({ type: 'file:upload:complete', transferId }));
+  });
+  readable.on('error', err => {
+    rejectTransfer(transferId, err);
+  });
+
+  return promise;
+}
+
+function rejectTransfer(transferId, err) {
+  const transfer = pendingTransfers.get(transferId);
+  if (!transfer) return;
+  clearTimeout(transfer.timeout);
+  pendingTransfers.delete(transferId);
+  transfer.reject(err);
+}
+
+function readConnectorFileChunked(connectorId, filePath) {
+  const client = clients.get(connectorId);
+  if (!client || client.ws.readyState !== 1) {
+    const err = new Error('Connector is offline.');
+    err.status = 409;
+    throw err;
+  }
+  const transferId = randomId('xfer');
+  const chunks = [];
+  const promise = new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      pendingTransfers.delete(transferId);
+      reject(new Error('Connector file download timed out.'));
+    }, 5 * 60 * 1000);
+    pendingTransfers.set(transferId, {
+      direction: 'download',
+      chunks,
+      timeout,
+      resolve,
+      reject,
+    });
+  });
+  client.ws.send(JSON.stringify({ type: 'file:download:start', transferId, path: filePath, chunkSize: TRANSFER_CHUNK_SIZE }));
+  return promise;
+}
+
+function writeConnectorFileChunked(connectorId, { filePath, data, mode }) {
+  const client = clients.get(connectorId);
+  if (!client || client.ws.readyState !== 1) {
+    const err = new Error('Connector is offline.');
+    err.status = 409;
+    throw err;
+  }
+  const transferId = randomId('xfer');
+  const promise = new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      pendingTransfers.delete(transferId);
+      reject(new Error('Connector file upload timed out.'));
+    }, 5 * 60 * 1000);
+    pendingTransfers.set(transferId, {
+      direction: 'upload',
+      timeout,
+      resolve,
+      reject,
+    });
+  });
+  client.ws.send(JSON.stringify({
+    type: 'file:upload:start',
+    transferId,
+    path: filePath,
+    size: data.length,
+    mode,
+  }));
+  for (let offset = 0; offset < data.length; offset += TRANSFER_CHUNK_SIZE) {
+    client.ws.send(JSON.stringify({
+      type: 'file:upload:chunk',
+      transferId,
+      offset,
+      contentBase64: data.subarray(offset, offset + TRANSFER_CHUNK_SIZE).toString('base64'),
+    }));
+  }
+  client.ws.send(JSON.stringify({ type: 'file:upload:complete', transferId }));
+  return promise;
+}
+
+function handleTransferMessage(message) {
+  const transfer = pendingTransfers.get(message.transferId);
+  if (!transfer) return;
+
+  if (message.type === 'file:download:chunk') {
+    if (transfer.direction === 'download-stream') {
+      transfer.writable.write(Buffer.from(message.contentBase64 || '', 'base64'));
+      return;
+    }
+    transfer.chunks.push(Buffer.from(message.contentBase64 || '', 'base64'));
+    return;
+  }
+
+  if (message.type === 'file:download:complete') {
+    clearTimeout(transfer.timeout);
+    pendingTransfers.delete(message.transferId);
+    if (transfer.direction === 'download-stream') {
+      transfer.writable.end();
+      transfer.resolve({
+        path: message.path,
+        name: message.name,
+        size: message.size,
+      });
+      return;
+    }
+    const data = Buffer.concat(transfer.chunks);
+    transfer.resolve({
+      path: message.path,
+      name: message.name,
+      size: data.length,
+      contentBase64: data.toString('base64'),
+    });
+    return;
+  }
+
+  if (message.type === 'file:upload:complete') {
+    clearTimeout(transfer.timeout);
+    pendingTransfers.delete(message.transferId);
+    transfer.resolve(message.result || { path: message.path, size: message.size });
+    return;
+  }
+
+  if (message.type === 'file:transfer:error') {
+    clearTimeout(transfer.timeout);
+    pendingTransfers.delete(message.transferId);
+    if (transfer.direction === 'download-stream') {
+      transfer.writable.destroy(new Error(message.error || 'Connector file transfer failed.'));
+    }
+    transfer.reject(new Error(message.error || 'Connector file transfer failed.'));
+  }
 }
 
 function safeArtifactName(name) {
@@ -246,7 +643,11 @@ function appendJobOutput(jobId, stream, data) {
 function completeJob(message) {
   const sqlite = getSQLite();
   const endedAt = now();
-  const status = message.exitCode === 0 ? 'succeeded' : 'failed';
+  const existing = sqlite.prepare('SELECT status FROM connector_jobs WHERE id = ?').get(message.jobId);
+  if (['timeout', 'lost'].includes(existing?.status)) return;
+  const status = message.canceled || existing?.status === 'canceling'
+    ? 'canceled'
+    : message.exitCode === 0 ? 'succeeded' : 'failed';
   sqlite.prepare(`
     UPDATE connector_jobs
     SET status = ?, exit_code = ?, ended_at = ?, started_at = COALESCE(started_at, ?)
@@ -259,6 +660,29 @@ function completeJob(message) {
     clearTimeout(pending.timeout);
     pendingJobs.delete(message.jobId);
     pending.resolve(getJob(message.jobId));
+  }
+}
+
+function markConnectorJobsDisconnected(connectorId) {
+  const sqlite = getSQLite();
+  const endedAt = now();
+  const rows = sqlite.prepare(`
+    SELECT id FROM connector_jobs
+    WHERE connector_id = ? AND status IN ('queued', 'running', 'canceling')
+  `).all(connectorId);
+  for (const row of rows) {
+    sqlite.prepare(`
+      UPDATE connector_jobs
+      SET status = 'lost', ended_at = COALESCE(ended_at, ?),
+          stderr = COALESCE(stderr, '') || ?
+      WHERE id = ?
+    `).run(endedAt, '\n[opus] connector disconnected before the job completed.\n', row.id);
+    const pending = pendingJobs.get(row.id);
+    if (pending) {
+      clearTimeout(pending.timeout);
+      pendingJobs.delete(row.id);
+      pending.resolve(getJob(row.id));
+    }
   }
 }
 
@@ -310,9 +734,24 @@ function setupConnectorWebSocket(server) {
         completeJob(message);
       } else if (message.type === 'artifact:file') {
         storeArtifact(message, connector.id);
+      } else if (message.type === 'capabilities:update') {
+        updateConnectorRuntime(connector.id, { capabilities: message.capabilities });
       } else if (message.type === 'heartbeat') {
-        sqlite.prepare('UPDATE connectors SET last_seen_at = ? WHERE id = ?').run(now(), connector.id);
+        updateConnectorRuntime(connector.id, {
+          hostname: message.hostname,
+          version: message.version,
+          capabilities: message.capabilities,
+        });
         ws.send(JSON.stringify({ type: 'heartbeat:ack', at: now() }));
+      } else if (message.type === 'response') {
+        const pending = pendingRequests.get(message.requestId);
+        if (!pending) return;
+        clearTimeout(pending.timeout);
+        pendingRequests.delete(message.requestId);
+        if (message.ok === false) pending.reject(new Error(message.error || 'Connector request failed.'));
+        else pending.resolve(message.result || {});
+      } else if (message.type?.startsWith('file:')) {
+        handleTransferMessage(message);
       }
     });
 
@@ -320,6 +759,7 @@ function setupConnectorWebSocket(server) {
       const current = clients.get(connector.id);
       if (current && current.ws === ws) {
         clients.delete(connector.id);
+        markConnectorJobsDisconnected(connector.id);
         sqlite.prepare(`
           UPDATE connectors
           SET status = 'offline', last_seen_at = ?
@@ -381,7 +821,14 @@ module.exports = {
   getConnector,
   updateConnector,
   createJob,
+  listJobs,
+  cancelJob,
   getJob,
   getArtifact,
+  readConnectorFile,
+  streamConnectorFile,
+  writeConnectorFile,
+  writeConnectorFileBytes,
+  streamUploadConnectorFile,
   setupConnectorWebSocket,
 };

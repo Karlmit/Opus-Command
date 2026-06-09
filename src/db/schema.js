@@ -49,6 +49,7 @@ const connectors = sqliteTable('connectors', {
   hostname: text('hostname').default(''),
   version: text('version').default(''),
   labels: text('labels').default('[]'),
+  capabilities: text('capabilities').default('{}'),
   status: text('status').default('offline'),
   lastSeenAt: integer('last_seen_at'),
   createdAt: integer('created_at').notNull(),
