@@ -230,7 +230,14 @@ function SnapshotRow({ snapshot, onRestore }) {
       </div>
       {showConfirm ? (
         <div className="gk-snapshot-confirm">
-          <button className="btn btn-danger" style={{ height: 24, fontSize: 11, padding: '0 8px' }} onClick={() => { onRestore(snapshot.tag); setShowConfirm(false); }}>Restore</button>
+          <button
+            className="btn btn-danger"
+            style={{ height: 24, fontSize: 11, padding: '0 8px' }}
+            title="Reset the workspace to this snapshot and remove later file changes."
+            onClick={() => { onRestore(snapshot.tag); setShowConfirm(false); }}
+          >
+            Restore
+          </button>
           <button className="btn btn-ghost" style={{ height: 24, fontSize: 11, padding: '0 6px' }} onClick={() => setShowConfirm(false)}>✕</button>
         </div>
       ) : (
@@ -398,7 +405,7 @@ export default function GitPage() {
       body: JSON.stringify({ tag }),
     });
     const data = await res.json();
-    if (data.success) { addToast(`Restored to ${tag}`); loadStatus(); }
+    if (data.success) { addToast(`Workspace restored to ${tag}`); loadStatus(); }
     else addToast(data.error || 'Restore failed.', 'error');
   }
 

@@ -434,10 +434,10 @@ function GitPanel({ projectId, csrfToken, addToast }) {
     else addToast(d.error, 'error');
   }
   async function restore(tag) {
-    if (!confirm(`Restore to ${tag}? Uncommitted changes will be overwritten.`)) return;
+    if (!confirm(`Restore workspace to ${tag}? This resets the current branch to the snapshot and removes file changes made after it.`)) return;
     const r = await fetch(`/api/projects/${projectId}/git/restore`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: JSON.stringify({ tag }) });
     const d = await r.json();
-    if (d.success) { addToast(`Restored to ${tag}`); loadStatus(); } else addToast(d.error, 'error');
+    if (d.success) { addToast(`Workspace restored to ${tag}`); loadStatus(); } else addToast(d.error, 'error');
   }
 
   if (!status) return <div className="panel-content"><p className="panel-loading">Loading…</p></div>;
