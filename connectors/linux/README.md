@@ -27,6 +27,13 @@ Copy `../../dist/opus-linux-connector-installer.sh` to the Linux machine and run
 sudo ./opus-linux-connector-installer.sh --server http://OPUS_HOST:3000 --pair PAIRING_TOKEN
 ```
 
+Running the installer as root with no flags opens an interactive terminal wizard
+before any system changes are made:
+
+```bash
+sudo ./opus-linux-connector-installer.sh
+```
+
 On a Linux desktop with Zenity available, you can launch the graphical installer:
 
 ```bash
@@ -38,7 +45,7 @@ desktop, it also tries to open the graphical installer automatically. The GUI
 collects the dependency profile, service/autostart choices, pairing details, and
 status UI port, then asks for administrator approval through PolicyKit.
 
-Useful installer options:
+For unattended/silent installs, pass explicit options:
 
 ```bash
 sudo ./opus-linux-connector-installer.sh --profile full --service yes

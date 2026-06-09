@@ -56,6 +56,7 @@ LABELS=""
 UI_PORT="3899"
 GUI_MODE="auto"
 ORIGINAL_ARGC=$#
+INTERACTIVE_MODE="auto"
 
 has_graphical_session() {
   [[ -n "\${DISPLAY:-}" || -n "\${WAYLAND_DISPLAY:-}" ]]
@@ -70,6 +71,102 @@ yn() {
     yes|true|1) echo "yes" ;;
     *) echo "no" ;;
   esac
+}
+
+prompt_line() {
+  local prompt="$1"
+  local default_value="$2"
+  local value=""
+  if [[ -n "\${default_value}" ]]; then
+    read -r -p "\${prompt} [\${default_value}]: " value
+    echo "\${value:-\${default_value}}"
+  else
+    read -r -p "\${prompt}: " value
+    echo "\${value}"
+  fi
+}
+
+prompt_yes_no() {
+  local prompt="$1"
+  local default_value="$2"
+  local value=""
+  local hint="[y/N]"
+  [[ "\${default_value}" == "yes" ]] && hint="[Y/n]"
+  while true; do
+    read -r -p "\${prompt} \${hint}: " value
+    value="\${value:-\${default_value}}"
+    case "\${value}" in
+      y|Y|yes|YES|Yes) echo "yes"; return 0 ;;
+      n|N|no|NO|No) echo "no"; return 0 ;;
+      *) echo "Please answer yes or no." >&2 ;;
+    esac
+  done
+}
+
+launch_tui() {
+  if [[ ! -t 0 ]]; then
+    echo "No installer options were provided and stdin is not interactive." >&2
+    echo "Use explicit flags for silent install, for example:" >&2
+    echo "  sudo $0 --profile full --service yes" >&2
+    exit 1
+  fi
+
+  cat <<'INTRO'
+Opus Connector for Linux installer
+
+This interactive setup has not changed your system yet. Review the choices
+below, then confirm before installation starts.
+
+Dependency profiles:
+  full     Development tools, Docker, browser testing, and connector
+  minimal  Core connector dependencies only
+  docker   Docker and connector dependencies
+  browser  Browser testing and connector dependencies
+  none     Connector only; do not install system dependencies
+
+For unattended/silent installs, pass explicit flags such as:
+  sudo ./opus-linux-connector-installer.sh --profile full --service yes
+
+INTRO
+
+  while true; do
+    PROFILE="$(prompt_line "Dependency profile" "\${PROFILE}")"
+    case "\${PROFILE}" in
+      none|minimal|docker|browser|full) break ;;
+      *) echo "Choose one of: none, minimal, docker, browser, full" >&2 ;;
+    esac
+  done
+
+  SERVICE="$(prompt_yes_no "Install and start system service after boot?" "\${SERVICE}")"
+  AUTOSTART="$(prompt_yes_no "Also start after desktop login for this user?" "\${AUTOSTART}")"
+  SERVER="$(prompt_line "Opus Command URL, blank to pair later" "\${SERVER}")"
+  if [[ -n "\${SERVER}" ]]; then
+    PAIR="$(prompt_line "Pairing token" "\${PAIR}")"
+  fi
+  NAME="$(prompt_line "Connector display name, optional" "\${NAME}")"
+  LABELS="$(prompt_line "Extra comma-separated labels, optional" "\${LABELS}")"
+  UI_PORT="$(prompt_line "Local status UI port" "\${UI_PORT}")"
+
+  cat <<SUMMARY
+
+Ready to install:
+  Prefix: \${PREFIX}
+  Profile: \${PROFILE}
+  System service: $(yn "\${SERVICE}")
+  Login autostart: $(yn "\${AUTOSTART}")
+  Opus URL: \${SERVER:-pair later}
+  Connector name: \${NAME:-default}
+  Extra labels: \${LABELS:-none}
+  Status UI: http://127.0.0.1:\${UI_PORT}
+
+SUMMARY
+
+  local confirm
+  confirm="$(prompt_yes_no "Start installation now?" "no")"
+  if [[ "\${confirm}" != "yes" ]]; then
+    echo "Installation canceled. No changes were made by this installer run."
+    exit 0
+  fi
 }
 
 run_gui_install() {
@@ -192,6 +289,8 @@ while [[ $# -gt 0 ]]; do
     --ui-port) UI_PORT="$2"; shift 2 ;;
     --gui) GUI_MODE="yes"; shift ;;
     --no-gui) GUI_MODE="no"; shift ;;
+    --tui) INTERACTIVE_MODE="yes"; GUI_MODE="no"; shift ;;
+    --no-tui) INTERACTIVE_MODE="no"; shift ;;
     --help|-h)
       cat <<'HELP'
 Opus Connector for Linux installer
@@ -213,6 +312,8 @@ Options:
   --ui-port PORT      Local status UI port. Default: 3899
   --gui               Open the graphical installer.
   --no-gui            Force terminal mode.
+  --tui               Open the terminal installer wizard.
+  --no-tui            Disable the terminal wizard for explicit terminal installs.
 HELP
       exit 0
       ;;
@@ -227,6 +328,10 @@ fi
 if [[ "$(id -u)" -ne 0 ]]; then
   echo "Run with sudo/root." >&2
   exit 1
+fi
+
+if [[ "\${INTERACTIVE_MODE}" == "yes" || ( "\${INTERACTIVE_MODE}" == "auto" && "\${ORIGINAL_ARGC}" -eq 0 ) ]]; then
+  launch_tui
 fi
 
 if ! command -v tar >/dev/null 2>&1; then
