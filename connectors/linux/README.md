@@ -100,7 +100,8 @@ http://127.0.0.1:3899
 ```
 
 The UI shows pairing state, connection state, detected capabilities, and recent
-logs. If the connector is not paired yet, the UI includes a pairing form.
+logs. If the connector is not paired yet, the UI includes a pairing form. The UI
+also includes startup controls for login autostart.
 
 Options:
 

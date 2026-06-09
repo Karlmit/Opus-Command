@@ -268,9 +268,28 @@ function state(home) {
     connectorId: config?.connectorId || '',
     name: config?.name || '',
     version: VERSION,
+    autostart: {
+      login: {
+        installed: fs.existsSync(autostartPath()),
+        path: autostartPath(),
+      },
+      service: {
+        available: fs.existsSync('/run/systemd/system'),
+        installed: fs.existsSync(SERVICE_PATH),
+        active: systemctlState('is-active', 'opus-connector.service') === 'active',
+        enabled: systemctlState('is-enabled', 'opus-connector.service') === 'enabled',
+      },
+    },
     capabilities: detectCapabilities(),
     logs: readRecentLogs(home),
   };
+}
+
+function systemctlState(command, unit) {
+  if (!fs.existsSync('/run/systemd/system')) return '';
+  const result = spawnSync('systemctl', [command, unit], { encoding: 'utf8' });
+  if (result.status !== 0) return String(result.stdout || result.stderr || '').trim();
+  return String(result.stdout || '').trim();
 }
 
 function htmlPage() {
@@ -309,6 +328,7 @@ function htmlPage() {
       <div class="status" id="status">loading</div>
     </header>
     <section id="pairing"></section>
+    <section id="autostart"></section>
     <section>
       <h2>Capabilities</h2>
       <div class="grid" id="capabilities"></div>
@@ -319,6 +339,65 @@ function htmlPage() {
     </section>
   </main>
   <script>
+    let pairingRendered = false;
+    let connectionRendered = false;
+
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+      }[char]));
+    }
+
+    function renderPairingForm() {
+      if (pairingRendered) return;
+      connectionRendered = false;
+      pairingRendered = true;
+      document.getElementById('pairing').innerHTML = '<h2>Pair Connector</h2><form id="pairForm"><label>Opus Command URL</label><input name="server" placeholder="http://192.168.1.10:3000" required autocomplete="url"><label>Pairing Token</label><input name="pair" required autocomplete="one-time-code"><label>Name</label><input name="name" value="' + escapeHtml(location.hostname) + '" autocomplete="organization-title"><label>Extra Labels</label><input name="labels" placeholder="linux,docker,server"><button>Pair and Connect</button></form>';
+      document.getElementById('pairForm').onsubmit = async (event) => {
+        event.preventDefault();
+        const form = event.target;
+        const button = form.querySelector('button');
+        button.disabled = true;
+        button.textContent = 'Pairing...';
+        const body = Object.fromEntries(new FormData(form).entries());
+        const response = await fetch('/api/pair', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        if (!response.ok) {
+          alert(await response.text());
+          button.disabled = false;
+          button.textContent = 'Pair and Connect';
+          return;
+        }
+        pairingRendered = false;
+        await refresh();
+      };
+    }
+
+    function renderConnection(data) {
+      if (connectionRendered) return;
+      pairingRendered = false;
+      connectionRendered = true;
+      document.getElementById('pairing').innerHTML = '<h2>Connection</h2><div class="grid"><div class="card"><strong>Connector ID</strong><br><span class="muted">' + escapeHtml(data.connectorId) + '</span></div><div class="card"><strong>Home</strong><br><span class="muted">' + escapeHtml(data.home) + '</span></div><div class="card"><strong>Version</strong><br><span class="muted">' + escapeHtml(data.version) + '</span></div></div>';
+    }
+
+    function renderAutostart(data) {
+      const login = data.autostart?.login || {};
+      const service = data.autostart?.service || {};
+      document.getElementById('autostart').innerHTML = '<h2>Startup</h2><div class="grid"><div class="card"><strong>Login Autostart</strong><br><span class="muted">' + (login.installed ? 'enabled' : 'disabled') + '</span><br><button id="toggleLoginAutostart">' + (login.installed ? 'Disable Login Autostart' : 'Enable Login Autostart') + '</button></div><div class="card"><strong>System Service</strong><br><span class="muted">' + (service.installed ? (service.enabled ? 'enabled' : 'installed') : 'not installed') + (service.active ? ', running' : '') + '</span></div></div>';
+      document.getElementById('toggleLoginAutostart').onclick = async () => {
+        const response = await fetch('/api/autostart/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: !login.installed }),
+        });
+        if (!response.ok) alert(await response.text());
+        await refresh();
+      };
+    }
+
     async function refresh() {
       const res = await fetch('/api/state');
       const data = await res.json();
@@ -338,19 +417,13 @@ function htmlPage() {
         ['ADB', caps.android?.adb?.available ? 'available' : 'missing'],
         ['Serial Devices', caps.hardware?.serialDevices?.count || 0],
       ];
-      document.getElementById('capabilities').innerHTML = items.map(([k, v]) => '<div class="card"><strong>' + k + '</strong><br><span class="muted">' + v + '</span></div>').join('');
+      document.getElementById('capabilities').innerHTML = items.map(([k, v]) => '<div class="card"><strong>' + escapeHtml(k) + '</strong><br><span class="muted">' + escapeHtml(v) + '</span></div>').join('');
       if (!data.paired) {
-        document.getElementById('pairing').innerHTML = '<h2>Pair Connector</h2><form id="pairForm"><label>Opus Command URL</label><input name="server" placeholder="http://192.168.1.10:3000" required><label>Pairing Token</label><input name="pair" required><label>Name</label><input name="name" value="' + location.hostname + '"><label>Extra Labels</label><input name="labels" placeholder="linux,docker,server"><button>Pair and Connect</button></form>';
-        document.getElementById('pairForm').onsubmit = async (event) => {
-          event.preventDefault();
-          const body = Object.fromEntries(new FormData(event.target).entries());
-          const response = await fetch('/api/pair', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-          if (!response.ok) alert(await response.text());
-          await refresh();
-        };
+        renderPairingForm();
       } else {
-        document.getElementById('pairing').innerHTML = '<h2>Connection</h2><div class="grid"><div class="card"><strong>Connector ID</strong><br><span class="muted">' + data.connectorId + '</span></div><div class="card"><strong>Home</strong><br><span class="muted">' + data.home + '</span></div><div class="card"><strong>Version</strong><br><span class="muted">' + data.version + '</span></div></div>';
+        renderConnection(data);
       }
+      renderAutostart(data);
     }
     refresh();
     setInterval(refresh, 3000);
@@ -394,6 +467,14 @@ function startUiServer(home, args, onPaired) {
         const body = await readJsonBody(req);
         const config = await pair(home, body);
         onPaired(config);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
+      if (req.method === 'POST' && req.url === '/api/autostart/login') {
+        const body = await readJsonBody(req);
+        if (body.enabled) installLoginAutostart(home, args);
+        else uninstallLoginAutostart();
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true }));
         return;
