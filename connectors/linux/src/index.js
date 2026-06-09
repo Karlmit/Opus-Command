@@ -16,7 +16,7 @@ const {
   quote,
 } = require('opus-connector-shared');
 
-const VERSION = '0.1.0';
+const VERSION = '0.1.1';
 const DEFAULT_HOME = process.getuid && process.getuid() === 0
   ? '/var/lib/opus-connector'
   : path.join(os.homedir(), '.opus-connector');
@@ -454,12 +454,18 @@ function startUiServer(home, args, onPaired) {
   const server = http.createServer(async (req, res) => {
     try {
       if (req.method === 'GET' && req.url === '/') {
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store, max-age=0',
+        });
         res.end(htmlPage());
         return;
       }
       if (req.method === 'GET' && req.url === '/api/state') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-store, max-age=0',
+        });
         res.end(JSON.stringify(state(home)));
         return;
       }
@@ -894,8 +900,9 @@ WantedBy=multi-user.target
   ensureLayout(home);
   fs.writeFileSync(SERVICE_PATH, unit);
   spawnSync('systemctl', ['daemon-reload'], { stdio: 'inherit' });
-  spawnSync('systemctl', ['enable', '--now', 'opus-connector.service'], { stdio: 'inherit' });
-  console.log(`Installed and started opus-connector.service using ${home}`);
+  spawnSync('systemctl', ['enable', 'opus-connector.service'], { stdio: 'inherit' });
+  spawnSync('systemctl', ['restart', 'opus-connector.service'], { stdio: 'inherit' });
+  console.log(`Installed and restarted opus-connector.service using ${home}`);
 }
 
 function uninstallService() {
