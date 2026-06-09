@@ -71,7 +71,7 @@ function buildWorkspaceCmd(image) {
   const initScript = [
     'mkdir -p ~/.claude ~/bin ~/.npm-global /workspace/.opus/skills',
     opusCliBase64
-      ? `printf '%s' '${opusCliBase64}' | base64 -d > ~/bin/opus && chmod +x ~/bin/opus`
+      ? `printf '%s' '${opusCliBase64}' | base64 -d > ~/bin/opus && chmod +x ~/bin/opus && cp ~/bin/opus /usr/local/bin/opus && chmod +x /usr/local/bin/opus`
       : 'true',
     connectorSkillBase64
       ? `printf '%s' '${connectorSkillBase64}' | base64 -d > /workspace/.opus/skills/connectors.md`

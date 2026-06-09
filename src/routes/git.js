@@ -17,6 +17,10 @@ function containerName(projectId) {
   return `opus-workspace-${projectId}`;
 }
 
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
 // Execute a shell command inside the workspace container
 function execInContainer(containerName, command) {
   return new Promise((resolve, reject) => {
@@ -273,14 +277,23 @@ router.post('/restore', requireAuth, async (req, res) => {
 
   const { tag } = req.body;
   if (!tag) return res.status(400).json({ error: 'Tag required.' });
+  if (!/^snapshot\/\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}$/.test(tag)) {
+    return res.status(400).json({ error: 'Invalid snapshot tag.' });
+  }
 
   const contName = containerName(project.id);
-  const safeTag = tag.replace(/'/g, "\\'");
   try {
     const root = await getGitRoot(contName);
-    // checkout restores tracked files; clean removes files added after the snapshot
+    const quotedRoot = shellQuote(root);
+    const quotedTag = shellQuote(tag);
+    const quotedCommit = shellQuote(`${tag}^{commit}`);
+
+    // A snapshot restore is a safety rollback: move the current branch/worktree
+    // back to the snapshot commit, then remove files added after the snapshot.
     await execInContainer(contName,
-      `git -C '${root}' checkout '${safeTag}' -- . 2>&1 && git -C '${root}' clean -fd 2>&1`
+      `git -C ${quotedRoot} rev-parse --verify --quiet ${quotedCommit} >/dev/null 2>&1 && ` +
+      `git -C ${quotedRoot} reset --hard ${quotedTag} 2>&1 && ` +
+      `git -C ${quotedRoot} clean -fd 2>&1`
     );
     res.json({ success: true });
   } catch (err) {

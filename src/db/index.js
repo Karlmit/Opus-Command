@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS connectors (
   hostname TEXT DEFAULT '',
   version TEXT DEFAULT '',
   labels TEXT DEFAULT '[]',
+  capabilities TEXT DEFAULT '{}',
   status TEXT DEFAULT 'offline',
   last_seen_at INTEGER,
   created_at INTEGER NOT NULL
@@ -144,6 +145,7 @@ function initDB() {
   // Add avatar column to existing installations
   try { sqlite.exec("ALTER TABLE projects ADD COLUMN avatar TEXT DEFAULT ''"); } catch (_) {}
   try { sqlite.exec("ALTER TABLE connectors ADD COLUMN labels TEXT DEFAULT '[]'"); } catch (_) {}
+  try { sqlite.exec("ALTER TABLE connectors ADD COLUMN capabilities TEXT DEFAULT '{}'"); } catch (_) {}
   runMigrations(sqlite);
 
   db = drizzle(sqlite, { schema });
