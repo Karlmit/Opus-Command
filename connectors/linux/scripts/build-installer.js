@@ -54,6 +54,130 @@ PAIR=""
 NAME=""
 LABELS=""
 UI_PORT="3899"
+GUI_MODE="auto"
+ORIGINAL_ARGC=$#
+
+has_graphical_session() {
+  [[ -n "\${DISPLAY:-}" || -n "\${WAYLAND_DISPLAY:-}" ]]
+}
+
+has_gui_toolkit() {
+  command -v zenity >/dev/null 2>&1
+}
+
+yn() {
+  case "$1" in
+    yes|true|1) echo "yes" ;;
+    *) echo "no" ;;
+  esac
+}
+
+run_gui_install() {
+  local args=()
+  args+=(--prefix "\${PREFIX}")
+  args+=(--profile "\${PROFILE}")
+  args+=(--service "\${SERVICE}")
+  args+=(--autostart "\${AUTOSTART}")
+  args+=(--ui-port "\${UI_PORT}")
+  [[ -n "\${SERVER}" ]] && args+=(--server "\${SERVER}")
+  [[ -n "\${PAIR}" ]] && args+=(--pair "\${PAIR}")
+  [[ -n "\${NAME}" ]] && args+=(--name "\${NAME}")
+  [[ -n "\${LABELS}" ]] && args+=(--labels "\${LABELS}")
+
+  if [[ "$(id -u)" -eq 0 ]]; then
+    "$0" "\${args[@]}"
+  elif command -v pkexec >/dev/null 2>&1; then
+    pkexec "$0" "\${args[@]}"
+  else
+    zenity --error --title "Opus Connector Installer" --width 520 \\
+      --text "Administrator access is required. Install policykit or run this installer from a terminal with sudo." || true
+    return 1
+  fi
+}
+
+launch_gui() {
+  if ! has_gui_toolkit; then
+    echo "Graphical installer requires zenity. Run from terminal with sudo, or install zenity first." >&2
+    exit 1
+  fi
+
+  zenity --question --title "Opus Connector Installer" --width 520 \\
+    --text "Install Opus Connector for Linux on this computer?" || exit 0
+
+  local selected_profile
+  selected_profile="$(zenity --list --radiolist --title "Opus Connector Installer" --width 620 --height 330 \\
+    --text "Choose what this installer should set up." \\
+    --column "" --column "Profile" --column "Installs" \\
+    TRUE full "Development tools, Docker, browser testing, and connector" \\
+    FALSE minimal "Core connector dependencies only" \\
+    FALSE docker "Docker and connector dependencies" \\
+    FALSE browser "Browser testing and connector dependencies" \\
+    FALSE none "Connector only; do not install system dependencies")" || exit 0
+  PROFILE="\${selected_profile:-full}"
+
+  if zenity --question --title "Opus Connector Installer" --width 520 \\
+    --text "Start Opus Connector automatically as a system service after boot?"; then
+    SERVICE="yes"
+  else
+    SERVICE="no"
+  fi
+
+  if zenity --question --title "Opus Connector Installer" --width 520 \\
+    --text "Also start Opus Connector after desktop login for this user?"; then
+    AUTOSTART="yes"
+  else
+    AUTOSTART="no"
+  fi
+
+  SERVER="$(zenity --entry --title "Opus Connector Installer" --width 620 \\
+    --text "Opus Command URL. Leave blank to pair later in the local status UI." \\
+    --entry-text "\${SERVER}")" || exit 0
+
+  if [[ -n "\${SERVER}" ]]; then
+    PAIR="$(zenity --entry --title "Opus Connector Installer" --width 620 \\
+      --text "Pairing token from Opus Command." \\
+      --entry-text "\${PAIR}")" || exit 0
+  fi
+
+  NAME="$(zenity --entry --title "Opus Connector Installer" --width 620 \\
+    --text "Connector display name. Optional." \\
+    --entry-text "\${NAME}")" || exit 0
+
+  LABELS="$(zenity --entry --title "Opus Connector Installer" --width 620 \\
+    --text "Extra comma-separated labels. Optional." \\
+    --entry-text "\${LABELS}")" || exit 0
+
+  UI_PORT="$(zenity --entry --title "Opus Connector Installer" --width 420 \\
+    --text "Local status UI port." \\
+    --entry-text "\${UI_PORT}")" || exit 0
+
+  zenity --question --title "Opus Connector Installer" --width 620 \\
+    --text "Ready to install.\\n\\nProfile: \${PROFILE}\\nSystem service: $(yn "\${SERVICE}")\\nLogin autostart: $(yn "\${AUTOSTART}")\\nStatus UI: http://127.0.0.1:\${UI_PORT}" || exit 0
+
+  local log_file
+  log_file="$(mktemp -t opus-connector-install.XXXXXX.log)"
+
+  (
+    if run_gui_install >"\${log_file}" 2>&1; then
+      echo "# Opus Connector installation complete"
+      echo
+      echo "Status UI: http://127.0.0.1:\${UI_PORT}"
+      echo
+      cat "\${log_file}"
+    else
+      echo "# Opus Connector installation failed"
+      echo
+      cat "\${log_file}"
+      exit 1
+    fi
+  ) | zenity --text-info --title "Opus Connector Installer" --width 900 --height 640 --auto-scroll --ok-label "Close"
+
+  if [[ "\${PIPESTATUS[0]}" -eq 0 ]]; then
+    zenity --question --title "Opus Connector Installer" --width 520 \\
+      --text "Installation complete. Open the local status UI now?" && xdg-open "http://127.0.0.1:\${UI_PORT}" >/dev/null 2>&1 || true
+  fi
+  exit 0
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -66,6 +190,8 @@ while [[ $# -gt 0 ]]; do
     --name) NAME="$2"; shift 2 ;;
     --labels) LABELS="$2"; shift 2 ;;
     --ui-port) UI_PORT="$2"; shift 2 ;;
+    --gui) GUI_MODE="yes"; shift ;;
+    --no-gui) GUI_MODE="no"; shift ;;
     --help|-h)
       cat <<'HELP'
 Opus Connector for Linux installer
@@ -73,6 +199,7 @@ Opus Connector for Linux installer
 Usage:
   sudo ./opus-linux-connector-installer.sh --server http://OPUS:3000 --pair TOKEN
   sudo ./opus-linux-connector-installer.sh --profile full --service yes
+  ./opus-linux-connector-installer.sh --gui
 
 Options:
   --prefix PATH       Install path. Default: /opt/opus-connector
@@ -84,12 +211,18 @@ Options:
   --name NAME         Connector display name
   --labels LABELS     Extra comma-separated labels
   --ui-port PORT      Local status UI port. Default: 3899
+  --gui               Open the graphical installer.
+  --no-gui            Force terminal mode.
 HELP
       exit 0
       ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
+
+if [[ "\${GUI_MODE}" == "yes" ]] || [[ "\${GUI_MODE}" == "auto" && "\${ORIGINAL_ARGC}" -eq 0 && "$(id -u)" -ne 0 ]] && has_graphical_session && has_gui_toolkit; then
+  launch_gui
+fi
 
 if [[ "$(id -u)" -ne 0 ]]; then
   echo "Run with sudo/root." >&2
