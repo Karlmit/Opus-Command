@@ -52,7 +52,14 @@ install_dev() {
 }
 
 install_docker() {
-  install_apt_packages docker.io docker-compose-plugin
+  install_apt_packages docker.io
+  if apt-cache show docker-compose-plugin >/dev/null 2>&1; then
+    install_apt_packages docker-compose-plugin
+  elif apt-cache show docker-compose >/dev/null 2>&1; then
+    install_apt_packages docker-compose
+  else
+    echo "Docker Compose package was not found in this distribution's apt repositories; continuing with Docker only." >&2
+  fi
   systemctl enable --now docker || true
 }
 
