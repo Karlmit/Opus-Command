@@ -11,7 +11,6 @@ import { useDevice } from '../context/DeviceContext';
 import { getSocket } from '../lib/socket';
 import MobileTerminalView from '../components/MobileTerminalView';
 import SyntaxHighlightedEditor from '../components/SyntaxHighlightedEditor';
-import { CdesktopPanel, CdesktopSettingsPanel, CdesktopStatusIndicator } from '../components/cdesktop/CdesktopIntegration';
 import GitPage from './Git';
 import '@xterm/xterm/css/xterm.css';
 import './ProjectCockpit.css';
@@ -528,7 +527,7 @@ export default function ProjectCockpit() {
   const [fileTabs, setFileTabs]   = useState([]);
   const [fileContent, setFileContent] = useState({});
   const [dirtyFiles, setDirty]    = useState({});
-  const [activeTab, setActiveTab] = useState(null); // 'term-{id}' | 'file-{path}' | 'settings' | 'git' | 'cdesktop' | 'cdesktop-settings'
+  const [activeTab, setActiveTab] = useState(null); // 'term-{id}' | 'file-{path}' | 'settings' | 'git'
   const [reconnecting, setRecon]  = useState(false);
   const [reconSecs, setReconSecs] = useState(0);
   const [deleting, setDeleting]   = useState(false);
@@ -536,7 +535,6 @@ export default function ProjectCockpit() {
   const [treeCollapsed, setTreeCollapsed] = useState(false);
   const [fileContextMenu, setFileContextMenu] = useState(null); // { node, x, y }
   const [renameDialog, setRenameDialog] = useState(null); // { node, value }
-  const [cdesktopStatus, setCdesktopStatus] = useState(null);
   const renameInputRef = useRef(null);
 
   const termRefs         = useRef({});
@@ -587,8 +585,6 @@ export default function ProjectCockpit() {
     const tab = searchParams.get('tab');
     if (tab === 'settings') { setActiveTab('settings'); activeRef.current = 'settings'; setSearchParams({}); }
     else if (tab === 'git') { setActiveTab('git'); activeRef.current = 'git'; setSearchParams({}); }
-    else if (tab === 'cdesktop') { setActiveTab('cdesktop'); activeRef.current = 'cdesktop'; setSearchParams({}); }
-    else if (tab === 'cdesktop-settings') { setActiveTab('cdesktop-settings'); activeRef.current = 'cdesktop-settings'; setSearchParams({}); }
   }, [searchParams]);
 
   // Sync mobile tab → cockpit activeTab (only on mobile devices)
@@ -602,9 +598,6 @@ export default function ProjectCockpit() {
     } else if (mobileTab === 'git') {
       setActiveTab('git');
       activeRef.current = 'git';
-    } else if (mobileTab === 'cdesktop') {
-      setActiveTab('cdesktop');
-      activeRef.current = 'cdesktop';
     } else if (mobileTab === 'settings') {
       setActiveTab('settings');
       activeRef.current = 'settings';
@@ -624,7 +617,6 @@ export default function ProjectCockpit() {
     setFileTabs([]);
     setFileContent({});
     setDirty({});
-    setCdesktopStatus(null);
     loadProject(); loadTree(); loadSessions();
     const t1 = setInterval(() => {
       if (!activeTabStateRef.current?.startsWith('term-')) loadProject();
@@ -935,13 +927,9 @@ export default function ProjectCockpit() {
   }
 
   const activeFileTab = fileTabs.find(t => `file-${t.path}` === activeTab);
-  const showOverlay = activeFileTab || activeTab === 'settings' || activeTab === 'git' || activeTab === 'cdesktop' || activeTab === 'cdesktop-settings';
+  const showOverlay = activeFileTab || activeTab === 'settings' || activeTab === 'git';
   // On mobile, show the active terminal session in the log viewer
   const activeTermId = termTabs.find(t => activeTab === `term-${t.id}`)?.id ?? termTabs[0]?.id ?? null;
-
-  function openCdesktopWindow() {
-    window.open(`/workspaces/${projectId}/cdesktop/`, `opus-cdesktop-${projectId}`, 'noopener,noreferrer');
-  }
 
   return (
     <div className="cockpit" data-mobile-tab={mobileTab}>
@@ -984,17 +972,6 @@ export default function ProjectCockpit() {
       <div className="cockpit-main">
         {/* Tab bar */}
         <div className="cockpit-tabs" role="tablist">
-          <div className={`cockpit-tab cdesktop-tab${activeTab === 'cdesktop' ? ' active' : ''}`}
-            role="tab" onClick={() => { setActiveTab('cdesktop'); activeRef.current = 'cdesktop'; }}>
-            <CdesktopStatusIndicator
-              projectId={projectId}
-              status={cdesktopStatus}
-              setStatus={setCdesktopStatus}
-            />
-            <span className="tab-icon">▣</span>
-            <span className="tab-label">cdesktop</span>
-          </div>
-
           {/* Terminal tabs */}
           {termTabs.map(t => (
             <div key={t.id} className={`cockpit-tab${activeTab === `term-${t.id}` ? ' active' : ''}${t.aiState === 'waiting' ? ' ai-waiting' : t.aiState === 'active' ? ' ai-active' : ''}`}
@@ -1031,8 +1008,6 @@ export default function ProjectCockpit() {
 
           {/* Panel tabs (right-aligned) */}
           <div className="tabs-spacer" />
-          <button className="cockpit-panel-tab" onClick={openCdesktopWindow}>Open cdesktop</button>
-          <button className={`cockpit-panel-tab${activeTab === 'cdesktop-settings' ? ' active' : ''}`} onClick={() => { setActiveTab('cdesktop-settings'); activeRef.current = 'cdesktop-settings'; }}>cdesktop settings</button>
           <button className={`cockpit-panel-tab${activeTab === 'git' ? ' active' : ''}`} onClick={() => { setActiveTab('git'); activeRef.current = 'git'; }}>Git</button>
           <button className={`cockpit-panel-tab${activeTab === 'settings' ? ' active' : ''}`} onClick={() => { setActiveTab('settings'); activeRef.current = 'settings'; }}>Workspace</button>
         </div>
@@ -1119,33 +1094,6 @@ export default function ProjectCockpit() {
                 <div className="side-panel">
                   <div className="side-panel-header">WORKSPACE</div>
                   <WorkspacePanel projectId={projectId} project={project} csrfToken={csrfToken} addToast={addToast} onDelete={() => setShowDelete(true)} />
-                </div>
-              )}
-
-              {/* cdesktop panel */}
-              {activeTab === 'cdesktop' && (
-                <div className="side-panel cdesktop-side-panel">
-                  <CdesktopPanel
-                    projectId={projectId}
-                    csrfToken={csrfToken}
-                    addToast={addToast}
-                    status={cdesktopStatus}
-                    setStatus={setCdesktopStatus}
-                  />
-                </div>
-              )}
-
-              {/* cdesktop settings panel */}
-              {activeTab === 'cdesktop-settings' && (
-                <div className="side-panel">
-                  <div className="side-panel-header">CDESKTOP SETTINGS</div>
-                  <CdesktopSettingsPanel
-                    projectId={projectId}
-                    csrfToken={csrfToken}
-                    addToast={addToast}
-                    status={cdesktopStatus}
-                    setStatus={setCdesktopStatus}
-                  />
                 </div>
               )}
 

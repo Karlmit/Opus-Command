@@ -70,6 +70,10 @@ function buildWorkspaceCmd(image) {
 
   const initScript = [
     'mkdir -p ~/.claude ~/bin ~/.npm-global /workspace/.opus/skills',
+    // Clean up the removed cdesktop integration from existing workspace home volumes.
+    'pkill -f "cdesktop" 2>/dev/null || true',
+    'npm uninstall -g cdesktop >/dev/null 2>&1 || true',
+    'rm -rf /root/.cdesktop /root/.config/cdesktop /root/.local/share/cdesktop 2>/dev/null || true',
     opusCliBase64
       ? `printf '%s' '${opusCliBase64}' | base64 -d > ~/bin/opus && chmod +x ~/bin/opus && cp ~/bin/opus /usr/local/bin/opus && chmod +x /usr/local/bin/opus`
       : 'true',

@@ -13,7 +13,6 @@ const SQLiteSessionStore = require('./middleware/sessionStore');
 const { csrfMiddleware } = require('./middleware/csrf');
 const { registerRoutes } = require('./routes');
 const { setupConnectorWebSocket } = require('./services/connectors.service');
-const { setupCdesktopProxy } = require('./services/cdesktop.proxy');
 
 const DEFAULT_AGENT_PATTERNS = {
   version: 1,
@@ -95,7 +94,6 @@ async function main() {
     crossOriginEmbedderPolicy: false,
   }));
   app.use(sessionMiddleware);
-  setupCdesktopProxy(app, server, sessionMiddleware);
   app.use(compression());
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true }));

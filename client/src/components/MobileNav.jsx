@@ -35,18 +35,6 @@ function TerminalIcon({ active }) {
     </svg>
   );
 }
-function CdesktopIcon({ active }) {
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" strokeWidth={active ? 2 : 1.75} stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
-      {active && <rect x="3" y="4" width="18" height="12" rx="2" fill="currentColor" fillOpacity="0.1"/>}
-      <rect x="3" y="4" width="18" height="12" rx="2"/>
-      <path d="M8 20h8"/>
-      <path d="M12 16v4"/>
-      <path d="M8 9l2 2-2 2"/>
-      <path d="M13 13h3"/>
-    </svg>
-  );
-}
 function FilesIcon({ active }) {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" strokeWidth={active ? 2 : 1.75} stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
@@ -224,7 +212,6 @@ function ProjectDrawer({ projects, currentProjectId, navigate, onClose, setMobil
 const NAV_TABS = [
   { id: 'terminal', label: 'Terminal', Icon: TerminalIcon },
   { id: 'files',    label: 'Files',    Icon: FilesIcon },
-  { id: 'cdesktop', label: 'cdesktop', Icon: CdesktopIcon },
   { id: 'git',      label: 'Git',      Icon: GitIcon },
   { id: 'settings', label: 'Workspace', Icon: WorkspaceIcon },
 ];

@@ -6,7 +6,6 @@ const terminalsRouter = require('./terminals');
 const filesRouter = require('./files');
 const gitRouter = require('./git');
 const connectorsRouter = require('./connectors');
-const cdesktopRouter = require('./cdesktop');
 
 function registerRoutes(app) {
   app.use('/api/setup', setupRouter);
@@ -16,7 +15,6 @@ function registerRoutes(app) {
   app.use('/api/projects/:projectId/terminals', terminalsRouter);
   app.use('/api/projects/:projectId/files', filesRouter);
   app.use('/api/projects/:projectId/git', gitRouter);
-  app.use('/api/projects/:projectId/cdesktop', cdesktopRouter);
   app.use('/api/connectors', connectorsRouter);
 }
 
