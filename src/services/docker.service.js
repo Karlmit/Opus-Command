@@ -84,6 +84,11 @@ function buildWorkspaceCmd(image) {
     `grep -q ".opus/skills/connectors.md" /workspace/AGENTS.md 2>/dev/null || printf '${opusSkillPointer}' >> /workspace/AGENTS.md`,
     `[ -f ~/.claude/settings.json ] || echo '${claudeSettings}' > ~/.claude/settings.json`,
     '[ -f ~/.npmrc ] || echo "prefix=${HOME}/.npm-global" > ~/.npmrc',
+    'grep -q "Opus Command PATH" ~/.bashrc 2>/dev/null || ' +
+    'printf "\\n# Opus Command PATH\\n' +
+    'export PATH=\\"$HOME/bin:$HOME/.npm-global/bin:$HOME/.local/bin:$PATH\\"\\n' +
+    'export NPM_CONFIG_PREFIX=\\"$HOME/.npm-global\\"\\n' +
+    'export IS_SANDBOX=1\\n" >> ~/.bashrc',
     // CLAUDE_CODE_USE_FOUNDRY=1 is required to activate Azure AI Foundry mode in Claude Code.
     // All four vars are written to ~/.bashrc so they survive shell restarts.
     // Idempotent: skipped if already present, and guarded by ANTHROPIC_FOUNDRY_RESOURCE being set.

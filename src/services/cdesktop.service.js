@@ -6,6 +6,7 @@ const RUNTIME_DIR = '/root/.cdesktop/opus-command';
 const PID_FILE = `${RUNTIME_DIR}/cdesktop.pid`;
 const LOG_FILE = `${RUNTIME_DIR}/cdesktop.log`;
 const MIN_NODE = [20, 19, 0];
+const WORKSPACE_BIN_PATH = '/root/bin:/root/.npm-global/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 
 const transitions = new Map();
 
@@ -135,6 +136,112 @@ async function execDetachedInWorkspace(projectId, command) {
     WorkingDir: '/workspace',
   });
   await exec.start({ Detach: true, Tty: false });
+}
+
+async function bootstrapCdesktop(projectId) {
+  const script = String.raw`
+const fs = require('fs');
+const path = require('path');
+
+const dataDir = '/root/.local/share/cdesktop';
+fs.mkdirSync(dataDir, { recursive: true });
+
+const configPath = path.join(dataDir, 'config.json');
+const defaultConfig = {
+  config_version: 'v8',
+  theme: 'DARK',
+  executor_profile: { executor: 'CLAUDE_CODE' },
+  disclaimer_acknowledged: true,
+  onboarding_acknowledged: true,
+  remote_onboarding_acknowledged: false,
+  notifications: {
+    sound_enabled: false,
+    push_enabled: false,
+    sound_file: 'ABSTRACT_SOUND3',
+  },
+  editor: {
+    editor_type: 'VS_CODE',
+    custom_command: null,
+    remote_ssh_host: null,
+    remote_ssh_user: null,
+    auto_install_extension: false,
+  },
+  github: {
+    pat: null,
+    oauth_token: null,
+    username: null,
+    primary_email: null,
+    default_pr_base: 'main',
+  },
+  analytics_enabled: false,
+  workspace_dir: '/workspace',
+  last_app_version: null,
+  show_release_notes: false,
+  language: 'EN',
+  git_branch_prefix: 'cdt',
+  showcases: {},
+  pr_auto_description_enabled: true,
+  pr_auto_description_prompt: null,
+  commit_reminder_enabled: false,
+  commit_reminder_prompt: null,
+  send_message_shortcut: 'Enter',
+  relay_enabled: false,
+  host_nickname: 'Opus Workspace',
+};
+
+let config = defaultConfig;
+try {
+  config = { ...defaultConfig, ...JSON.parse(fs.readFileSync(configPath, 'utf8')) };
+} catch (_) {}
+config.workspace_dir = '/workspace';
+config.executor_profile = config.executor_profile || { executor: 'CLAUDE_CODE' };
+config.disclaimer_acknowledged = true;
+config.onboarding_acknowledged = true;
+fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+
+const profilesPath = path.join(dataDir, 'profiles.json');
+let profiles = { executors: {} };
+try {
+  profiles = JSON.parse(fs.readFileSync(profilesPath, 'utf8'));
+} catch (_) {}
+profiles.executors ||= {};
+profiles.executors.CODEX ||= {};
+profiles.executors.CODEX.DEFAULT ||= {};
+profiles.executors.CODEX.DEFAULT.CODEX ||= {};
+profiles.executors.CODEX.DEFAULT.CODEX = {
+  append_prompt: null,
+  sandbox: 'danger-full-access',
+  ask_for_approval: 'never',
+  plan: false,
+  ...profiles.executors.CODEX.DEFAULT.CODEX,
+};
+
+const foundryKeys = [
+  'CLAUDE_CODE_USE_FOUNDRY',
+  'ANTHROPIC_FOUNDRY_RESOURCE',
+  'ANTHROPIC_DEFAULT_SONNET_MODEL',
+  'ANTHROPIC_FOUNDRY_API_KEY',
+];
+const claudeEnv = {
+  IS_SANDBOX: '1',
+};
+for (const key of foundryKeys) {
+  if (process.env[key]) claudeEnv[key] = process.env[key];
+}
+if (claudeEnv.ANTHROPIC_FOUNDRY_RESOURCE && claudeEnv.ANTHROPIC_FOUNDRY_API_KEY) {
+  claudeEnv.CLAUDE_CODE_USE_FOUNDRY = claudeEnv.CLAUDE_CODE_USE_FOUNDRY || '1';
+}
+profiles.executors.CLAUDE_CODE ||= {};
+profiles.executors.CLAUDE_CODE.DEFAULT ||= {};
+profiles.executors.CLAUDE_CODE.DEFAULT.CLAUDE_CODE ||= {};
+profiles.executors.CLAUDE_CODE.DEFAULT.CLAUDE_CODE.dangerously_skip_permissions = true;
+profiles.executors.CLAUDE_CODE.DEFAULT.CLAUDE_CODE.env = {
+  ...(profiles.executors.CLAUDE_CODE.DEFAULT.CLAUDE_CODE.env || {}),
+  ...claudeEnv,
+};
+fs.writeFileSync(profilesPath, JSON.stringify(profiles, null, 2));
+`;
+  await execRawInWorkspace(projectId, ['node', '-e', script], { timeoutMs: 10000 });
 }
 
 function sleep(ms) {
@@ -276,11 +383,37 @@ async function install(projectId) {
     if (!isNodeSupported(nodeVersion)) {
       throw new Error(`cdesktop requires Node >=20.19.0. Workspace has ${nodeVersion || 'unknown'}.`);
     }
+    await bootstrapCdesktop(projectId);
     await execInWorkspace(projectId, [
       `mkdir -p ${shellQuote(RUNTIME_DIR)} /root/.config/cdesktop`,
       'npm install -g cdesktop --quiet',
     ].join('; '), { timeoutMs: 120000 });
     clearTransition(projectId);
+    return getStatus(projectId);
+  } catch (err) {
+    transition(projectId, 'error', err.message);
+    throw err;
+  }
+}
+
+async function update(projectId, allowedOrigins) {
+  transition(projectId, 'updating', 'Updating cdesktop in the workspace.');
+  try {
+    const wasRunning = (await getStatus(projectId)).running;
+    if (wasRunning) await stop(projectId);
+
+    const nodeVersion = await getNodeVersion(projectId);
+    if (!isNodeSupported(nodeVersion)) {
+      throw new Error(`cdesktop requires Node >=20.19.0. Workspace has ${nodeVersion || 'unknown'}.`);
+    }
+    await bootstrapCdesktop(projectId);
+    await execInWorkspace(projectId, [
+      `mkdir -p ${shellQuote(RUNTIME_DIR)} /root/.config/cdesktop`,
+      'npm install -g cdesktop@latest --quiet',
+    ].join('; '), { timeoutMs: 120000 });
+
+    clearTransition(projectId);
+    if (wasRunning) return start(projectId, allowedOrigins);
     return getStatus(projectId);
   } catch (err) {
     transition(projectId, 'error', err.message);
@@ -299,6 +432,7 @@ async function start(projectId, allowedOrigins) {
     if (!status.nodeSupported) {
       throw new Error(status.error || 'Unsupported workspace Node version.');
     }
+    await bootstrapCdesktop(projectId);
 
     const origin = allowedOrigins || '*';
     const command = [
@@ -308,7 +442,7 @@ async function start(projectId, allowedOrigins) {
       `: > ${shellQuote(LOG_FILE)}`,
       'cd /workspace',
       `echo $$ > ${shellQuote(PID_FILE)}`,
-      `exec env HOST=0.0.0.0 PORT=${CDESKTOP_PORT} CDT_ALLOWED_ORIGINS=${shellQuote(origin)} npx -y cdesktop >> ${shellQuote(LOG_FILE)} 2>&1`,
+      `exec env PATH=${shellQuote(WORKSPACE_BIN_PATH)} NPM_CONFIG_PREFIX=/root/.npm-global IS_SANDBOX=1 HOST=0.0.0.0 PORT=${CDESKTOP_PORT} CDT_ALLOWED_ORIGINS=${shellQuote(origin)} npx -y cdesktop >> ${shellQuote(LOG_FILE)} 2>&1`,
     ].join('; ');
     await execDetachedInWorkspace(projectId, command);
     await sleep(5000);
@@ -378,6 +512,7 @@ module.exports = {
   CDESKTOP_PORT,
   getStatus,
   install,
+  update,
   start,
   stop,
   restart,

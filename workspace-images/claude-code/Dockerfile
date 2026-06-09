@@ -2,12 +2,14 @@ FROM node:20-slim
 
 ENV HOME=/root
 ENV DEBIAN_FRONTEND=noninteractive
+ENV IS_SANDBOX=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
     wget \
     ca-certificates \
+    bubblewrap \
     python3 \
     make \
     g++ \
@@ -41,6 +43,7 @@ RUN cd /opt/terminal-agent && npm install --omit=dev
 RUN printf '\n# Opus Command workspace\n\
 export PATH="$HOME/bin:$HOME/.npm-global/bin:$HOME/.local/bin:$PATH"\n\
 export NPM_CONFIG_PREFIX="$HOME/.npm-global"\n\
+export IS_SANDBOX=1\n\
 cd() { builtin cd "${@:-/workspace}"; }\n' >> /etc/bash.bashrc
 
 # Bundle agent instruction templates so workspace startup can copy them into place.

@@ -44,6 +44,14 @@ router.post('/install', requireAuth, projectGuard, async (req, res) => {
   }
 });
 
+router.post('/update', requireAuth, projectGuard, async (req, res) => {
+  try {
+    res.json(await cdesktop.update(req.projectId, configuredOrigin(req)));
+  } catch (err) {
+    res.status(500).json({ status: 'error', error: err.message });
+  }
+});
+
 router.post('/start', requireAuth, projectGuard, async (req, res) => {
   try {
     res.json(await cdesktop.start(req.projectId, configuredOrigin(req)));
