@@ -1,10 +1,11 @@
 # Opus Connector Skill
 
 Use Opus Connectors when work must run outside the Linux workspace, especially
-on Windows or on hardware attached to a Windows machine.
+on a paired Linux host, Windows VM, or machine with attached hardware.
 
-Before Windows-specific work, check available connectors. The `opus` CLI is
-installed automatically in Opus workspaces:
+Before connector-specific work, check available connectors. The `opus` CLI is
+installed automatically in Opus workspaces and reports status, labels, and
+capability hints:
 
 ```bash
 opus connectors list
@@ -15,6 +16,8 @@ Use a connector when the task needs:
 - Linux host tools outside the workspace container
 - Docker or Docker Compose on a remote host
 - Browser testing on connector-provided browsers or Playwright
+- host files, services, local networks, or hardware that are not mounted into
+  the workspace
 - Windows PowerShell or CMD
 - Android Studio, Gradle, ADB, emulators, or USB-connected Android devices
 - Visual Studio Build Tools, MSBuild, Windows SDK tools
@@ -26,6 +29,7 @@ Run commands through the connector whose name or labels match the task:
 opus connector run <connector-label-or-name> -- powershell "Get-ComputerInfo"
 opus connector run <connector-label-or-name> -- cmd "adb devices"
 opus connector run <connector-label-or-name> -- bash "docker ps"
+opus connector run linux -- bash 'docker compose version || docker-compose --version'
 opus connector run <connector-label-or-name> --shell bash --script ./build.sh
 cat ./build.sh | opus connector run <connector-label-or-name> --shell bash --stdin
 ```
@@ -35,6 +39,15 @@ Prefer labels such as `windows`, `android`, `adb`, `visual-studio`, `desktop`,
 `hardware`. `opus connectors list` also shows capability hints such as
 `caps=docker,node,playwright`. If more than one connector matches, choose the
 best labeled/capable connector for the task and state which connector you used.
+
+For Linux connectors, do not assume the host shell environment matches this
+workspace. Check required commands directly on the connector, and quote connector
+environment variables so the local workspace shell does not expand them first:
+
+```bash
+opus connector run linux -- bash 'node --version; python3 --version; docker --version'
+opus connector run linux -- bash 'mkdir -p "$OPUS_CONNECTOR_ARTIFACT_DIR"; echo ok > "$OPUS_CONNECTOR_ARTIFACT_DIR/result.txt"'
+```
 
 Connector job artifacts are returned to:
 
@@ -51,8 +64,11 @@ workarounds:
 ```bash
 opus connector put ./local.txt linux:/tmp/local.txt
 opus connector get linux:/tmp/output.log ./output.log
+opus connector run linux --wait false -- bash 'sleep 60; echo done'
 opus connector jobs list linux
+opus connector jobs status <job-id>
 opus connector jobs cancel <job-id>
+opus connector artifacts get <job-id>
 opus browser screenshot linux https://example.com ./screenshot.png
 ```
 
