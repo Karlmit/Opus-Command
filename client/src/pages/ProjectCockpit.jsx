@@ -1635,6 +1635,11 @@ export default function ProjectCockpit() {
     else if (action === 'paste') await pasteClipboard(node?.type === 'dir' ? node.path : parentPath(node));
     else if (!node) return;
     else if (action === 'unpack-here') await unzipNode(node, parentPath(node));
+    else if (action === 'unpack-folder') {
+      const base = node.name.replace(/\.zip$/i, '');
+      const parent = parentPath(node);
+      await unzipNode(node, parent ? `${parent}/${base}` : base);
+    }
     else if (action === 'unpack-to') {
       const dest = prompt('Unpack to folder (relative to project root):', parentPath(node));
       if (dest !== null) await unzipNode(node, dest.trim());
@@ -2000,6 +2005,7 @@ export default function ProjectCockpit() {
           {fileContextMenu.node?.type === 'file' && fileContextMenu.node.name.toLowerCase().endsWith('.zip') && <>
             <div className="context-separator" />
             <button role="menuitem" onClick={() => handleFileContextAction('unpack-here')}>Unpack here</button>
+            <button role="menuitem" onClick={() => handleFileContextAction('unpack-folder')}>Unpack to “{fileContextMenu.node.name.replace(/\.zip$/i, '')}/”</button>
             <button role="menuitem" onClick={() => handleFileContextAction('unpack-to')}>Unpack…</button>
           </>}
           {fileContextMenu.node && <div className="context-separator" />}
