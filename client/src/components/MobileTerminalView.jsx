@@ -18,36 +18,51 @@ export default function MobileTerminalView({ sessionId }) {
 
   const scrollRef = useRef(null);
   const atBottomRef = useRef(true);
+  // Latest snapshot held back while the user has scrolled up (frozen), so the
+  // DOM stays stable and native momentum scrolling isn't interrupted.
+  const pendingRef = useRef(null);
 
-  const scrollToBottom = useCallback(() => {
-    const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+  const stickToBottom = useCallback(() => {
+    requestAnimationFrame(() => {
+      const el = scrollRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    });
   }, []);
+
+  // Apply the newest snapshot and snap to the bottom. Used when following the
+  // tail and when the user taps "↓ Latest" to resume.
+  const applyPending = useCallback(() => {
+    const next = pendingRef.current;
+    if (next) {
+      pendingRef.current = null;
+      setLines(next);
+    }
+    atBottomRef.current = true;
+    setAtBottom(true);
+    stickToBottom();
+  }, [stickToBottom]);
 
   function handleScroll() {
     const el = scrollRef.current;
     if (!el) return;
-    atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-    setAtBottom(atBottomRef.current);
+    const nowAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    atBottomRef.current = nowAtBottom;
+    setAtBottom(nowAtBottom);
+    // Reached the bottom again → flush any frozen snapshot and resume following
+    if (nowAtBottom && pendingRef.current) applyPending();
   }
 
-  // Apply a snapshot. If the user is following the tail, stick to the bottom;
-  // if they've scrolled up, preserve their distance-from-bottom so the view
-  // doesn't jump when the whole list is replaced.
+  // Snapshot handler. While following the tail we update live and stick to the
+  // bottom. While scrolled up we DON'T touch the DOM or scrollTop (that would
+  // kill the touch/inertia scroll) — we just stash the latest frame.
   const applySnapshot = useCallback((nextLines) => {
-    const el = scrollRef.current;
-    const following = atBottomRef.current;
-    const prevFromBottom = el ? el.scrollHeight - el.scrollTop : 0;
-
-    setLines(nextLines);
-
-    requestAnimationFrame(() => {
-      const node = scrollRef.current;
-      if (!node) return;
-      if (following) node.scrollTop = node.scrollHeight;
-      else node.scrollTop = node.scrollHeight - prevFromBottom;
-    });
-  }, []);
+    if (atBottomRef.current) {
+      setLines(nextLines);
+      stickToBottom();
+    } else {
+      pendingRef.current = nextLines;
+    }
+  }, [stickToBottom]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -56,6 +71,7 @@ export default function MobileTerminalView({ sessionId }) {
     setDesktopActive(false);
     setAtBottom(true);
     atBottomRef.current = true;
+    pendingRef.current = null;
 
     const sock = getSocket();
 
@@ -137,12 +153,9 @@ export default function MobileTerminalView({ sessionId }) {
         ))}
       </div>
 
-      {/* Jump to bottom */}
+      {/* Jump to bottom — also flushes the frozen snapshot and resumes following */}
       {!atBottom && (
-        <button
-          className="mtv-jump"
-          onClick={() => { atBottomRef.current = true; setAtBottom(true); scrollToBottom(); }}
-        >
+        <button className="mtv-jump" onClick={applyPending}>
           ↓ Latest
         </button>
       )}

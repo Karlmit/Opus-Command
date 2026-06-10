@@ -4,12 +4,15 @@
 ────────────────────────────────────────────────── */
 
 .mtv {
+  /* Fill .terminals-layer (position:relative, no flex) so the output area below
+     gets a bounded height and becomes a real scroll viewport. Mirrors how the
+     desktop .terminal-instance fills the same layer. */
+  position: absolute;
+  inset: 0;
   display: flex;
   flex-direction: column;
-  flex: 1;
   min-height: 0;
   background: #0f1117;
-  position: relative;
 }
 
 /* ── Status label ── */
