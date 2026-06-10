@@ -592,6 +592,7 @@ export default function ProjectCockpit() {
   const fileTreePanelRef = useRef(null);
   const autosaveTimers = useRef({});
   const fileContentRef = useRef({});
+  const treeSignatureRef = useRef('');
 
   const termRefs         = useRef({});
   const activeRef        = useRef(null);
@@ -686,6 +687,7 @@ export default function ProjectCockpit() {
     currentProjectId.current = projectId;
     Object.values(autosaveTimers.current).forEach(clearTimeout);
     autosaveTimers.current = {};
+    treeSignatureRef.current = '';
     activeRef.current = null;
     termRefs.current = {};
     pendingScrollback.current = {};
@@ -798,7 +800,17 @@ export default function ProjectCockpit() {
   useEffect(() => { if (!reconnecting) return; const t = setInterval(() => setReconSecs(n=>n+1), 1000); return () => clearInterval(t); }, [reconnecting]);
 
   async function loadProject() { try { const r = await fetch(`/api/projects/${projectId}`); if (r.ok) setProject(await r.json()); } catch (_) {} }
-  async function loadTree() { try { const r = await fetch(`/api/projects/${projectId}/files`); const d = await r.json(); setTree(d.tree || []); } catch (_) {} }
+  async function loadTree() {
+    try {
+      const r = await fetch(`/api/projects/${projectId}/files`);
+      const d = await r.json();
+      const nextTree = d.tree || [];
+      const nextSignature = JSON.stringify(nextTree);
+      if (nextSignature === treeSignatureRef.current) return;
+      treeSignatureRef.current = nextSignature;
+      setTree(nextTree);
+    } catch (_) {}
+  }
 
   function persistExpandedPaths(next) {
     localStorage.setItem(`opus:filetree-expanded:${projectId}`, JSON.stringify([...next]));
