@@ -78,6 +78,14 @@ function NewFolderIcon() {
   );
 }
 
+function UploadIcon() {
+  return (
+    <svg className="ft-action-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <path d="M8 1.5a.75.75 0 0 1 .53.22l3 3a.75.75 0 1 1-1.06 1.06L8.75 4.56V10a.75.75 0 0 1-1.5 0V4.56L5.53 5.78a.75.75 0 0 1-1.06-1.06l3-3A.75.75 0 0 1 8 1.5zM3 10.5a.75.75 0 0 1 .75.75v1.25c0 .14.11.25.25.25h8a.25.25 0 0 0 .25-.25v-1.25a.75.75 0 0 1 1.5 0v1.25A1.75 1.75 0 0 1 12 14.25H4a1.75 1.75 0 0 1-1.75-1.75v-1.25A.75.75 0 0 1 3 10.5z"/>
+    </svg>
+  );
+}
+
 function FileNode({
   node, depth, onOpenFile, activeFilePath,
   onOpenContextMenu, onOpenRenameDialog, markedPath, onMarkNode,
@@ -956,6 +964,8 @@ export default function ProjectCockpit() {
   const renameInputRef = useRef(null);
   const fileTreeRef = useRef(null);
   const fileTreePanelRef = useRef(null);
+  const uploadInputRef = useRef(null);
+  const uploadTargetRef = useRef('');
   const autosaveTimers = useRef({});
   const fileContentRef = useRef({});
   const treeSignatureRef = useRef('');
@@ -1552,6 +1562,48 @@ export default function ProjectCockpit() {
     else addToast('Create failed.', 'error');
   }
 
+  function triggerUpload(targetPath) {
+    uploadTargetRef.current = targetPath || '';
+    uploadInputRef.current?.click();
+  }
+
+  async function handleUploadInputChange(e) {
+    const files = Array.from(e.target.files || []);
+    e.target.value = ''; // reset so the same file can be picked again
+    if (!files.length) return;
+    const target = uploadTargetRef.current;
+    const fd = new FormData();
+    for (const f of files) fd.append('files', f);
+    try {
+      const r = await fetch(
+        `/api/projects/${projectId}/files/upload?targetPath=${encodeURIComponent(target)}`,
+        { method: 'POST', headers: { 'X-CSRF-Token': csrfToken }, body: fd },
+      );
+      if (!r.ok) throw new Error('upload failed');
+      const d = await r.json();
+      const n = d.uploaded?.length ?? files.length;
+      addToast(`Uploaded ${n} file${n === 1 ? '' : 's'}.`);
+      loadTree();
+    } catch {
+      addToast('Upload failed.', 'error');
+    }
+  }
+
+  async function unzipNode(node, targetPath) {
+    try {
+      const r = await fetch(`/api/projects/${projectId}/files/unzip`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ zipPath: node.path, targetPath }),
+      });
+      const d = await r.json();
+      if (d.success) { addToast(`Unpacked “${node.name}”.`); loadTree(); }
+      else addToast(d.error || 'Unpack failed.', 'error');
+    } catch {
+      addToast('Unpack failed.', 'error');
+    }
+  }
+
   async function removeFileNode(node) {
     if (!confirm(`Delete "${node.name}"?`)) return;
     const r = await fetch(`/api/projects/${projectId}/files`, {
@@ -1579,8 +1631,14 @@ export default function ProjectCockpit() {
 
     if (action === 'new-file') await createInNode(node, 'file');
     else if (action === 'new-folder') await createInNode(node, 'dir');
+    else if (action === 'upload') triggerUpload(node?.type === 'dir' ? node.path : '');
     else if (action === 'paste') await pasteClipboard(node?.type === 'dir' ? node.path : parentPath(node));
     else if (!node) return;
+    else if (action === 'unpack-here') await unzipNode(node, parentPath(node));
+    else if (action === 'unpack-to') {
+      const dest = prompt('Unpack to folder (relative to project root):', parentPath(node));
+      if (dest !== null) await unzipNode(node, dest.trim());
+    }
     else if (action === 'rename') openRenameDialog(node);
     else if (action === 'reference') await referenceFileNode(node);
     else if (action === 'copy-path') {
@@ -1697,6 +1755,7 @@ export default function ProjectCockpit() {
             {!treeCollapsed && <>
               <button className="ft-btn ft-icon-btn" title="New file" aria-label="New file" onClick={() => createInNode(null, 'file')}><NewFileIcon /></button>
               <button className="ft-btn ft-icon-btn" title="New folder" aria-label="New folder" onClick={() => createInNode(null, 'dir')}><NewFolderIcon /></button>
+              <button className="ft-btn ft-icon-btn" title="Upload files" aria-label="Upload files" onClick={() => triggerUpload('')}><UploadIcon /></button>
             </>}
             <button className="ft-btn ft-collapse-btn" title={treeCollapsed ? 'Expand files' : 'Collapse files'} onClick={() => setTreeCollapsed(c => !c)}>
               {treeCollapsed ? '›' : '‹'}
@@ -1915,6 +1974,14 @@ export default function ProjectCockpit() {
         </div>
       </div>
 
+      <input
+        ref={uploadInputRef}
+        type="file"
+        multiple
+        style={{ display: 'none' }}
+        onChange={handleUploadInputChange}
+      />
+
       {fileContextMenu && (
         <div
           className="context-menu"
@@ -1928,7 +1995,13 @@ export default function ProjectCockpit() {
         >
           {(!fileContextMenu.node || fileContextMenu.node.type === 'dir') && <button role="menuitem" onClick={() => handleFileContextAction('new-file')}>New File</button>}
           {(!fileContextMenu.node || fileContextMenu.node.type === 'dir') && <button role="menuitem" onClick={() => handleFileContextAction('new-folder')}>New Folder</button>}
+          {(!fileContextMenu.node || fileContextMenu.node.type === 'dir') && <button role="menuitem" onClick={() => handleFileContextAction('upload')}>Upload Files…</button>}
           <button role="menuitem" onClick={() => handleFileContextAction('paste')}>Paste</button>
+          {fileContextMenu.node?.type === 'file' && fileContextMenu.node.name.toLowerCase().endsWith('.zip') && <>
+            <div className="context-separator" />
+            <button role="menuitem" onClick={() => handleFileContextAction('unpack-here')}>Unpack here</button>
+            <button role="menuitem" onClick={() => handleFileContextAction('unpack-to')}>Unpack…</button>
+          </>}
           {fileContextMenu.node && <div className="context-separator" />}
           {fileContextMenu.node && <button role="menuitem" onClick={() => handleFileContextAction('rename')}>Rename</button>}
           {fileContextMenu.node && <button role="menuitem" onClick={() => handleFileContextAction('reference')}>Reference</button>}

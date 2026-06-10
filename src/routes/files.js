@@ -3,6 +3,7 @@ const router = express.Router({ mergeParams: true });
 const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
+const AdmZip = require('adm-zip');
 const { requireAuth } = require('../middleware/auth');
 const { PROJECTS_DIR } = require('../config');
 const { getDB } = require('../db');
@@ -350,6 +351,41 @@ router.post('/upload', requireAuth, upload.array('files', 50), (req, res) => {
   res.json({
     uploaded: req.files.map(f => ({ name: f.originalname, size: f.size })),
   });
+});
+
+// POST /api/projects/:projectId/files/unzip — extract a .zip archive
+router.post('/unzip', requireAuth, (req, res) => {
+  const projectRoot = getProjectRoot(req.params.projectId);
+  if (!projectRoot) return res.status(404).json({ error: 'Project not found.' });
+
+  const { zipPath: reqZip, targetPath: reqTarget = '' } = req.body;
+  const zipPath = validatePath(projectRoot, reqZip);
+  const targetDir = validatePath(projectRoot, reqTarget);
+  if (!zipPath || !targetDir) {
+    return res.status(403).json({ error: 'Access denied. The path is outside the project folder.' });
+  }
+  if (!fs.existsSync(zipPath) || !fs.statSync(zipPath).isFile()) {
+    return res.status(404).json({ error: 'Archive not found.' });
+  }
+
+  try {
+    const zip = new AdmZip(zipPath);
+    const targetWithSep = targetDir.endsWith(path.sep) ? targetDir : targetDir + path.sep;
+
+    // Guard against zip-slip: every entry must resolve inside the target dir.
+    for (const entry of zip.getEntries()) {
+      const resolved = path.resolve(targetDir, entry.entryName);
+      if (resolved !== targetDir && !resolved.startsWith(targetWithSep)) {
+        return res.status(400).json({ error: 'Archive contains unsafe paths.' });
+      }
+    }
+
+    fs.mkdirSync(targetDir, { recursive: true });
+    zip.extractAllTo(targetDir, /* overwrite */ true);
+    res.json({ success: true, target: path.relative(projectRoot, targetDir) });
+  } catch (err) {
+    res.status(500).json({ error: `Unpack failed: ${err.message}` });
+  }
 });
 
 module.exports = router;
