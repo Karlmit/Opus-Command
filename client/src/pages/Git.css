@@ -730,9 +730,32 @@
   overflow-y: auto;
 }
 
+/* Metro-map layout: an absolutely-positioned SVG graph layer sits
+   beneath the commit rows, which are inset by the graph width. */
+.gk-graph-wrap {
+  position: relative;
+  width: 100%;
+}
+
+.gk-graph-svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.gk-rows {
+  position: relative;
+  z-index: 1;
+}
+
 .gk-commit-row {
   display: flex;
-  gap: 0;
+  align-items: center;
+  height: 52px;            /* must match ROW_H in Git.jsx */
+  box-sizing: border-box;
+  padding-left: var(--graph-w, 32px);
   padding-right: var(--spacing-md);
   transition: background var(--motion-hover);
   cursor: default;
@@ -744,43 +767,11 @@
   background: rgba(59, 130, 246, 0.06);
 }
 
-/* Graph column */
-.gk-graph-col {
-  width: 32px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  position: relative;
-  padding: 0;
-}
-
-.gk-rail {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 50%;
-  width: 2px;
-  transform: translateX(-50%);
-  background: var(--rc, var(--color-border));
-  opacity: 0.35;
-}
-
-.gk-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  position: relative;
-  z-index: 1;
-  margin-top: 11px;
-  flex-shrink: 0;
-}
-
 /* Commit info */
 .gk-commit-info {
   flex: 1;
   min-width: 0;
-  padding: 7px var(--spacing-xs) 7px 0;
+  padding: 0 var(--spacing-xs) 0 var(--spacing-sm);
 }
 
 .gk-commit-top {

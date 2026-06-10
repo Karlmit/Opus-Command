@@ -158,6 +158,74 @@ function DiffViewer({ diff, filePath }) {
   );
 }
 
+/* ── Metro-map graph layout ──────────────────────────────────
+   Assigns every commit a column (lane) so each branch gets its
+   own vertical track. Lanes are kept in fixed columns (never
+   compacted) so the lines stay straight and stable, GitKraken
+   style. Returns one node per commit { col } plus the max column
+   used, and a hash→index map for drawing edges to parents.        */
+function buildGraph(commits) {
+  const indexByHash = new Map();
+  commits.forEach((c, i) => indexByHash.set(c.hash, i));
+
+  const nodes = new Array(commits.length);
+  let lanes = [];          // lanes[col] = hash this lane is waiting to reach (or null)
+  let maxCol = 0;
+
+  const claimFree = () => {
+    const free = lanes.indexOf(null);
+    if (free !== -1) return free;
+    lanes.push(null);
+    return lanes.length - 1;
+  };
+
+  for (let i = 0; i < commits.length; i++) {
+    const c = commits[i];
+
+    // The lane already reserved for this commit, else a fresh lane (branch tip).
+    let col = lanes.indexOf(c.hash);
+    if (col === -1) col = claimFree();
+
+    // Any other lane also waiting on this commit converges here (merge of children).
+    for (let l = 0; l < lanes.length; l++) {
+      if (l !== col && lanes[l] === c.hash) lanes[l] = null;
+    }
+
+    nodes[i] = { col };
+    if (col > maxCol) maxCol = col;
+
+    const parents = c.parents || [];
+    if (parents.length === 0) {
+      lanes[col] = null;                       // root commit — lane ends
+    } else {
+      lanes[col] = parents[0];                 // first parent continues this lane
+      for (let pi = 1; pi < parents.length; pi++) {
+        const ph = parents[pi];
+        if (lanes.indexOf(ph) === -1) {
+          const free = claimFree();
+          lanes[free] = ph;                    // merge parent gets its own lane
+        }
+      }
+    }
+  }
+
+  return { nodes, maxCol, indexByHash };
+}
+
+const ROW_H = 52;
+const COL_W = 16;
+const X0 = 18;
+const NODE_R = 4.5;
+
+function laneX(col) { return X0 + col * COL_W; }
+function rowY(i)   { return i * ROW_H + ROW_H / 2; }
+
+function edgePath(x1, y1, x2, y2) {
+  if (x1 === x2) return `M${x1},${y1} L${x2},${y2}`;
+  const my = (y1 + y2) / 2;
+  return `M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}`;
+}
+
 function CommitHistory({ log }) {
   if (!log || log.length === 0) {
     return (
@@ -172,49 +240,83 @@ function CommitHistory({ log }) {
     );
   }
 
-  return (
-    <div className="gk-history">
-      {log.map((commit, i) => {
-        const refs = parseRefs(commit.refs);
-        const color = branchColor(i === 0 ? 0 : i);
-        const isHead = refs.some(r => r.startsWith('HEAD'));
+  const { nodes, maxCol, indexByHash } = buildGraph(log);
+  const graphWidth = X0 + maxCol * COL_W + X0;
+  const graphHeight = log.length * ROW_H;
 
-        return (
-          <div key={commit.hash || i} className={`gk-commit-row${isHead ? ' is-head' : ''}`}>
-            <div className="gk-graph-col">
-              {i < log.length - 1 && (
-                <div className="gk-rail" style={{ '--rc': color }} />
-              )}
-              <div
-                className="gk-dot"
-                style={{
-                  background: color,
-                  boxShadow: isHead ? `0 0 0 2px var(--color-background), 0 0 8px ${color}60` : `0 0 0 2px var(--color-background)`,
-                }}
-              />
-            </div>
-            <div className="gk-commit-info">
-              <div className="gk-commit-top">
-                <code className="gk-hash">{commit.shortHash}</code>
-                {refs.map(r => {
-                  const c = classifyRef(r);
-                  return (
-                    <span key={r} className={`gk-ref gk-ref-${c.type}`}>
-                      {c.type === 'head' ? '⎇ ' : ''}{c.display}
-                    </span>
-                  );
-                })}
+  // Build edges: one segment from each commit to each of its (visible) parents.
+  const edges = [];
+  log.forEach((commit, i) => {
+    const childCol = nodes[i].col;
+    const x1 = laneX(childCol), y1 = rowY(i);
+    (commit.parents || []).forEach((ph, pi) => {
+      const pIdx = indexByHash.get(ph);
+      if (pIdx === undefined) {
+        // Parent not in window — stub the lane downward so it reads as continuing.
+        edges.push({ key: `${commit.hash}-stub-${pi}`, d: edgePath(x1, y1, x1, graphHeight), color: branchColor(childCol), stub: true });
+        return;
+      }
+      const parentCol = nodes[pIdx].col;
+      // First-parent keeps the child's lane colour; merge edges take the incoming lane's colour.
+      const color = pi === 0 ? branchColor(childCol) : branchColor(parentCol);
+      edges.push({ key: `${commit.hash}-${ph}`, d: edgePath(x1, y1, laneX(parentCol), rowY(pIdx)), color });
+    });
+  });
+
+  return (
+    <div className="gk-history" style={{ '--graph-w': `${graphWidth}px` }}>
+      <div className="gk-graph-wrap" style={{ height: graphHeight }}>
+        <svg className="gk-graph-svg" width={graphWidth} height={graphHeight} aria-hidden="true">
+          {edges.map(e => (
+            <path key={e.key} d={e.d} fill="none" stroke={e.color}
+              strokeWidth="2" strokeLinecap="round"
+              opacity={e.stub ? 0.28 : 0.85} />
+          ))}
+          {log.map((commit, i) => {
+            const refs = parseRefs(commit.refs);
+            const isHead = refs.some(r => r.startsWith('HEAD'));
+            const color = branchColor(nodes[i].col);
+            const cx = laneX(nodes[i].col), cy = rowY(i);
+            return (
+              <g key={commit.hash || i}>
+                {isHead && <circle cx={cx} cy={cy} r={NODE_R + 3} fill="none" stroke={color} strokeWidth="1.5" opacity="0.5" />}
+                <circle cx={cx} cy={cy} r={NODE_R} fill={color}
+                  stroke="var(--color-background)" strokeWidth="2" />
+              </g>
+            );
+          })}
+        </svg>
+
+        <div className="gk-rows">
+          {log.map((commit, i) => {
+            const refs = parseRefs(commit.refs);
+            const isHead = refs.some(r => r.startsWith('HEAD'));
+            return (
+              <div key={commit.hash || i} className={`gk-commit-row${isHead ? ' is-head' : ''}`}>
+                <div className="gk-commit-info">
+                  <div className="gk-commit-top">
+                    <code className="gk-hash">{commit.shortHash}</code>
+                    {refs.map(r => {
+                      const c = classifyRef(r);
+                      return (
+                        <span key={r} className={`gk-ref gk-ref-${c.type}`}>
+                          {c.type === 'head' ? '⎇ ' : ''}{c.display}
+                        </span>
+                      );
+                    })}
+                  </div>
+                  <div className="gk-subject">{commit.subject}</div>
+                  <div className="gk-meta">
+                    <span>{commit.author}</span>
+                    <span className="gk-dot-sep">·</span>
+                    <span>{commit.relativeDate}</span>
+                  </div>
+                </div>
               </div>
-              <div className="gk-subject">{commit.subject}</div>
-              <div className="gk-meta">
-                <span>{commit.author}</span>
-                <span className="gk-dot-sep">·</span>
-                <span>{commit.relativeDate}</span>
-              </div>
-            </div>
-          </div>
-        );
-      })}
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }

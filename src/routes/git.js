@@ -310,7 +310,7 @@ router.get('/log', requireAuth, async (req, res) => {
   try {
     const root = await getGitRoot(contName);
     const result = await execInContainer(contName,
-      `git -C '${root}' log --format="%H%x1f%h%x1f%s%x1f%an%x1f%ar%x1f%D" -40 2>/dev/null`
+      `git -C '${root}' log --all --date-order --format="%H%x1f%h%x1f%s%x1f%an%x1f%ar%x1f%D%x1f%P" -60 2>/dev/null`
     );
     const commits = result.stdout.split('\n').filter(Boolean).map(line => {
       const p = line.split('\x1f');
@@ -321,6 +321,7 @@ router.get('/log', requireAuth, async (req, res) => {
         author:       p[3] || '',
         relativeDate: p[4] || '',
         refs:         p[5] || '',
+        parents:      (p[6] || '').split(' ').filter(Boolean),
       };
     }).filter(c => c.hash);
     res.json({ commits });
