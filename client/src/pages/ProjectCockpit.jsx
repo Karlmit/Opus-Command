@@ -81,15 +81,16 @@ function NewFolderIcon() {
 function FileNode({
   node, depth, onOpenFile, activeFilePath,
   onOpenContextMenu, onOpenRenameDialog, markedPath, onMarkNode,
+  expandedPaths, onToggleFolder,
 }) {
-  const [open, setOpen] = useState(false);
   const isDir = node.type === 'dir';
   const isActive = activeFilePath === node.path;
   const isMarked = markedPath === node.path;
+  const open = isDir && expandedPaths.has(node.path);
 
   function handleRowClick() {
     if (isDir) {
-      if (isMarked) setOpen(o => !o);
+      if (isMarked) onToggleFolder(node.path);
       else onMarkNode(node);
       return;
     }
@@ -122,7 +123,7 @@ function FileNode({
             className={`fn-chevron${open ? ' open' : ''}`}
             onClick={e => {
               e.stopPropagation();
-              setOpen(o => !o);
+              onToggleFolder(node.path);
             }}
           >
             <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
@@ -150,6 +151,8 @@ function FileNode({
               onOpenRenameDialog={onOpenRenameDialog}
               markedPath={markedPath}
               onMarkNode={onMarkNode}
+              expandedPaths={expandedPaths}
+              onToggleFolder={onToggleFolder}
             />
           ))}
         </div>
@@ -564,6 +567,7 @@ export default function ProjectCockpit() {
   const [fileContent, setFileContent] = useState({});
   const [dirtyFiles, setDirty]    = useState({});
   const [activeTab, setActiveTab] = useState(null); // 'term-{id}' | 'file-{path}' | 'settings' | 'git'
+  const [lastActiveTermId, setLastActiveTermId] = useState(null);
   const [reconnecting, setRecon]  = useState(false);
   const [reconSecs, setReconSecs] = useState(0);
   const [deleting, setDeleting]   = useState(false);
@@ -572,8 +576,22 @@ export default function ProjectCockpit() {
   const [fileContextMenu, setFileContextMenu] = useState(null); // { node, x, y }
   const [renameDialog, setRenameDialog] = useState(null); // { node, value }
   const [markedNode, setMarkedNode] = useState(null);
+  const [expandedPaths, setExpandedPaths] = useState(() => new Set());
+  const [treeWidth, setTreeWidth] = useState(() => {
+    const saved = Number(localStorage.getItem('opus:filetree-width'));
+    return Number.isFinite(saved) && saved >= 160 && saved <= 520 ? saved : 220;
+  });
+  const [filePanelWidth, setFilePanelWidth] = useState(() => {
+    const saved = Number(localStorage.getItem('opus:file-panel-width'));
+    return Number.isFinite(saved) && saved >= 320 && saved <= 900 ? saved : 560;
+  });
+  const [resizingTree, setResizingTree] = useState(false);
+  const [resizingFilePanel, setResizingFilePanel] = useState(false);
   const renameInputRef = useRef(null);
   const fileTreeRef = useRef(null);
+  const fileTreePanelRef = useRef(null);
+  const autosaveTimers = useRef({});
+  const fileContentRef = useRef({});
 
   const termRefs         = useRef({});
   const activeRef        = useRef(null);
@@ -598,6 +616,27 @@ export default function ProjectCockpit() {
   useEffect(() => {
     activeTabStateRef.current = activeTab;
   }, [activeTab]);
+
+  useEffect(() => {
+    fileContentRef.current = fileContent;
+  }, [fileContent]);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(`opus:filetree-expanded:${projectId}`) || '[]');
+      setExpandedPaths(new Set(Array.isArray(saved) ? saved : []));
+    } catch {
+      setExpandedPaths(new Set());
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    localStorage.setItem('opus:filetree-width', String(treeWidth));
+  }, [treeWidth]);
+
+  useEffect(() => {
+    localStorage.setItem('opus:file-panel-width', String(filePanelWidth));
+  }, [filePanelWidth]);
 
   useEffect(() => {
     if (!renameDialog) return;
@@ -645,12 +684,15 @@ export default function ProjectCockpit() {
 
   useEffect(() => {
     currentProjectId.current = projectId;
+    Object.values(autosaveTimers.current).forEach(clearTimeout);
+    autosaveTimers.current = {};
     activeRef.current = null;
     termRefs.current = {};
     pendingScrollback.current = {};
     joinedSessions.current.clear();
     historyReplayed.current.clear();
     setActiveTab(null);
+    setLastActiveTermId(null);
     setTermTabs([]);
     setFileTabs([]);
     setFileContent({});
@@ -661,7 +703,12 @@ export default function ProjectCockpit() {
       if (!activeTabStateRef.current?.startsWith('term-')) loadProject();
     }, 5000);
     const t2 = setInterval(loadTree, 750);
-    return () => { clearInterval(t1); clearInterval(t2); };
+    return () => {
+      clearInterval(t1);
+      clearInterval(t2);
+      Object.values(autosaveTimers.current).forEach(clearTimeout);
+      autosaveTimers.current = {};
+    };
   }, [projectId]);
 
   useEffect(() => {
@@ -752,6 +799,64 @@ export default function ProjectCockpit() {
 
   async function loadProject() { try { const r = await fetch(`/api/projects/${projectId}`); if (r.ok) setProject(await r.json()); } catch (_) {} }
   async function loadTree() { try { const r = await fetch(`/api/projects/${projectId}/files`); const d = await r.json(); setTree(d.tree || []); } catch (_) {} }
+
+  function persistExpandedPaths(next) {
+    localStorage.setItem(`opus:filetree-expanded:${projectId}`, JSON.stringify([...next]));
+  }
+
+  function toggleFolder(path) {
+    setExpandedPaths(prev => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      persistExpandedPaths(next);
+      return next;
+    });
+  }
+
+  function startResizeFileTree(e) {
+    e.preventDefault();
+    setResizingTree(true);
+    const startX = e.clientX;
+    const startWidth = fileTreePanelRef.current?.getBoundingClientRect().width || treeWidth;
+
+    function onMove(moveEvent) {
+      const next = Math.max(160, Math.min(520, Math.round(startWidth + moveEvent.clientX - startX)));
+      setTreeWidth(next);
+    }
+
+    function onUp() {
+      setResizingTree(false);
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    }
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
+  function startResizeFilePanel(e) {
+    e.preventDefault();
+    setResizingFilePanel(true);
+    const startX = e.clientX;
+    const startWidth = filePanelWidth;
+    const contentWidth = e.currentTarget.parentElement?.getBoundingClientRect().width || window.innerWidth;
+
+    function onMove(moveEvent) {
+      const maxWidth = Math.max(320, contentWidth - 280);
+      const next = Math.max(320, Math.min(maxWidth, Math.round(startWidth - (moveEvent.clientX - startX))));
+      setFilePanelWidth(next);
+    }
+
+    function onUp() {
+      setResizingFilePanel(false);
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    }
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
 
   function workspacePath(node) {
     const suffix = node?.path ? `/${node.path}` : '';
@@ -863,6 +968,7 @@ export default function ProjectCockpit() {
     const tabId = `term-${sessionId}`;
     activeRef.current = tabId;
     setActiveTab(tabId);
+    setLastActiveTermId(sessionId);
     const sock = getSocket();
 
     function doFitFocus() {
@@ -935,6 +1041,7 @@ export default function ProjectCockpit() {
         const d = await r.json();
         if (d.content !== undefined) {
           setFileContent(p => ({ ...p, [node.path]: d.content }));
+          setDirty(p => ({ ...p, [node.path]: false }));
           setFileTabs(p => [...p, { path: node.path, name: node.name, type: 'text' }]);
         }
       } catch { addToast('Could not open file.', 'error'); return; }
@@ -943,9 +1050,24 @@ export default function ProjectCockpit() {
     if (isMobile) setMobileTab('terminal');
   }
 
-  async function saveFile(path) {
-    const r = await fetch(`/api/projects/${projectId}/files/write`, { method:'POST', headers:{'Content-Type':'application/json','X-CSRF-Token':csrfToken}, body: JSON.stringify({ filePath: path, content: fileContent[path] || '' }) });
-    if ((await r.json()).success) setDirty(p => ({ ...p, [path]: false })); else addToast('Save failed.', 'error');
+  async function saveFile(path, contentOverride = fileContent[path] || '', { silent = false } = {}) {
+    if (autosaveTimers.current[path]) {
+      clearTimeout(autosaveTimers.current[path]);
+      delete autosaveTimers.current[path];
+    }
+    const r = await fetch(`/api/projects/${projectId}/files/write`, { method:'POST', headers:{'Content-Type':'application/json','X-CSRF-Token':csrfToken}, body: JSON.stringify({ filePath: path, content: contentOverride }) });
+    if ((await r.json()).success) {
+      setDirty(p => fileContentRef.current[path] === contentOverride ? { ...p, [path]: false } : p);
+    }
+    else if (!silent) addToast('Save failed.', 'error');
+  }
+
+  function scheduleAutosave(path, content) {
+    if (autosaveTimers.current[path]) clearTimeout(autosaveTimers.current[path]);
+    autosaveTimers.current[path] = setTimeout(() => {
+      delete autosaveTimers.current[path];
+      saveFile(path, content, { silent: true }).catch(() => addToast('Autosave failed.', 'error'));
+    }, 800);
   }
 
   function openFileContextMenu(node, x, y) {
@@ -1052,14 +1174,64 @@ export default function ProjectCockpit() {
   }
 
   const activeFileTab = fileTabs.find(t => `file-${t.path}` === activeTab);
-  const showOverlay = activeFileTab || activeTab === 'settings' || activeTab === 'git';
+  const fileSplitActive = !!activeFileTab && !isMobile;
+  const showOverlay = (activeFileTab && isMobile) || activeTab === 'settings' || activeTab === 'git';
   // On mobile, show the active terminal session in the log viewer
-  const activeTermId = termTabs.find(t => activeTab === `term-${t.id}`)?.id ?? termTabs[0]?.id ?? null;
+  const activeTermId = termTabs.find(t => activeTab === `term-${t.id}`)?.id
+    ?? termTabs.find(t => t.id === lastActiveTermId)?.id
+    ?? termTabs[0]?.id
+    ?? null;
+
+  function renderActiveFileEditor() {
+    if (!activeFileTab) return null;
+
+    if (activeFileTab.type === 'text') {
+      return (
+        <div className="file-editor" onKeyDown={e => { if ((e.ctrlKey||e.metaKey) && e.key==='s') { e.preventDefault(); saveFile(activeFileTab.path); } }}>
+          <div className="file-editor-toolbar">
+            <button className="btn btn-ghost" onClick={() => { const t = termTabs.find(tab => tab.id === activeTermId) || termTabs[0]; if (t) activateTerm(t.id); else setActiveTab(null); if (isMobile) setMobileTab('files'); }}>← Files</button>
+            <span className="file-editor-name">{activeFileTab.name}</span>
+            <button className="btn btn-primary" onClick={() => saveFile(activeFileTab.path)}>Save</button>
+          </div>
+          <SyntaxHighlightedEditor
+            fileName={activeFileTab.name}
+            spellCheck={false}
+            value={fileContent[activeFileTab.path] || ''}
+            onChange={e => {
+              const nextContent = e.target.value;
+              setFileContent(p=>({...p,[activeFileTab.path]:nextContent}));
+              setDirty(p=>({...p,[activeFileTab.path]:true}));
+              scheduleAutosave(activeFileTab.path, nextContent);
+            }} />
+        </div>
+      );
+    }
+
+    if (activeFileTab.type === 'image') {
+      return (
+        <div className="file-editor">
+          <div className="file-editor-toolbar">
+            <button className="btn btn-ghost" onClick={() => { const t = termTabs.find(tab => tab.id === activeTermId) || termTabs[0]; if (t) activateTerm(t.id); if (isMobile) setMobileTab('files'); }}>← Files</button>
+            <span className="file-editor-name">{activeFileTab.name}</span>
+          </div>
+          <div className="file-image-pane">
+            <img src={`/api/projects/${projectId}/files/read?path=${encodeURIComponent(activeFileTab.path)}`} alt={activeFileTab.name} />
+          </div>
+        </div>
+      );
+    }
+
+    return null;
+  }
 
   return (
     <div className="cockpit" data-mobile-tab={mobileTab}>
       {/* File tree — collapsible */}
-      <div className={`cockpit-filetree${treeCollapsed ? ' collapsed' : ''}`}>
+      <div
+        ref={fileTreePanelRef}
+        className={`cockpit-filetree${treeCollapsed ? ' collapsed' : ''}${resizingTree ? ' resizing' : ''}`}
+        style={treeCollapsed ? undefined : { width: treeWidth, minWidth: treeWidth }}
+      >
         <div className="filetree-header">
           {!treeCollapsed && <span className="filetree-title">FILES</span>}
           <div className="filetree-actions">
@@ -1097,9 +1269,20 @@ export default function ProjectCockpit() {
               onOpenRenameDialog={openRenameDialog}
               markedPath={markedNode?.path}
               onMarkNode={setMarkedNode}
+              expandedPaths={expandedPaths}
+              onToggleFolder={toggleFolder}
             />
           ))}
         </div>
+        {!treeCollapsed && (
+          <div
+            className="filetree-resize-handle"
+            onMouseDown={startResizeFileTree}
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize file tree"
+          />
+        )}
         <div className="cockpit-project-footer">
           {project && <ProjectAvatar project={project} size={22} />}
           <span className="cockpit-project-name">{project?.name}</span>
@@ -1138,7 +1321,16 @@ export default function ProjectCockpit() {
           {fileTabs.length > 0 && <div className="tab-divider" />}
           {fileTabs.map(t => (
             <div key={t.path} className={`cockpit-tab file-tab${activeTab === `file-${t.path}` ? ' active' : ''}`}
-              role="tab" onClick={() => { setActiveTab(`file-${t.path}`); activeRef.current = `file-${t.path}`; }}>
+              role="tab"
+              onClick={() => { setActiveTab(`file-${t.path}`); activeRef.current = `file-${t.path}`; }}
+              onMouseDown={e => {
+                if (e.button === 1) e.preventDefault();
+              }}
+              onAuxClick={e => {
+                if (e.button !== 1) return;
+                e.preventDefault();
+                closeFile(t.path);
+              }}>
               <span className="tab-icon">📄</span>
               <span className="tab-label">{t.name}{dirtyFiles[t.path] ? ' ·' : ''}</span>
               <button className="tab-close" onClick={e => { e.stopPropagation(); closeFile(t.path); }}>×</button>
@@ -1152,13 +1344,16 @@ export default function ProjectCockpit() {
         </div>
 
         {/* Content */}
-        <div className="cockpit-content">
+        <div className={`cockpit-content${fileSplitActive ? ' file-split-active' : ''}${resizingFilePanel ? ' resizing-file-panel' : ''}`}>
           {/*
             Terminals layer is ALWAYS rendered and takes full space.
             Files/panels overlay on top using position:absolute.
             This keeps terminal dims stable so FitAddon never measures 0×0.
           */}
-          <div className="terminals-layer">
+          <div
+            className="terminals-layer"
+            style={fileSplitActive ? { flexBasis: `calc(100% - ${filePanelWidth}px)`, flexGrow: 0 } : undefined}
+          >
             {isMobile ? (
               /* Mobile: read-only log viewer — never mounts xterm, never resizes PTY */
               activeTermId ? (
@@ -1175,7 +1370,7 @@ export default function ProjectCockpit() {
                   <TerminalInstance
                     key={t.id}
                     sessionId={t.id}
-                    active={activeTab === `term-${t.id}`}
+                    active={activeTab === `term-${t.id}` || (fileSplitActive && t.id === activeTermId)}
                     termRefs={termRefs}
                     pendingScrollback={pendingScrollback}
                     onScrollbackApplied={markScrollbackApplied}
@@ -1196,37 +1391,29 @@ export default function ProjectCockpit() {
             )}
           </div>
 
+          {fileSplitActive && (
+            <>
+              <div
+                className="file-panel-resize-handle"
+                onMouseDown={startResizeFilePanel}
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize file editor"
+              />
+              <div className="file-split-pane" style={{ width: filePanelWidth }}>
+                {renderActiveFileEditor()}
+              </div>
+            </>
+          )}
+
           {/* Overlay: file editor, image viewer, or panel — sits on top of terminals */}
           {showOverlay && (
             <div className="content-overlay">
               {/* File editor */}
-              {activeFileTab?.type === 'text' && (
-                <div className="file-editor" onKeyDown={e => { if ((e.ctrlKey||e.metaKey) && e.key==='s') { e.preventDefault(); saveFile(activeFileTab.path); } }}>
-                  <div className="file-editor-toolbar">
-                    <button className="btn btn-ghost" onClick={() => { const t = termTabs[0]; if (t) activateTerm(t.id); else setActiveTab(null); if (isMobile) setMobileTab('files'); }}>← Files</button>
-                    <span className="file-editor-name">{activeFileTab.name}</span>
-                    <button className="btn btn-primary" onClick={() => saveFile(activeFileTab.path)}>Save</button>
-                  </div>
-                  <SyntaxHighlightedEditor
-                    fileName={activeFileTab.name}
-                    spellCheck={false}
-                    value={fileContent[activeFileTab.path] || ''}
-                    onChange={e => { setFileContent(p=>({...p,[activeFileTab.path]:e.target.value})); setDirty(p=>({...p,[activeFileTab.path]:true})); }} />
-                </div>
-              )}
+              {activeFileTab?.type === 'text' && renderActiveFileEditor()}
 
               {/* Image viewer */}
-              {activeFileTab?.type === 'image' && (
-                <div className="file-editor">
-                  <div className="file-editor-toolbar">
-                    <button className="btn btn-ghost" onClick={() => { const t = termTabs[0]; if (t) activateTerm(t.id); if (isMobile) setMobileTab('files'); }}>← Files</button>
-                    <span className="file-editor-name">{activeFileTab.name}</span>
-                  </div>
-                  <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center', background:'var(--color-surface-elevated)', overflow:'auto', padding:'var(--spacing-lg)' }}>
-                    <img src={`/api/projects/${projectId}/files/read?path=${encodeURIComponent(activeFileTab.path)}`} alt={activeFileTab.name} style={{ maxWidth:'100%', maxHeight:'100%', objectFit:'contain' }} />
-                  </div>
-                </div>
-              )}
+              {activeFileTab?.type === 'image' && renderActiveFileEditor()}
 
               {/* Workspace settings panel */}
               {activeTab === 'settings' && (

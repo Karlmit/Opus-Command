@@ -9,6 +9,7 @@
 .file-tree-panel {
   width: 240px;
   min-width: 160px;
+  max-width: 520px;
   background: var(--color-surface);
   border-right: 1px solid var(--color-border);
   display: flex;
@@ -16,6 +17,7 @@
   overflow: hidden;
   flex-shrink: 0;
   position: relative;
+  resize: horizontal;
 }
 
 .file-tree-panel.drag-over {

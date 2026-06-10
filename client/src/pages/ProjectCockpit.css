@@ -17,11 +17,31 @@
   overflow: hidden;
   flex-shrink: 0;
   transition: width 150ms ease, min-width 150ms ease;
+  position: relative;
+}
+
+.cockpit-filetree.resizing {
+  transition: none;
 }
 
 .cockpit-filetree.collapsed {
   width: 32px;
   min-width: 32px;
+}
+
+.filetree-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 30;
+}
+
+.filetree-resize-handle:hover,
+.cockpit-filetree.resizing .filetree-resize-handle {
+  background: rgba(59, 130, 246, 0.22);
 }
 
 .filetree-header {
@@ -430,11 +450,44 @@
   background: var(--color-terminal-bg);
 }
 
+.cockpit-content.file-split-active {
+  flex-direction: row;
+}
+
+.cockpit-content.resizing-file-panel {
+  cursor: col-resize;
+}
+
 /* Terminals always fill the content area — never hidden from layout */
 .terminals-layer {
   flex: 1;
   overflow: hidden;
   position: relative;
+  min-width: 280px;
+}
+
+.file-panel-resize-handle {
+  width: 6px;
+  flex: 0 0 6px;
+  cursor: col-resize;
+  background: var(--color-border);
+  z-index: 12;
+}
+
+.file-panel-resize-handle:hover,
+.cockpit-content.resizing-file-panel .file-panel-resize-handle {
+  background: var(--color-accent);
+}
+
+.file-split-pane {
+  min-width: 320px;
+  max-width: calc(100% - 280px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--color-surface);
+  border-left: 1px solid var(--color-border);
+  z-index: 11;
 }
 
 /* Each terminal instance stacks absolutely so they all share the same space */
@@ -533,6 +586,22 @@
   outline: none;
   resize: none;
   padding: var(--spacing-md);
+}
+
+.file-image-pane {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-surface-elevated);
+  overflow: auto;
+  padding: var(--spacing-lg);
+}
+
+.file-image-pane img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
 }
 
 /* Image viewer */

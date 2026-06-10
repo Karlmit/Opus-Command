@@ -19,13 +19,14 @@ function FileIcon({ name, isDir }) {
 function FileTreeNode({
   node, depth, onSelect, selectedPath, addToast, gitStatusMap,
   onContextMenu, renamingPath, onStartRename, onRenameSubmit, onRenameCancel,
+  expandedPaths, onToggleFolder,
 }) {
-  const [expanded, setExpanded] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const renameInputRef = useRef(null);
   const doneRef = useRef(false); // prevents double-submit from Enter→blur or Escape→blur
 
   const isDir = node.type === 'dir';
+  const expanded = isDir && expandedPaths.has(node.path);
   const isRenaming = renamingPath === node.path;
   const active = selectedPath === node.path;
 
@@ -42,7 +43,7 @@ function FileTreeNode({
   function handleClick(e) {
     e.stopPropagation();
     if (isRenaming) return;
-    if (isDir) setExpanded(x => !x);
+    if (isDir) onToggleFolder(node.path);
     else onSelect(node);
   }
 
@@ -100,7 +101,7 @@ function FileTreeNode({
             className={`tree-chevron${expanded ? ' expanded' : ''}`}
             onClick={e => {
               e.stopPropagation();
-              setExpanded(x => !x);
+              onToggleFolder(node.path);
             }}
           >▶</span>
         )}
@@ -138,6 +139,8 @@ function FileTreeNode({
               onStartRename={onStartRename}
               onRenameSubmit={onRenameSubmit}
               onRenameCancel={onRenameCancel}
+              expandedPaths={expandedPaths}
+              onToggleFolder={onToggleFolder}
             />
           ))}
           {node.children.length === 0 && (
@@ -156,6 +159,7 @@ function SimpleEditor({ file, projectId, csrfToken, addToast, onClose }) {
   const [saved, setSaved] = useState(true);
   const [loading, setLoading] = useState(true);
   const [previewMode, setPreviewMode] = useState('edit');
+  const contentRef = useRef('');
   const ext = file.name.split('.').pop()?.toLowerCase();
   const isMarkdown = ext === 'md';
   const isJsonYaml = ext === 'json' || ext === 'yaml' || ext === 'yml';
@@ -169,20 +173,32 @@ function SimpleEditor({ file, projectId, csrfToken, addToast, onClose }) {
       .catch(() => { addToast('Could not load file.', 'error'); setLoading(false); });
   }, [file.path]);
 
-  async function save() {
+  useEffect(() => {
+    contentRef.current = content;
+  }, [content]);
+
+  async function save(contentOverride = content) {
     try {
       const res = await fetch(`/api/projects/${projectId}/files/write`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-        body: JSON.stringify({ filePath: file.path, content }),
+        body: JSON.stringify({ filePath: file.path, content: contentOverride }),
       });
       const data = await res.json();
-      if (data.success) setSaved(true);
+      if (data.success) setSaved(contentRef.current === contentOverride);
       else addToast(data.error || 'File save failed.', 'error');
     } catch {
       addToast('File save failed. Check that the file path is still valid.', 'error');
     }
   }
+
+  useEffect(() => {
+    if (loading || saved || isImage) return;
+    const timer = setTimeout(() => {
+      save(content);
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [content, saved, loading, isImage]);
 
   function handleKeyDown(e) {
     if ((e.ctrlKey || e.metaKey) && e.key === 's') {
@@ -314,8 +330,18 @@ export default function FilesPage() {
   const [gitStatusMap, setGitStatusMap] = useState({});
   const [contextMenu, setContextMenu] = useState(null); // { node, x, y }
   const [renamingPath, setRenamingPath] = useState(null);
+  const [expandedPaths, setExpandedPaths] = useState(() => new Set());
 
   useEffect(() => { loadTree(); loadGitStatus(); }, [projectId]);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(`opus:files-page-expanded:${projectId}`) || '[]');
+      setExpandedPaths(new Set(Array.isArray(saved) ? saved : []));
+    } catch {
+      setExpandedPaths(new Set());
+    }
+  }, [projectId]);
 
   useEffect(() => {
     const interval = setInterval(() => { loadTree(); loadGitStatus(); }, 750);
@@ -361,6 +387,16 @@ export default function FilesPage() {
 
   function quoteForTerminal(value) {
     return `'${value.replace(/'/g, "'\\''")}'`;
+  }
+
+  function toggleFolder(path) {
+    setExpandedPaths(prev => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      localStorage.setItem(`opus:files-page-expanded:${projectId}`, JSON.stringify([...next]));
+      return next;
+    });
   }
 
   async function handleSearch(q) {
@@ -550,6 +586,8 @@ export default function FilesPage() {
                 onStartRename={handleStartRename}
                 onRenameSubmit={handleRenameSubmit}
                 onRenameCancel={() => setRenamingPath(null)}
+                expandedPaths={expandedPaths}
+                onToggleFolder={toggleFolder}
               />
             ))}
           </div>
