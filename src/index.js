@@ -187,10 +187,35 @@ async function main() {
       }
     });
 
-    // Terminal: leave session room
+    // terminal:join-viewer — mobile read-only viewer. Receives server-rendered text
+    // snapshots instead of the raw xterm stream, and never resizes the PTY.
+    socket.on('terminal:join-viewer', async ({ sessionId }) => {
+      if (!terminal.isProxyReady()) {
+        socket.emit('terminal:proxy-restoring', { sessionId });
+        await terminal.waitForProxyReady();
+        if (!socket.connected) return;
+      }
+
+      socket.join(`session:${sessionId}:viewer`);
+      terminal.viewerJoin(sessionId, socket.id);
+      (socket._viewerSessions ||= new Set()).add(sessionId);
+
+      const alive = terminal.isSessionAlive(sessionId);
+      console.log(`[socket] join-viewer session=${sessionId.slice(0,8)} socket=${socket.id.slice(0,8)} pty_alive=${alive}`);
+
+      const snapshot = terminal.getSnapshot(sessionId);
+      if (snapshot) socket.emit('terminal:snapshot', snapshot);
+
+      socket.emit(alive ? 'terminal:session-attached' : 'terminal:session-dead', { sessionId });
+    });
+
+    // Terminal: leave session room (desktop room and/or viewer room)
     socket.on('terminal:leave', ({ sessionId }) => {
       socket.leave(`session:${sessionId}`);
+      socket.leave(`session:${sessionId}:viewer`);
       terminal.clientLeaveSession(sessionId, socket.id);
+      terminal.viewerLeave(sessionId, socket.id);
+      socket._viewerSessions?.delete(sessionId);
     });
 
     // Terminal: write input to PTY
@@ -205,6 +230,13 @@ async function main() {
 
     socket.on('disconnect', () => {
       console.log(`[socket] Client disconnected: ${socket.id}`);
+      // Release any viewer sessions so their headless emulator can be torn down
+      if (socket._viewerSessions) {
+        for (const sessionId of socket._viewerSessions) {
+          terminal.viewerLeave(sessionId, socket.id);
+        }
+        socket._viewerSessions.clear();
+      }
     });
   });
 

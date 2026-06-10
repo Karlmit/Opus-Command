@@ -14,6 +14,7 @@
  */
 
 const WebSocket = require('ws');
+const { Terminal: HeadlessTerminal } = require('@xterm/headless');
 const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../db');
 const { terminalSessions } = require('../db/schema');
@@ -25,10 +26,17 @@ const MAX_BUFFER   = 500_000; // bytes
 const CONNECT_TIMEOUT_MS = 5_000;
 const AI_IDLE_TIMEOUT_MS = 3500;
 
+// Mobile read-only viewer rendering (headless terminal emulator → text snapshots)
+const SNAPSHOT_MAX_LINES = 600;        // lines pushed to mobile (screen + recent scrollback)
+const SNAPSHOT_DEBOUNCE_MS = 100;      // coalesce output bursts
+const SNAPSHOT_MAX_INTERVAL_MS = 250;  // but still refresh during continuous output
+
 // Map<sessionId, ProxyEntry>
 const activeProxies = new Map();
-// Map<sessionId, Set<socketId>>
+// Map<sessionId, Set<socketId>> — desktop (raw xterm) clients
 const sessionClients = new Map();
+// Map<sessionId, Set<socketId>> — mobile read-only viewers (server-rendered snapshots)
+const viewerClients = new Map();
 
 let _io = null; // set on first createSession / reconnectOnStartup call
 
@@ -157,6 +165,12 @@ function _connectProxy(projectId, sessionId, io) {
     inputBuffer: '',
     alive: false,
     lastOutputTime: Date.now(),
+    // Mobile viewer rendering: lazily-created headless emulator + snapshot throttle
+    headless: null,
+    cols: 80,
+    rows: 24,
+    snapTimer: null,
+    lastSnapTime: 0,
   };
   activeProxies.set(sessionId, entry);
 
@@ -173,6 +187,12 @@ function _connectProxy(projectId, sessionId, io) {
       // Full buffer replay from agent — update our copy and persist
       entry.buffer = msg.data || '';
       _persistScrollback(sessionId, entry);
+      // Rebuild the headless screen from the fresh buffer if viewers are watching
+      if (entry.headless) {
+        _disposeHeadless(entry);
+        _ensureHeadless(entry);
+        _scheduleSnapshot(sessionId);
+      }
 
     } else if (msg.type === 'attached') {
       entry.alive = true;
@@ -190,6 +210,12 @@ function _connectProxy(projectId, sessionId, io) {
 
       ioRef?.to(`session:${sessionId}`).emit('terminal:data', { sessionId, data });
 
+      // Feed the mobile viewer emulator (only created while viewers are attached)
+      if (entry.headless) {
+        try { entry.headless.write(data); } catch (_) {}
+        _scheduleSnapshot(sessionId);
+      }
+
       _detectAIState(sessionId, data, ioRef);
 
     } else if (msg.type === 'exit') {
@@ -197,8 +223,10 @@ function _connectProxy(projectId, sessionId, io) {
       _setAIState(sessionId, 'none', ioRef, { force: true });
       entry.alive = false;
       _persistScrollback(sessionId, entry, true);
+      _disposeHeadless(entry);
       activeProxies.delete(sessionId);
       sessionClients.delete(sessionId);
+      viewerClients.delete(sessionId);
       ioRef?.to(`session:${sessionId}`).emit('terminal:exit', { sessionId });
 
     } else if (msg.type === 'error') {
@@ -312,6 +340,14 @@ function _doWrite(sessionId, data) {
 function _doResize(sessionId, cols, rows) {
   const proxy = activeProxies.get(sessionId);
   if (proxy?.ws?.readyState === WebSocket.OPEN) {
+    // PTY size is desktop-driven; mirror it into the viewer emulator so mobile
+    // renders the same layout the PTY produced.
+    proxy.cols = cols;
+    proxy.rows = rows;
+    if (proxy.headless) {
+      try { proxy.headless.resize(cols, rows); } catch (_) {}
+      _scheduleSnapshot(sessionId);
+    }
     proxy.ws.send(JSON.stringify({ type: 'resize', cols, rows }));
   } else {
     console.warn(`[terminal] RESIZE DROPPED — no active proxy for session ${sessionId.slice(0, 8)}`);
@@ -429,6 +465,110 @@ function clientLeaveSession(sessionId, socketId) {
     clients.delete(socketId);
     if (clients.size === 0) sessionClients.delete(sessionId);
   }
+}
+
+// ── Mobile read-only viewers (server-rendered text snapshots) ─────────────────
+
+// True when at least one desktop (raw xterm) client is attached — used for the
+// mobile status label ("Desktop active").
+function desktopAttached(sessionId) {
+  return (sessionClients.get(sessionId)?.size || 0) > 0;
+}
+
+function _ensureHeadless(entry) {
+  if (entry.headless) return entry.headless;
+  const term = new HeadlessTerminal({
+    cols: entry.cols || 80,
+    rows: entry.rows || 24,
+    scrollback: 1000,
+    allowProposedApi: true,
+  });
+  entry.headless = term;
+  // Replay current state so a freshly-joined viewer sees the existing screen
+  if (entry.buffer) {
+    try { term.write(entry.buffer); } catch (_) {}
+  }
+  return term;
+}
+
+function _disposeHeadless(entry) {
+  if (entry.snapTimer) {
+    clearTimeout(entry.snapTimer);
+    entry.snapTimer = null;
+  }
+  if (entry.headless) {
+    try { entry.headless.dispose(); } catch (_) {}
+    entry.headless = null;
+  }
+}
+
+// Serialize the emulator's active buffer (follows the alternate screen, so a live
+// TUI renders as its current screen) to plain text lines.
+function _renderSnapshot(entry, maxLines = SNAPSHOT_MAX_LINES) {
+  const term = entry.headless;
+  if (!term) return { lines: [], cols: entry.cols, rows: entry.rows };
+  const buf = term.buffer.active;
+  const total = buf.length;
+  const start = Math.max(0, total - maxLines);
+  const lines = [];
+  for (let i = start; i < total; i++) {
+    const line = buf.getLine(i);
+    lines.push(line ? line.translateToString(true) : '');
+  }
+  while (lines.length && lines[lines.length - 1] === '') lines.pop();
+  return { lines, cols: entry.cols, rows: entry.rows };
+}
+
+function _emitSnapshot(sessionId) {
+  const entry = activeProxies.get(sessionId);
+  if (!entry || !entry.headless || !_io) return;
+  entry.lastSnapTime = Date.now();
+  const { lines, cols, rows } = _renderSnapshot(entry);
+  _io.to(`session:${sessionId}:viewer`).emit('terminal:snapshot', {
+    sessionId, lines, cols, rows,
+    desktopAttached: desktopAttached(sessionId),
+  });
+}
+
+// Throttle: coalesce output bursts (debounce) while still refreshing during
+// continuous output (max-interval). A render reads the whole buffer, so dropping
+// intermediate ticks never loses content.
+function _scheduleSnapshot(sessionId) {
+  const entry = activeProxies.get(sessionId);
+  if (!entry || !entry.headless || entry.snapTimer) return;
+  const since = Date.now() - (entry.lastSnapTime || 0);
+  const delay = since >= SNAPSHOT_MAX_INTERVAL_MS ? 0 : SNAPSHOT_DEBOUNCE_MS;
+  entry.snapTimer = setTimeout(() => {
+    entry.snapTimer = null;
+    _emitSnapshot(sessionId);
+  }, delay);
+}
+
+function viewerJoin(sessionId, socketId) {
+  if (!viewerClients.has(sessionId)) viewerClients.set(sessionId, new Set());
+  viewerClients.get(sessionId).add(socketId);
+  const entry = activeProxies.get(sessionId);
+  if (entry) _ensureHeadless(entry);
+}
+
+function viewerLeave(sessionId, socketId) {
+  const set = viewerClients.get(sessionId);
+  if (!set) return;
+  set.delete(socketId);
+  if (set.size === 0) {
+    viewerClients.delete(sessionId);
+    const entry = activeProxies.get(sessionId);
+    if (entry) _disposeHeadless(entry);
+  }
+}
+
+// Initial snapshot payload for a single viewer on join (null if session not live).
+function getSnapshot(sessionId) {
+  const entry = activeProxies.get(sessionId);
+  if (!entry) return null;
+  _ensureHeadless(entry);
+  const { lines, cols, rows } = _renderSnapshot(entry);
+  return { sessionId, lines, cols, rows, desktopAttached: desktopAttached(sessionId) };
 }
 
 // ── Scrollback persistence ───────────────────────────────────────────────────
@@ -601,6 +741,9 @@ module.exports = {
   getProjectAISummary,
   clientJoinSession,
   clientLeaveSession,
+  viewerJoin,
+  viewerLeave,
+  getSnapshot,
   isSessionAlive,
   reconnectOnStartup,
   isProxyReady,

@@ -1,6 +1,6 @@
 {
   "name": "opus-command",
-  "version": "0.7.4",
+  "version": "0.8.0",
   "description": "Self-hosted Docker web app and AI project cockpit",
   "main": "src/index.js",
   "scripts": {
@@ -10,6 +10,7 @@
     "install:all": "npm install && cd client && npm install"
   },
   "dependencies": {
+    "@xterm/headless": "^6.0.0",
     "bcrypt": "^5.1.1",
     "better-sqlite3": "^9.6.0",
     "chokidar": "^3.6.0",

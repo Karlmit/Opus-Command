@@ -12,6 +12,31 @@
   position: relative;
 }
 
+/* ── Status label ── */
+.mtv-status {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 12px;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: rgba(226, 232, 240, 0.6);
+  background: #11151d;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.mtv-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(148, 163, 184, 0.6);
+  flex-shrink: 0;
+}
+.mtv-status-live .mtv-status-dot { background: #34d399; }
+.mtv-status-dead { color: #f87171; }
+.mtv-status-dead .mtv-status-dot { background: #f87171; }
+
 /* ── Output scroll area ── */
 .mtv-output {
   flex: 1;

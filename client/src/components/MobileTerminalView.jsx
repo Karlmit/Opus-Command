@@ -2,34 +2,22 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { getSocket } from '../lib/socket';
 import './MobileTerminalView.css';
 
-// Strip ANSI/VT escape sequences — CSI, OSC, charset, and 2-char escapes
-// eslint-disable-next-line no-control-regex
-const ANSI_RE = /\x1b(?:\[[0-9;?]*[A-Za-z]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[()][0-9A-Za-z]|.)/g;
-
-function stripAnsi(str) {
-  return str.replace(ANSI_RE, '');
-}
-
-function rawToLines(raw) {
-  return stripAnsi(raw)
-    .replace(/\0/g, '')
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
-    .split('\n');
-}
-
-const MAX_LINES = 5000;
+// Read-only mobile viewer. The server runs a headless terminal emulator per
+// session and pushes clean text "snapshots" of the current screen (handling
+// cursor addressing, clear-screen, and the alternate screen for TUIs like
+// Claude Code). This component just renders the latest snapshot — it never
+// mounts xterm, never parses ANSI, and never resizes the PTY.
 
 export default function MobileTerminalView({ sessionId }) {
   const [lines, setLines] = useState([]);
   const [atBottom, setAtBottom] = useState(true);
-  const [status, setStatus] = useState('loading'); // 'loading' | 'live' | 'dead'
+  // 'loading' | 'live' | 'dead'
+  const [status, setStatus] = useState('loading');
+  const [desktopActive, setDesktopActive] = useState(false);
   const [input, setInput] = useState('');
 
   const scrollRef = useRef(null);
   const atBottomRef = useRef(true);
-  // Holds the last partial (unterminated) line between data chunks
-  const partialRef = useRef('');
 
   const scrollToBottom = useCallback(() => {
     const el = scrollRef.current;
@@ -43,51 +31,39 @@ export default function MobileTerminalView({ sessionId }) {
     setAtBottom(atBottomRef.current);
   }
 
-  // Append a raw PTY data chunk, accumulating partial lines
-  const appendChunk = useCallback((data) => {
-    const text = stripAnsi(data)
-      .replace(/\0/g, '')
-      .replace(/\r\n/g, '\n')
-      .replace(/\r/g, '\n');
+  // Apply a snapshot. If the user is following the tail, stick to the bottom;
+  // if they've scrolled up, preserve their distance-from-bottom so the view
+  // doesn't jump when the whole list is replaced.
+  const applySnapshot = useCallback((nextLines) => {
+    const el = scrollRef.current;
+    const following = atBottomRef.current;
+    const prevFromBottom = el ? el.scrollHeight - el.scrollTop : 0;
 
-    const parts = (partialRef.current + text).split('\n');
-    partialRef.current = parts.pop(); // last part may be incomplete
+    setLines(nextLines);
 
-    if (parts.length === 0) return;
-
-    setLines(prev => {
-      const next = [...prev, ...parts];
-      return next.length > MAX_LINES ? next.slice(next.length - MAX_LINES) : next;
+    requestAnimationFrame(() => {
+      const node = scrollRef.current;
+      if (!node) return;
+      if (following) node.scrollTop = node.scrollHeight;
+      else node.scrollTop = node.scrollHeight - prevFromBottom;
     });
   }, []);
 
-  // Auto-scroll when lines change if we were already at the bottom
-  useEffect(() => {
-    if (atBottomRef.current) requestAnimationFrame(scrollToBottom);
-  }, [lines, scrollToBottom]);
-
   useEffect(() => {
     if (!sessionId) return;
-    partialRef.current = '';
     setLines([]);
     setStatus('loading');
+    setDesktopActive(false);
     setAtBottom(true);
     atBottomRef.current = true;
 
     const sock = getSocket();
 
-    function onScrollback({ sessionId: sid, data }) {
+    function onSnapshot({ sessionId: sid, lines: snapLines, desktopAttached }) {
       if (sid !== sessionId) return;
-      partialRef.current = '';
-      const all = rawToLines(data);
-      setLines(all.length > MAX_LINES ? all.slice(all.length - MAX_LINES) : all);
       setStatus('live');
-      requestAnimationFrame(scrollToBottom);
-    }
-
-    function onData({ sessionId: sid, data }) {
-      if (sid !== sessionId) return;
-      appendChunk(data);
+      setDesktopActive(!!desktopAttached);
+      applySnapshot(Array.isArray(snapLines) ? snapLines : []);
     }
 
     function onAttached({ sessionId: sid }) {
@@ -101,26 +77,24 @@ export default function MobileTerminalView({ sessionId }) {
     }
 
     function onConnect() {
-      sock.emit('terminal:join', { sessionId });
+      sock.emit('terminal:join-viewer', { sessionId });
     }
 
-    sock.on('terminal:scrollback', onScrollback);
-    sock.on('terminal:data', onData);
+    sock.on('terminal:snapshot', onSnapshot);
     sock.on('terminal:session-attached', onAttached);
     sock.on('terminal:session-dead', onDead);
     sock.on('connect', onConnect);
 
-    if (sock.connected) sock.emit('terminal:join', { sessionId });
+    if (sock.connected) sock.emit('terminal:join-viewer', { sessionId });
 
     return () => {
       sock.emit('terminal:leave', { sessionId });
-      sock.off('terminal:scrollback', onScrollback);
-      sock.off('terminal:data', onData);
+      sock.off('terminal:snapshot', onSnapshot);
       sock.off('terminal:session-attached', onAttached);
       sock.off('terminal:session-dead', onDead);
       sock.off('connect', onConnect);
     };
-  }, [sessionId, appendChunk, scrollToBottom]);
+  }, [sessionId, applySnapshot]);
 
   function sendRaw(data) {
     const sock = getSocket();
@@ -140,19 +114,27 @@ export default function MobileTerminalView({ sessionId }) {
     }
   }
 
+  const statusLabel =
+    status === 'loading' ? 'Connecting…'
+    : status === 'dead' ? 'Session ended'
+    : desktopActive ? 'Read-only · Desktop active'
+    : 'Read-only · Live';
+
   return (
     <div className="mtv">
+      {/* Status label */}
+      <div className={`mtv-status mtv-status-${status}`}>
+        <span className="mtv-status-dot" />
+        {statusLabel}
+      </div>
+
       {/* Output log */}
       <div className="mtv-output" ref={scrollRef} onScroll={handleScroll}>
         {status === 'loading' && <div className="mtv-notice">Connecting…</div>}
         {status === 'dead' && <div className="mtv-notice mtv-notice-dead">Session ended</div>}
         {lines.map((line, i) => (
-          <div key={i} className="mtv-line">{line || ' '}</div>
+          <div key={i} className="mtv-line">{line || ' '}</div>
         ))}
-        {/* Flush partial line as a dimmed preview */}
-        {partialRef.current && (
-          <div className="mtv-line mtv-line-partial">{partialRef.current}</div>
-        )}
       </div>
 
       {/* Jump to bottom */}
