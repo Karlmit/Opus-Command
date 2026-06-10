@@ -59,6 +59,20 @@
 }
 .ft-btn:hover { color: var(--color-text-primary); background: var(--color-surface-elevated); }
 
+.ft-icon-btn {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.ft-action-icon {
+  width: 15px;
+  height: 15px;
+}
+
 .ft-collapse-btn {
   font-size: 16px;
   font-weight: 400;
@@ -82,6 +96,7 @@
   padding: 4px 0;
   scrollbar-width: thin;
   scrollbar-color: var(--color-border) transparent;
+  outline: none;
 }
 
 .filetree-empty {
@@ -111,6 +126,11 @@
 
 .file-node:hover { background: var(--color-surface-elevated); color: var(--color-text-primary); }
 .file-node.active { background: rgba(59,130,246,0.12); color: var(--color-text-primary); }
+.file-node.marked {
+  background: rgba(59,130,246,0.18);
+  color: var(--color-text-primary);
+  box-shadow: inset 2px 0 0 var(--color-accent);
+}
 
 /* Chevron arrow for folders */
 .fn-chevron {

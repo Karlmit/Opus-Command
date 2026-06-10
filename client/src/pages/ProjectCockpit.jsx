@@ -62,24 +62,52 @@ function FileIcon({ name, isDir, open }) {
   );
 }
 
+function NewFileIcon() {
+  return (
+    <svg className="ft-action-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <path d="M4 1.5A1.5 1.5 0 0 0 2.5 3v10A1.5 1.5 0 0 0 4 14.5h8A1.5 1.5 0 0 0 13.5 13V6.25L8.75 1.5H4zm4.25 1.25L12.25 6H9a.75.75 0 0 1-.75-.75V2.75zM8 8a.5.5 0 0 1 .5.5V10H10a.5.5 0 0 1 0 1H8.5v1.5a.5.5 0 0 1-1 0V11H6a.5.5 0 0 1 0-1h1.5V8.5A.5.5 0 0 1 8 8z"/>
+    </svg>
+  );
+}
+
+function NewFolderIcon() {
+  return (
+    <svg className="ft-action-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <path d="M1.5 4A1.5 1.5 0 0 1 3 2.5h3.2c.4 0 .78.16 1.06.44L8.32 4H13a1.5 1.5 0 0 1 1.5 1.5V12A1.5 1.5 0 0 1 13 13.5H3A1.5 1.5 0 0 1 1.5 12V4zm6 3.5A.5.5 0 0 0 7 8v1.5H5.5a.5.5 0 0 0 0 1H7V12a.5.5 0 0 0 1 0v-1.5h1.5a.5.5 0 0 0 0-1H8V8a.5.5 0 0 0-.5-.5z"/>
+    </svg>
+  );
+}
+
 function FileNode({
   node, depth, onOpenFile, activeFilePath,
-  onOpenContextMenu, onOpenRenameDialog,
+  onOpenContextMenu, onOpenRenameDialog, markedPath, onMarkNode,
 }) {
-  const [open, setOpen] = useState(depth < 1);
+  const [open, setOpen] = useState(false);
   const isDir = node.type === 'dir';
   const isActive = activeFilePath === node.path;
+  const isMarked = markedPath === node.path;
+
+  function handleRowClick() {
+    if (isDir) {
+      if (isMarked) setOpen(o => !o);
+      else onMarkNode(node);
+      return;
+    }
+    onMarkNode(node);
+    onOpenFile(node);
+  }
 
   return (
     <div className="file-node-wrap">
       <div
-        className={`file-node${isActive ? ' active' : ''}`}
+        className={`file-node${isActive ? ' active' : ''}${isMarked ? ' marked' : ''}`}
         style={{ paddingLeft: depth * 16 + 6 }}
         tabIndex={0}
-        onClick={() => { isDir ? setOpen(o => !o) : onOpenFile(node); }}
+        onClick={handleRowClick}
         onContextMenu={e => {
           e.preventDefault();
           e.stopPropagation();
+          onMarkNode(node);
           onOpenContextMenu(node, e.clientX, e.clientY);
         }}
         onKeyDown={e => {
@@ -90,7 +118,13 @@ function FileNode({
         }}
       >
         {isDir && (
-          <span className={`fn-chevron${open ? ' open' : ''}`}>
+          <span
+            className={`fn-chevron${open ? ' open' : ''}`}
+            onClick={e => {
+              e.stopPropagation();
+              setOpen(o => !o);
+            }}
+          >
             <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
               <path d="M3 2l4 3-4 3V2z"/>
             </svg>
@@ -114,6 +148,8 @@ function FileNode({
               activeFilePath={activeFilePath}
               onOpenContextMenu={onOpenContextMenu}
               onOpenRenameDialog={onOpenRenameDialog}
+              markedPath={markedPath}
+              onMarkNode={onMarkNode}
             />
           ))}
         </div>
@@ -535,7 +571,9 @@ export default function ProjectCockpit() {
   const [treeCollapsed, setTreeCollapsed] = useState(false);
   const [fileContextMenu, setFileContextMenu] = useState(null); // { node, x, y }
   const [renameDialog, setRenameDialog] = useState(null); // { node, value }
+  const [markedNode, setMarkedNode] = useState(null);
   const renameInputRef = useRef(null);
+  const fileTreeRef = useRef(null);
 
   const termRefs         = useRef({});
   const activeRef        = useRef(null);
@@ -617,13 +655,12 @@ export default function ProjectCockpit() {
     setFileTabs([]);
     setFileContent({});
     setDirty({});
+    setMarkedNode(null);
     loadProject(); loadTree(); loadSessions();
     const t1 = setInterval(() => {
       if (!activeTabStateRef.current?.startsWith('term-')) loadProject();
     }, 5000);
-    const t2 = setInterval(() => {
-      if (!activeTabStateRef.current?.startsWith('term-')) loadTree();
-    }, 2000);
+    const t2 = setInterval(loadTree, 750);
     return () => { clearInterval(t1); clearInterval(t2); };
   }, [projectId]);
 
@@ -715,6 +752,89 @@ export default function ProjectCockpit() {
 
   async function loadProject() { try { const r = await fetch(`/api/projects/${projectId}`); if (r.ok) setProject(await r.json()); } catch (_) {} }
   async function loadTree() { try { const r = await fetch(`/api/projects/${projectId}/files`); const d = await r.json(); setTree(d.tree || []); } catch (_) {} }
+
+  function workspacePath(node) {
+    const suffix = node?.path ? `/${node.path}` : '';
+    return `/workspace${suffix}`;
+  }
+
+  function quoteForTerminal(value) {
+    return `'${value.replace(/'/g, "'\\''")}'`;
+  }
+
+  function getClipboardPayload() {
+    try {
+      return JSON.parse(localStorage.getItem('opus:file-clipboard') || 'null');
+    } catch {
+      return null;
+    }
+  }
+
+  function setClipboardPayload(mode, node) {
+    localStorage.setItem('opus:file-clipboard', JSON.stringify({
+      mode,
+      sources: [{ projectId, path: node.path, type: node.type, name: node.name }],
+    }));
+    addToast(mode === 'cut' ? 'Marked item cut.' : 'Marked item copied.');
+  }
+
+  function pasteTargetPath() {
+    if (!markedNode) return '';
+    if (markedNode.type === 'dir') return markedNode.path;
+    const idx = markedNode.path.lastIndexOf('/');
+    return idx === -1 ? '' : markedNode.path.slice(0, idx);
+  }
+
+  function parentPath(node) {
+    if (!node?.path) return '';
+    const idx = node.path.lastIndexOf('/');
+    return idx === -1 ? '' : node.path.slice(0, idx);
+  }
+
+  async function pasteClipboard(targetPath = pasteTargetPath()) {
+    const payload = getClipboardPayload();
+    if (!payload?.sources?.length) return;
+
+    const r = await fetch(`/api/projects/${projectId}/files/paste`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      body: JSON.stringify({
+        mode: payload.mode === 'cut' ? 'cut' : 'copy',
+        sources: payload.sources,
+        targetPath,
+      }),
+    });
+    const data = await r.json();
+    if (!data.success) {
+      addToast(data.error || 'Paste failed.', 'error');
+      return;
+    }
+    if (payload.mode === 'cut') localStorage.removeItem('opus:file-clipboard');
+    addToast('Pasted.');
+    loadTree();
+  }
+
+  useEffect(() => {
+    function handleFileTreeShortcut(e) {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      if (e.altKey || e.shiftKey) return;
+      const key = e.key.toLowerCase();
+      if (!['c', 'x', 'v'].includes(key)) return;
+
+      const active = document.activeElement;
+      const typing = active?.tagName === 'INPUT' || active?.tagName === 'TEXTAREA' || active?.isContentEditable;
+      if (typing || !fileTreeRef.current?.contains(active)) return;
+
+      if ((key === 'c' || key === 'x') && !markedNode) return;
+      e.preventDefault();
+      if (key === 'c') setClipboardPayload('copy', markedNode);
+      else if (key === 'x') setClipboardPayload('cut', markedNode);
+      else pasteClipboard();
+    }
+
+    window.addEventListener('keydown', handleFileTreeShortcut);
+    return () => window.removeEventListener('keydown', handleFileTreeShortcut);
+  }, [projectId, markedNode, csrfToken]);
 
   async function loadSessions() {
     const pid = projectId;
@@ -841,7 +961,7 @@ export default function ProjectCockpit() {
   async function createInNode(node, type) {
     const name = prompt(type === 'dir' ? 'Folder name:' : 'File name:');
     if (!name) return;
-    const filePath = node.type === 'dir' ? `${node.path}/${name}` : name;
+    const filePath = node?.type === 'dir' ? `${node.path}/${name}` : name;
     const r = await fetch(`/api/projects/${projectId}/files/create`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
@@ -868,22 +988,27 @@ export default function ProjectCockpit() {
       const data = await res.json();
       const sessions = data.sessions || [];
       if (!sessions.length) { addToast('No terminal sessions open — open a terminal first.', 'error'); return; }
-      getSocket().emit('terminal:input', { sessionId: sessions[0].id, data: node.path });
+      getSocket().emit('terminal:input', { sessionId: sessions[0].id, data: quoteForTerminal(workspacePath(node)) });
     } catch { addToast('Could not send path to terminal.', 'error'); }
   }
 
   async function handleFileContextAction(action) {
     const node = fileContextMenu?.node;
     setFileContextMenu(null);
-    if (!node) return;
 
     if (action === 'new-file') await createInNode(node, 'file');
     else if (action === 'new-folder') await createInNode(node, 'dir');
+    else if (action === 'paste') await pasteClipboard(node?.type === 'dir' ? node.path : parentPath(node));
+    else if (!node) return;
     else if (action === 'rename') openRenameDialog(node);
     else if (action === 'reference') await referenceFileNode(node);
     else if (action === 'copy-path') {
-      try { await navigator.clipboard.writeText(node.path); }
+      try { await navigator.clipboard.writeText(workspacePath(node)); }
       catch { addToast('Could not copy path.', 'error'); }
+    } else if (action === 'copy') {
+      setClipboardPayload('copy', node);
+    } else if (action === 'cut') {
+      setClipboardPayload('cut', node);
     } else if (action === 'download') {
       window.open(`/api/projects/${projectId}/files/download?path=${encodeURIComponent(node.path)}`);
     } else if (action === 'delete') {
@@ -939,15 +1064,27 @@ export default function ProjectCockpit() {
           {!treeCollapsed && <span className="filetree-title">FILES</span>}
           <div className="filetree-actions">
             {!treeCollapsed && <>
-              <button className="ft-btn" title="New file" onClick={async () => { const n = prompt('File name:'); if (!n) return; await fetch(`/api/projects/${projectId}/files/create`, { method:'POST', headers:{'Content-Type':'application/json','X-CSRF-Token':csrfToken}, body: JSON.stringify({ filePath: n, type:'file' }) }); loadTree(); }}>+F</button>
-              <button className="ft-btn" title="New folder" onClick={async () => { const n = prompt('Folder name:'); if (!n) return; await fetch(`/api/projects/${projectId}/files/create`, { method:'POST', headers:{'Content-Type':'application/json','X-CSRF-Token':csrfToken}, body: JSON.stringify({ filePath: n, type:'dir' }) }); loadTree(); }}>+D</button>
+              <button className="ft-btn ft-icon-btn" title="New file" aria-label="New file" onClick={() => createInNode(null, 'file')}><NewFileIcon /></button>
+              <button className="ft-btn ft-icon-btn" title="New folder" aria-label="New folder" onClick={() => createInNode(null, 'dir')}><NewFolderIcon /></button>
             </>}
             <button className="ft-btn ft-collapse-btn" title={treeCollapsed ? 'Expand files' : 'Collapse files'} onClick={() => setTreeCollapsed(c => !c)}>
               {treeCollapsed ? '›' : '‹'}
             </button>
           </div>
         </div>
-        <div className="filetree-scroll">
+        <div
+          className="filetree-scroll"
+          ref={fileTreeRef}
+          tabIndex={0}
+          onContextMenu={e => {
+            if (e.target !== e.currentTarget) return;
+            e.preventDefault();
+            openFileContextMenu(null, e.clientX, e.clientY);
+          }}
+          onClick={e => {
+            if (e.target === e.currentTarget) setMarkedNode(null);
+          }}
+        >
           {tree.length === 0 && <p className="filetree-empty">Empty project</p>}
           {tree.map(n => (
             <FileNode
@@ -958,6 +1095,8 @@ export default function ProjectCockpit() {
               activeFilePath={activeFileTab?.path}
               onOpenContextMenu={openFileContextMenu}
               onOpenRenameDialog={openRenameDialog}
+              markedPath={markedNode?.path}
+              onMarkNode={setMarkedNode}
             />
           ))}
         </div>
@@ -1115,14 +1254,18 @@ export default function ProjectCockpit() {
             e.stopPropagation();
           }}
         >
-          {fileContextMenu.node.type === 'dir' && <button role="menuitem" onClick={() => handleFileContextAction('new-file')}>New File</button>}
-          {fileContextMenu.node.type === 'dir' && <button role="menuitem" onClick={() => handleFileContextAction('new-folder')}>New Folder</button>}
-          <button role="menuitem" onClick={() => handleFileContextAction('rename')}>Rename</button>
-          <button role="menuitem" onClick={() => handleFileContextAction('reference')}>Reference</button>
-          <button role="menuitem" onClick={() => handleFileContextAction('copy-path')}>Copy Path</button>
-          {fileContextMenu.node.type !== 'dir' && <button role="menuitem" onClick={() => handleFileContextAction('download')}>Download</button>}
-          <div className="context-separator" />
-          <button role="menuitem" className="context-danger" onClick={() => handleFileContextAction('delete')}>Delete</button>
+          {(!fileContextMenu.node || fileContextMenu.node.type === 'dir') && <button role="menuitem" onClick={() => handleFileContextAction('new-file')}>New File</button>}
+          {(!fileContextMenu.node || fileContextMenu.node.type === 'dir') && <button role="menuitem" onClick={() => handleFileContextAction('new-folder')}>New Folder</button>}
+          <button role="menuitem" onClick={() => handleFileContextAction('paste')}>Paste</button>
+          {fileContextMenu.node && <div className="context-separator" />}
+          {fileContextMenu.node && <button role="menuitem" onClick={() => handleFileContextAction('rename')}>Rename</button>}
+          {fileContextMenu.node && <button role="menuitem" onClick={() => handleFileContextAction('reference')}>Reference</button>}
+          {fileContextMenu.node && <button role="menuitem" onClick={() => handleFileContextAction('copy-path')}>Copy Path</button>}
+          {fileContextMenu.node && <button role="menuitem" onClick={() => handleFileContextAction('copy')}>Copy</button>}
+          {fileContextMenu.node && <button role="menuitem" onClick={() => handleFileContextAction('cut')}>Cut</button>}
+          {fileContextMenu.node?.type !== 'dir' && fileContextMenu.node && <button role="menuitem" onClick={() => handleFileContextAction('download')}>Download</button>}
+          {fileContextMenu.node && <div className="context-separator" />}
+          {fileContextMenu.node && <button role="menuitem" className="context-danger" onClick={() => handleFileContextAction('delete')}>Delete</button>}
         </div>
       )}
 

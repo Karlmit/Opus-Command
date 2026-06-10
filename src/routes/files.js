@@ -18,8 +18,36 @@ function getProjectRoot(projectId) {
 
 function validatePath(projectRoot, reqPath) {
   const resolved = path.resolve(projectRoot, reqPath || '');
-  if (!resolved.startsWith(projectRoot)) return null;
+  const rootWithSep = projectRoot.endsWith(path.sep) ? projectRoot : projectRoot + path.sep;
+  if (resolved !== projectRoot && !resolved.startsWith(rootWithSep)) return null;
   return resolved;
+}
+
+function uniqueDestination(dest) {
+  if (!fs.existsSync(dest)) return dest;
+  const dir = path.dirname(dest);
+  const ext = path.extname(dest);
+  const base = path.basename(dest, ext);
+  let i = 1;
+  let candidate;
+  do {
+    candidate = path.join(dir, `${base} copy${i === 1 ? '' : ` ${i}`}${ext}`);
+    i += 1;
+  } while (fs.existsSync(candidate));
+  return candidate;
+}
+
+function copyRecursive(src, dest) {
+  const stat = fs.statSync(src);
+  if (stat.isDirectory()) {
+    fs.mkdirSync(dest, { recursive: true });
+    for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+      copyRecursive(path.join(src, entry.name), path.join(dest, entry.name));
+    }
+  } else {
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.copyFileSync(src, dest);
+  }
 }
 
 function buildTree(dir, root, depth = 0) {
@@ -161,6 +189,62 @@ router.post('/rename', requireAuth, (req, res) => {
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: `Rename failed: ${err.message}` });
+  }
+});
+
+// POST /api/projects/:projectId/files/paste — copy or move files from any project into this project
+router.post('/paste', requireAuth, (req, res) => {
+  const targetRoot = getProjectRoot(req.params.projectId);
+  if (!targetRoot) return res.status(404).json({ error: 'Project not found.' });
+
+  const { sources = [], targetPath: reqTarget = '', mode = 'copy' } = req.body;
+  if (!Array.isArray(sources) || sources.length === 0) {
+    return res.status(400).json({ error: 'No files selected.' });
+  }
+
+  const targetDir = validatePath(targetRoot, reqTarget);
+  if (!targetDir) return res.status(403).json({ error: 'Access denied. The target path is outside the project folder.' });
+
+  try {
+    fs.mkdirSync(targetDir, { recursive: true });
+    const pasted = [];
+
+    for (const source of sources) {
+      const sourceRoot = getProjectRoot(source.projectId);
+      if (!sourceRoot) return res.status(404).json({ error: 'Source project not found.' });
+
+      const sourcePath = validatePath(sourceRoot, source.path);
+      if (!sourcePath || !fs.existsSync(sourcePath)) {
+        return res.status(404).json({ error: 'Source file not found.' });
+      }
+
+      const sourceName = path.basename(sourcePath);
+      let destination = uniqueDestination(path.join(targetDir, sourceName));
+
+      const sourceWithSep = sourcePath.endsWith(path.sep) ? sourcePath : sourcePath + path.sep;
+      const destinationWithSep = destination.endsWith(path.sep) ? destination : destination + path.sep;
+      if (destination === sourcePath || destinationWithSep.startsWith(sourceWithSep)) {
+        return res.status(400).json({ error: 'Cannot paste a folder into itself.' });
+      }
+
+      if (mode === 'cut') {
+        try {
+          fs.renameSync(sourcePath, destination);
+        } catch (err) {
+          if (err.code !== 'EXDEV') throw err;
+          copyRecursive(sourcePath, destination);
+          fs.rmSync(sourcePath, { recursive: true, force: true });
+        }
+      } else {
+        copyRecursive(sourcePath, destination);
+      }
+
+      pasted.push(path.relative(targetRoot, destination));
+    }
+
+    res.json({ success: true, pasted });
+  } catch (err) {
+    res.status(500).json({ error: `Paste failed: ${err.message}` });
   }
 });
 

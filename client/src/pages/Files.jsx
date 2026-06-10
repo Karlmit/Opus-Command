@@ -20,7 +20,7 @@ function FileTreeNode({
   node, depth, onSelect, selectedPath, addToast, gitStatusMap,
   onContextMenu, renamingPath, onStartRename, onRenameSubmit, onRenameCancel,
 }) {
-  const [expanded, setExpanded] = useState(depth < 2);
+  const [expanded, setExpanded] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const renameInputRef = useRef(null);
   const doneRef = useRef(false); // prevents double-submit from Enter→blur or Escape→blur
@@ -96,7 +96,13 @@ function FileTreeNode({
         onKeyDown={handleRowKeyDown}
       >
         {isDir && (
-          <span className={`tree-chevron${expanded ? ' expanded' : ''}`}>▶</span>
+          <span
+            className={`tree-chevron${expanded ? ' expanded' : ''}`}
+            onClick={e => {
+              e.stopPropagation();
+              setExpanded(x => !x);
+            }}
+          >▶</span>
         )}
         <FileIcon name={node.name} isDir={isDir} />
         {isRenaming ? (
@@ -312,7 +318,7 @@ export default function FilesPage() {
   useEffect(() => { loadTree(); loadGitStatus(); }, [projectId]);
 
   useEffect(() => {
-    const interval = setInterval(() => { loadTree(); loadGitStatus(); }, 2000);
+    const interval = setInterval(() => { loadTree(); loadGitStatus(); }, 750);
     return () => clearInterval(interval);
   }, [projectId]);
 
@@ -346,6 +352,15 @@ export default function FilesPage() {
       setTree(data.tree || []);
     } catch (_) {}
     finally { setLoading(false); }
+  }
+
+  function workspacePath(node) {
+    const suffix = node?.path ? `/${node.path}` : '';
+    return `/workspace${suffix}`;
+  }
+
+  function quoteForTerminal(value) {
+    return `'${value.replace(/'/g, "'\\''")}'`;
   }
 
   async function handleSearch(q) {
@@ -421,7 +436,7 @@ export default function FilesPage() {
 
     if (action === 'copy-path') {
       try {
-        await navigator.clipboard.writeText(node.path);
+        await navigator.clipboard.writeText(workspacePath(node));
         addToast('Path copied to clipboard.');
       } catch {
         addToast('Could not copy to clipboard.', 'error');
@@ -435,7 +450,7 @@ export default function FilesPage() {
           addToast('No terminal sessions open — open a terminal first.', 'error');
           return;
         }
-        getSocket().emit('terminal:input', { sessionId: sessions[0].id, data: node.path });
+        getSocket().emit('terminal:input', { sessionId: sessions[0].id, data: quoteForTerminal(workspacePath(node)) });
       } catch {
         addToast('Could not send path to terminal.', 'error');
       }
