@@ -242,8 +242,6 @@
 
 Opus Connector extends Opus Command with remote execution environments — Windows PCs, macOS machines, Android build machines, Linux test servers. The AI agent stays in the cockpit while tasks are routed to capable connectors.
 
-Full specification: [`OpusConnector_ProjectSpec.md`](OpusConnector_ProjectSpec.md)
-
 ### Core Architecture
 
 | Status | Feature |
