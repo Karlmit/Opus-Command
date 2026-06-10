@@ -1,11 +1,11 @@
 <div align="center">
 
-<img src="Logos/mark-dark.svg" alt="Opus Command" width="80" height="80" />
+<img src="Logos/mark-dark.svg" alt="Opus Command" width="100" height="100" />
 
-<img src="Logos/wordmark-dark.svg" alt="Opus Command" width="260" height="78" />
+<img src="Logos/wordmark-dark.svg" alt="Opus Command" width="325" height="98" />
 
-**A self-hosted Docker web app and AI project cockpit.**  
-Replace tmux, SSH, and fragmented tooling with a unified interface for directing AI coding agents — from any device.
+**An AI Development Control Plane.**  
+Give every project its own isolated, reproducible workspace — files, terminals, tools, connectors, and AI agents — managed from a single interface, on any device.
 
 [![Build](https://github.com/Karlmit/Opus-Command/actions/workflows/docker.yml/badge.svg)](https://github.com/Karlmit/Opus-Command/actions/workflows/docker.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -18,7 +18,27 @@ Replace tmux, SSH, and fragmented tooling with a unified interface for directing
 
 ## What is Opus Command?
 
-Opus Command is built around three ideas:
+Opus Command is an **AI Development Control Plane**.
+
+Instead of running Claude Code, Codex, and your development tools directly on your local machine, Opus Command gives every project its own isolated workspace that can be accessed from anywhere.
+
+Each workspace acts like a dedicated development environment with its own files, terminal sessions, tools, configuration, and AI agents. Projects stay isolated from one another while still being managed from a single interface.
+
+Opus Command is designed for developers who primarily **direct AI agents** rather than manually write every line of code. It provides a central place to manage projects, workspaces, terminals, connectors, files, and future AI tooling — without requiring a traditional IDE.
+
+### Core Principles
+
+- **One project = one isolated workspace**
+- Claude Code and Codex run **where the project lives**, not on your laptop
+- Access projects from **desktop, tablet, or mobile**
+- **Terminal-first** experience with AI-friendly workflows
+- **Connectors** extend workspaces to Windows, Linux, Android, and other environments
+- Workspaces are **disposable, reproducible, and portable**
+- Opus Command is the **control plane**, not the development machine
+
+Opus Command is not trying to replace Claude Code or Codex. It provides the **infrastructure around them**.
+
+### Built around three ideas
 
 - **No tmux** — terminal sessions live on the server and survive browser refreshes. Reconnect from your phone, tablet, or another computer without losing anything.
 - **AI agent awareness** — the app watches PTY output and detects when Claude Code, Codex CLI, or OpenCode is waiting for your input. You get a badge notification without polling terminals manually.
@@ -41,6 +61,34 @@ bash / Claude Code / Codex CLI
 When Opus Command restarts or updates, it reconnects to the surviving terminal-agents. Claude Code keeps running. Your terminal picks up exactly where it left off — no lost input, no dead session overlay, resize still works.
 
 If the workspace container itself restarts, sessions end (the PTY process is gone). Everything else — Opus Command updates, container image swaps, service restarts — is transparent to running sessions.
+
+---
+
+## Projects
+
+**Projects are the heart of Opus Command.** Everything else — terminals, files, git, AI agents, connectors — hangs off a project.
+
+A **project** is a folder on disk paired with its own isolated **workspace container**. Creating a project provisions a dedicated Docker environment from a workspace template; from then on, that project has everything it needs in one place:
+
+- **Its own files** — rooted at the project folder, never touched by other projects
+- **Its own terminal sessions** — running inside the project's workspace container
+- **Its own tools and configuration** — a persistent home volume that survives restarts and container replacement
+- **Its own AI agents** — Claude Code and Codex run *inside* the project's workspace, where the code lives
+- **Its own connector access** — reach Windows, Linux, and other machines through the `opus` CLI
+
+Projects are fully isolated from one another, yet managed from a single interface. Create one in a 3-step modal (**name → folder → workspace template**), and the project dashboard gives you live workspace status (Running / Starting / Stopped / Error) with quick-action cards for **Terminal**, **Files**, and **Git**.
+
+Because the workspace is just a container over a persistent volume, a project is **disposable and reproducible**: Start, Stop, Restart, Recreate, Rebuild, or Reset Environment at will. Deleting a project removes the container and home volume — **your project files on disk are always preserved.**
+
+```text
+Project
+ ├── Folder on disk (/projects/my-app)   ← your files, never deleted
+ └── Workspace container                 ← disposable & reproducible
+      ├── Terminal sessions (survive restarts)
+      ├── Claude Code / Codex CLI
+      ├── Tools & config (persistent home volume)
+      └── opus CLI → connectors (Windows, Linux, …)
+```
 
 ---
 
@@ -133,19 +181,33 @@ Open **http://localhost:3000**. First startup shows a setup screen to create you
 - Full-text content search across all text files
 
 #### Opus Connector
-- Windows connector installer: one-file NSIS installer for `C:\OpusConnector`
-- Connector app stores config, logs, and working data in `C:\ProgramData\OpusConnector`
-- GUI pairing flow: paste the server URL and pairing token, click Connect, and watch Online / Connecting / Error status
-- Settings page can generate pairing tokens and shows both GUI setup values and a PowerShell fallback command
+The **Opus Connector** is a core part of Opus Command. It lets a remote machine — Windows or Linux — act as an execution environment for your workspaces. The connector dials outbound to Opus Command, then workspaces run jobs on it through the `opus` CLI. This extends a project's reach beyond its container: PowerShell on a Windows box, builds on a Linux server, hardware and local tooling on either.
+
+> **Linux and Windows targets are available today.** The **Linux connector is currently the most capable** — it supports async/background jobs, job management (list/status/cancel), bidirectional file transfer, multiple shells, dependency profiles, systemd/autostart service install, self-update, and browser screenshots via Playwright. The **Windows connector** focuses on the core pairing + run flow with an Electron GUI; richer features are being brought to parity. macOS and Android are on the roadmap.
+
+- Connectors pair outbound — no inbound ports to open on the target machine
 - Workspaces get connector access through the `opus` CLI, not by talking directly to connector machines
 - Connector jobs run through Opus Command over the connector WebSocket and return stdout, stderr, exit code, and artifacts
+- Settings page can generate pairing tokens and shows both GUI setup values and a CLI fallback command
 - Existing workspaces receive connector access after Rebuild or Recreate; new workspaces get it automatically
-- Typical usage:
+
+**Linux connector** (most feature-complete):
+- One-file installer with interactive terminal wizard, `--gui` (Zenity/PolicyKit), or unattended/silent flags
+- Local status UI (`http://127.0.0.1:3899`) showing pairing, connection, capabilities, and logs
+- systemd service or desktop autostart, plus self-update from a newer installer
+- Shells: `bash`, `sh`, `python`/`python3`, `pwsh`, and direct executables
+- Async jobs (`--wait false`), job `list` / `status` / `cancel`, and bidirectional `put` / `get` file transfer
+- Browser screenshots when Playwright is available
+
+**Windows connector:**
+- One-file NSIS installer for `C:\OpusConnector`; config, logs, and working data in `C:\ProgramData\OpusConnector`
+- Electron GUI pairing flow: paste the server URL and pairing token, click Connect, watch Online / Connecting / Error status
 
 ```bash
+# Works against any paired connector — match by name or label
 opus connectors list
+opus connector run linux   -- bash "uname -a"
 opus connector run windows -- powershell "Get-ComputerInfo"
-opus connector run windows -- powershell "New-Item -ItemType File C:\ProgramData\OpusConnector\test.txt"
 opus connector artifacts get <job-id>
 ```
 
@@ -159,7 +221,7 @@ opus connector artifacts get <job-id>
 - "This file cannot be displayed." for binary and unsupported types
 
 #### Git Integration
-- **GitKraken-inspired three-pane layout** — toolbar, left changes panel, right diff/history
+- **Three-pane layout with a "metro-map" style visualization** — toolbar, left changes panel, right diff/history
 - Branch pill showing current branch; new-branch form to create and switch in one step
 - Ahead/behind commit counts with Fetch, Pull, and Push buttons
 - Changed files list with coloured status badges (M / A / D / R / ?)
@@ -225,7 +287,7 @@ opus connector artifacts get <job-id>
 - **Stash / unstash, cherry-pick, interactive rebase** — advanced git operations from the panel
 - **Multi-terminal split view** — side-by-side terminal panes
 - **Push notifications** — notify your phone when Claude Code is waiting for input, without needing the browser open
-- **Additional Opus Connector targets** — macOS, Linux desktop, Android, and richer artifact workflows
+- **Additional Opus Connector targets** — macOS and Android, Windows feature parity with Linux, and richer artifact workflows
 - **Additional workspace templates** — community-contributed templates for Rust, Go, Java, etc.
 - **AI session timeline** — history of AI sessions per project with diffs at each checkpoint
 - **Web app preview** — embedded browser preview inside the cockpit for web projects
@@ -296,19 +358,54 @@ This lets Opus update connector and future platform guidance across existing wor
 
 ## Opus Connector
 
-Opus Connector lets a Windows machine act as a remote execution environment for
-Opus workspaces. The connector connects outbound to Opus Command, then
-workspaces run jobs through Opus Command using the `opus` CLI.
+The Opus Connector is a core part of Opus Command. It lets a remote machine act
+as an execution environment for your workspaces — without exposing any inbound
+ports. The connector dials **outbound** to Opus Command, then workspaces run
+jobs on it through the `opus` CLI. A project's AI agent stays in the cockpit
+while real work is routed to whatever machine can do it.
 
 ```text
 Workspace
   ↕ opus CLI + workspace token
 Opus Command
-  ↕ connector WebSocket
-Opus Connector on Windows
-  ↕ PowerShell / CMD / local tools
-Windows filesystem, Android tools, Visual Studio, hardware, etc.
+  ↕ connector WebSocket (connector dials outbound)
+Opus Connector on Linux / Windows
+  ↕ bash / PowerShell / local tools
+Filesystem, build tools, hardware, Android tooling, etc.
 ```
+
+### Platform support
+
+| Platform | Status | Highlights |
+|----------|--------|-----------|
+| **Linux** | ✅ Available — **most feature-complete** | Async jobs + job list/status/cancel, bidirectional `put`/`get` file transfer, multiple shells (`bash`/`sh`/`python`/`pwsh`), one-file installer (terminal wizard, `--gui`, silent), local status UI, systemd/autostart service, self-update, Playwright browser screenshots |
+| **Windows** | ✅ Available | NSIS installer, Electron GUI pairing, PowerShell / CMD execution. Advanced job and file-transfer features are being brought to parity with Linux |
+| **macOS / Android** | 🗺️ Roadmap | Planned connector targets |
+
+> The Linux connector currently has more features than the Windows connector.
+> Both share the same pairing model and `opus` CLI surface; the Linux build
+> simply exposes more of the connector protocol today.
+
+### Install and pair a Linux connector
+
+Build the one-file installer from this repo and copy it to the Linux machine:
+
+```bash
+cd connectors/linux
+npm run build:installer
+# → dist/opus-linux-connector-installer.sh
+```
+
+Run it (interactive wizard if no flags, `--gui` for a graphical installer, or
+fully unattended with explicit options):
+
+```bash
+sudo ./opus-linux-connector-installer.sh --server http://OPUS_HOST:3000 --pair PAIRING_TOKEN
+```
+
+The connector exposes a local status UI at `http://127.0.0.1:3899` showing
+pairing state, connection state, detected capabilities, and logs. Install it as
+a systemd service with `--install-service`.
 
 ### Install and pair a Windows connector
 
@@ -340,17 +437,26 @@ workspaces need one Rebuild or Recreate after upgrading to Opus Command
 opus connectors list
 ```
 
-Run PowerShell or CMD through a matching connector name or label:
+Run commands through a matching connector name or label:
 
 ```bash
+opus connector run linux   -- bash "uname -a"
 opus connector run windows -- powershell "Get-ComputerInfo"
 opus connector run windows -- cmd "whoami"
 ```
 
-Create files or run scripts on the Windows connector:
+The Linux connector adds async jobs and file transfer:
 
 ```bash
-opus connector run windows -- powershell "Set-Content -Path 'C:\ProgramData\OpusConnector\hello.txt' -Value 'hello from workspace'"
+# async job + management
+opus connector run linux --wait false -- bash "sleep 60"
+opus connector jobs list linux
+opus connector jobs status JOB_ID
+opus connector jobs cancel JOB_ID
+
+# bidirectional file transfer
+opus connector put ./local.txt linux:/tmp/local.txt
+opus connector get linux:/tmp/local.txt ./downloaded.txt
 ```
 
 Connector artifacts can be fetched into the project:
@@ -385,7 +491,7 @@ All data in `/app/data` is preserved across updates.
 
 ## Roadmap
 
-See [`ROADMAP.md`](ROADMAP.md) for the full feature status — what's done, what's planned for V1, and future **Opus Connector** targets such as macOS, Linux desktop, Android, and richer artifact workflows.
+See [`ROADMAP.md`](ROADMAP.md) for the full feature status — what's done, what's planned for V1, and future **Opus Connector** targets such as macOS and Android, plus Windows feature parity with the Linux connector and richer artifact workflows.
 
 ## License
 
