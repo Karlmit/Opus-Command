@@ -227,6 +227,11 @@ function TerminalInstance({
     const onWinResize = () => {
       scheduleFit();
     };
+    // Re-fit when the window/tab regains focus. After a hard refresh (Ctrl+Shift+R)
+    // the first fit can overshoot — measured before fonts/layout settle — leaving
+    // the PTY wider than the viewport so lines wrap off-screen. Refitting on
+    // return corrects the column count.
+    const onVisible = () => { if (!document.hidden) scheduleFit(); };
     const doResizeEmit = () => {
       const sock = getSocket();
       if (!activeStateRef.current || isDeviceMobile()) return;
@@ -320,9 +325,21 @@ function TerminalInstance({
     // so execCommand('copy') is permitted on insecure (HTTP) origins. With mouse
     // reporting on (Claude Code/Codex), selecting requires holding Shift; this
     // then makes that selection actually land on the clipboard.
-    const onMouseUp = () => {
+    let downX = 0, downY = 0, downShift = false, lastHintTs = 0;
+    const onMouseDown = (e) => { downX = e.clientX; downY = e.clientY; downShift = e.shiftKey; };
+    const onMouseUp = (e) => {
       const sel = term.getSelection();
-      if (sel) { lastSelection = sel; copyText(sel); }
+      if (sel) { lastSelection = sel; copyText(sel); return; }
+      // No selection was made. If the user dragged without Shift while the app
+      // has mouse reporting on (Claude Code/Codex), the drag was sent to the app
+      // instead of selecting — hint them to hold Shift. Throttled; nothing else.
+      const mode = term.modes?.mouseTrackingMode;
+      const mouseModeOn = mode && mode !== 'none';
+      const dragged = Math.abs(e.clientX - downX) > 5 || Math.abs(e.clientY - downY) > 5;
+      if (dragged && !downShift && !e.shiftKey && mouseModeOn && Date.now() - lastHintTs > 8000) {
+        lastHintTs = Date.now();
+        addToast?.('Hold Shift and drag to select text and copy it.');
+      }
     };
 
     // ── Clipboard paste ──────────────────────────────────────────────────────
@@ -402,6 +419,7 @@ function TerminalInstance({
       pasteEl = divRef.current;
       pasteEl.addEventListener('paste', onPasteCapture, true);
       // Copy-on-select (see onMouseUp). Bubble phase, after xterm finalises it.
+      pasteEl.addEventListener('mousedown', onMouseDown);
       pasteEl.addEventListener('mouseup', onMouseUp);
 
       // ── Keyboard ergonomics ────────────────────────────────────────────────
@@ -483,11 +501,16 @@ function TerminalInstance({
       requestAnimationFrame(() => requestAnimationFrame(() => {
         if (cancelled || !divRef.current) return;
         fitActive();
+        // Corrective re-fit once fonts/layout have fully settled, so an early
+        // overshoot doesn't leave the PTY wider than the visible area.
+        setTimeout(() => { if (!cancelled && divRef.current) fitActive(); }, 350);
         ro = new ResizeObserver(scheduleFit);
         ro.observe(divRef.current);
         const parent = divRef.current?.parentElement;
         if (parent) ro.observe(parent);
         window.addEventListener('resize', onWinResize);
+        window.addEventListener('focus', onVisible);
+        document.addEventListener('visibilitychange', onVisible);
       }));
     };
 
@@ -503,7 +526,10 @@ function TerminalInstance({
       console.log(`[xterm:${instanceId}] Disposing for session ${sessionId.slice(0,8)}`);
       ro?.disconnect();
       window.removeEventListener('resize', onWinResize);
+      window.removeEventListener('focus', onVisible);
+      document.removeEventListener('visibilitychange', onVisible);
       pasteEl?.removeEventListener('paste', onPasteCapture, true);
+      pasteEl?.removeEventListener('mousedown', onMouseDown);
       pasteEl?.removeEventListener('mouseup', onMouseUp);
       term.dispose();
       delete termRefs.current[sessionId];
@@ -514,13 +540,21 @@ function TerminalInstance({
   // Refit + focus when tab becomes active
   useEffect(() => {
     if (!active) return;
-    requestAnimationFrame(() => requestAnimationFrame(() => {
+    const refit = () => {
       const ref = termRefs.current[sessionId];
       if (!ref) return;
       ref.fit();
       ref.emitResize?.();
-      ref.focus();
+    };
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      refit();
+      termRefs.current[sessionId]?.focus();
     }));
+    // Corrective re-fit after layout settles (e.g. switching back from a panel
+    // or returning to a freshly-refreshed tab) so the PTY width matches what's
+    // actually visible.
+    const t = setTimeout(refit, 300);
+    return () => clearTimeout(t);
   }, [active]);
 
   return (
@@ -1368,14 +1402,18 @@ export default function ProjectCockpit() {
     const sock = getSocket();
 
     function doFitFocus() {
-      requestAnimationFrame(() => requestAnimationFrame(() => {
+      const fitAndSync = (focus) => {
         const ref = termRefs.current[sessionId];
         if (!ref) return;
         ref.fit();
         const s = ref.getSize();
         if (s && sock.connected) sock.emit('terminal:resize', { sessionId, ...s });
-        ref.focus();
-      }));
+        if (focus) ref.focus();
+      };
+      requestAnimationFrame(() => requestAnimationFrame(() => fitAndSync(true)));
+      // Corrective re-fit once the project's layout/fonts have settled, so opening
+      // a project never leaves the PTY wider than the visible terminal.
+      setTimeout(() => fitAndSync(false), 300);
     }
 
     function doJoin() {
