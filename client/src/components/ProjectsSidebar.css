@@ -230,20 +230,43 @@ body.mobile-device .projects-sidebar { display: none; }
 .sidebar-settings-btn:hover { color: var(--color-text-primary); background: var(--color-surface); }
 .sidebar-settings-label { font-size: var(--font-size-sm); }
 
-/* ── Sidebar popover ───────────────────────────── */
-.sidebar-popover {
+/* ── Sidebar modal (centered overlay) ──────────── */
+.sidebar-modal-backdrop {
+  position: fixed;
+  inset: 0;
   z-index: 400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.48);
+  animation: sidebarBackdropIn 120ms ease;
+}
+
+@keyframes sidebarBackdropIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.sidebar-popover {
   background: var(--color-surface-elevated);
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-lg);
   box-shadow: 0 12px 32px rgba(0,0,0,0.35), 0 2px 8px rgba(0,0,0,0.2);
   overflow: hidden;
+}
+
+/* Centered modal variant: cap height and scroll if content is tall */
+.sidebar-popover-centered {
+  max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
   animation: popoverIn 120ms ease;
 }
 
 @keyframes popoverIn {
-  from { opacity: 0; transform: translateX(-6px) scale(0.97); }
-  to   { opacity: 1; transform: translateX(0)    scale(1); }
+  from { opacity: 0; transform: scale(0.97); }
+  to   { opacity: 1; transform: scale(1); }
 }
 
 .popover-form {

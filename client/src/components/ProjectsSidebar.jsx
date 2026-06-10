@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useLayoutEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { getNotificationSocket } from '../context/NotificationsContext';
@@ -46,56 +46,48 @@ export function ProjectAvatar({ project, size = 36 }) {
   );
 }
 
-/* ── Sidebar popover ────────────────────────────── *
- * Appears to the RIGHT of the anchor element.       *
- * Adjusts vertically to stay within the viewport.   */
-function SidebarPopover({ anchorEl, onClose, children, width = 280 }) {
-  const [style, setStyle] = useState({ visibility: 'hidden' });
+/* ── Sidebar modal ──────────────────────────────── *
+ * Centered overlay so it is always fully visible,   *
+ * regardless of sidebar height or screen size.      */
+function SidebarPopover({ onClose, children, width = 280 }) {
   const popoverRef = useRef(null);
 
-  useLayoutEffect(() => {
-    if (!anchorEl) return;
-    const anchor  = anchorEl.getBoundingClientRect();
-    const vp      = { w: window.innerWidth, h: window.innerHeight };
-    const popH    = popoverRef.current?.offsetHeight || 320;
-    const left    = anchor.right + 10;
-    let   top     = anchor.top;
-
-    // Clamp so it doesn't go off the bottom of the viewport
-    if (top + popH > vp.h - 16) top = Math.max(16, vp.h - popH - 16);
-
-    setStyle({ position: 'fixed', left, top, width, visibility: 'visible' });
-  }, [anchorEl, width]);
-
-  // Close on outside click
+  // Close on Escape
   useEffect(() => {
-    function onDown(e) {
-      if (popoverRef.current && !popoverRef.current.contains(e.target)) onClose();
-    }
     function onKey(e) { if (e.key === 'Escape') onClose(); }
-    document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
+    return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  // Close when clicking the backdrop (but not the dialog itself)
+  function onBackdrop(e) { if (e.target === e.currentTarget) onClose(); }
+
   return (
-    <div ref={popoverRef} className="sidebar-popover" style={style} role="dialog">
-      {children}
+    <div className="sidebar-modal-backdrop" onMouseDown={onBackdrop}>
+      <div ref={popoverRef} className="sidebar-popover sidebar-popover-centered"
+           style={{ width }} role="dialog" aria-modal="true">
+        {children}
+      </div>
     </div>
   );
 }
 
 /* ── New project form (inline in popover) ───────── */
 function NewProjectForm({ csrfToken, onClose, onCreated }) {
-  const [form, setForm] = useState({ name: '', folder: '' });
+  const [form, setForm] = useState({ name: '', folder: '', template: 'claude-code' });
+  const [templates, setTemplates] = useState([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const firstRef = useRef(null);
 
   useEffect(() => { firstRef.current?.focus(); }, []);
+
+  useEffect(() => {
+    fetch('/api/projects/templates')
+      .then(r => r.json())
+      .then(data => setTemplates(data.templates || []))
+      .catch(() => {});
+  }, []);
 
   function handleNameChange(name) {
     const folder = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -137,6 +129,20 @@ function NewProjectForm({ csrfToken, onClose, onCreated }) {
         <input className="input" value={form.folder}
           onChange={e => setForm(f => ({ ...f, folder: e.target.value }))} placeholder="my-project" />
         <p className="form-hint">Subdirectory within <code>/projects</code></p>
+      </div>
+
+      <div className="form-group">
+        <label className="form-label">Workspace Template</label>
+        <select className="input" value={form.template}
+          onChange={e => setForm(f => ({ ...f, template: e.target.value }))}>
+          {(templates.length ? templates : [
+            { id: 'claude-code', label: 'Work' },
+            { id: 'private', label: 'Private' },
+          ]).map(t => (
+            <option key={t.id} value={t.id}>{t.label}</option>
+          ))}
+        </select>
+        <p className="form-hint">Private omits Claude Azure AI Foundry settings.</p>
       </div>
 
       {error && <p className="error-message">{error}</p>}
@@ -401,7 +407,7 @@ export default function ProjectsSidebar() {
 
       {/* New project popover */}
       {newProjectAnchor && (
-        <SidebarPopover anchorEl={newProjectAnchor} onClose={() => setNewProjectAnchor(null)}>
+        <SidebarPopover onClose={() => setNewProjectAnchor(null)}>
           <NewProjectForm
             csrfToken={csrfToken}
             onClose={() => setNewProjectAnchor(null)}
@@ -412,7 +418,7 @@ export default function ProjectsSidebar() {
 
       {/* Avatar picker popover */}
       {avatarTarget && (
-        <SidebarPopover anchorEl={avatarTarget.anchor} onClose={() => setAvatarTarget(null)} width={260}>
+        <SidebarPopover onClose={() => setAvatarTarget(null)} width={260}>
           <AvatarPickerForm
             project={avatarTarget.project}
             csrfToken={csrfToken}
@@ -428,13 +434,7 @@ export default function ProjectsSidebar() {
           project={contextMenu.project}
           position={{ x: contextMenu.x, y: contextMenu.y }}
           onClose={() => setContext(null)}
-          onOpenAvatar={() => {
-            // Find the project's DOM element to use as anchor
-            const el = document.querySelector(
-              `.sidebar-project-item[data-id="${contextMenu.project.id}"]`
-            ) || newBtnRef.current;
-            setAvatarTarget({ project: contextMenu.project, anchor: el });
-          }}
+          onOpenAvatar={() => setAvatarTarget({ project: contextMenu.project })}
           navigate={navigate}
         />
       )}
