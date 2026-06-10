@@ -256,12 +256,10 @@ Workspace containers are isolated Docker environments per project:
 
 | Template | Image | Pre-installed |
 |----------|-------|--------------|
-| General | `ubuntu:22.04` | Git, curl, wget |
-| Node.js | `node:20-bookworm-slim` | Node.js LTS, npm, pnpm, yarn, Git |
-| Python | `python:3.12-slim-bookworm` | Python 3, pip, pipenv, poetry, Git |
-| PowerShell | `mcr.microsoft.com/powershell:7.4` | PowerShell 7, Git |
+| Work | `ghcr.io/karlmit/opus-command-workspace-claude-code:latest` | Node.js, npm, Git, GitHub CLI, Claude Code, Opus CLI, Azure AI Foundry Claude settings |
+| Private | `ghcr.io/karlmit/opus-command-workspace-private:latest` | Node.js, npm, Git, GitHub CLI, Claude Code, Codex CLI, Opus CLI |
 
-All templates: install Claude Code inside the terminal after first start with `npm install -g @anthropic-ai/claude-code`. Credentials persist in the named home volume.
+Template changes are made from the project Workspace panel and require Rebuild to apply. Switching a project to Private clears Claude API environment settings from Opus Command and removes Azure AI Foundry startup exports on the next rebuild.
 
 ## Managed Workspace Skills
 

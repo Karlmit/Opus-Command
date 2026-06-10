@@ -32,7 +32,8 @@ jobs:
       - name: Set lowercase image names
         run: |
           echo "APP_IMAGE=${{ env.REGISTRY }}/$(echo ${{ github.repository_owner }} | tr '[:upper:]' '[:lower:]')/opus-command:latest" >> $GITHUB_ENV
-          echo "WS_IMAGE=${{ env.REGISTRY }}/$(echo ${{ github.repository_owner }} | tr '[:upper:]' '[:lower:]')/opus-command-workspace-claude-code:latest" >> $GITHUB_ENV
+          echo "WS_WORK_IMAGE=${{ env.REGISTRY }}/$(echo ${{ github.repository_owner }} | tr '[:upper:]' '[:lower:]')/opus-command-workspace-claude-code:latest" >> $GITHUB_ENV
+          echo "WS_PRIVATE_IMAGE=${{ env.REGISTRY }}/$(echo ${{ github.repository_owner }} | tr '[:upper:]' '[:lower:]')/opus-command-workspace-private:latest" >> $GITHUB_ENV
 
       - name: Get version
         id: version
@@ -50,12 +51,22 @@ jobs:
           cache-from: type=gha,scope=app
           cache-to: type=gha,scope=app,mode=max
 
-      - name: Build and push workspace image
+      - name: Build and push work workspace image
         uses: docker/build-push-action@v5
         with:
           context: ./workspace-images/claude-code
           platforms: linux/amd64
           push: true
-          tags: ${{ env.WS_IMAGE }}
-          cache-from: type=gha,scope=workspace
-          cache-to: type=gha,scope=workspace,mode=max
+          tags: ${{ env.WS_WORK_IMAGE }}
+          cache-from: type=gha,scope=workspace-work
+          cache-to: type=gha,scope=workspace-work,mode=max
+
+      - name: Build and push private workspace image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./workspace-images/private
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.WS_PRIVATE_IMAGE }}
+          cache-from: type=gha,scope=workspace-private
+          cache-to: type=gha,scope=workspace-private,mode=max

@@ -887,6 +887,8 @@
 .status-error    .ws-status-dot { background: var(--color-error); }
 .ws-status-text { font-size: var(--font-size-sm); color: var(--color-text-primary); }
 
+.ws-template-select { width: 100%; }
+
 .ws-actions { display: flex; flex-wrap: wrap; gap: var(--spacing-xs); }
 .ws-danger { color: var(--color-error) !important; }
 .ws-danger:hover { border-color: var(--color-error) !important; }

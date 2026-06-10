@@ -9,6 +9,32 @@ const { eq } = require('drizzle-orm');
 const { PROJECTS_DIR } = require('../config');
 const docker = require('../services/docker.service');
 const terminal = require('../services/terminal.service');
+const { getSetting, setSetting } = require('../services/auth.service');
+
+const CLAUDE_AZURE_ENV_KEYS = new Set([
+  'CLAUDE_CODE_USE_FOUNDRY',
+]);
+
+function clearClaudeAzureEnvSettings() {
+  let existing = [];
+  try { existing = JSON.parse(getSetting('workspace_env_vars') || '[]'); } catch {}
+  const filtered = existing.filter(v => {
+    const key = String(v.key || '').toUpperCase();
+    return !CLAUDE_AZURE_ENV_KEYS.has(key) && !key.startsWith('ANTHROPIC_');
+  });
+  setSetting('workspace_env_vars', JSON.stringify(filtered));
+}
+
+// GET /api/projects/templates — list workspace templates
+router.get('/templates', requireAuth, (req, res) => {
+  res.json({
+    templates: Object.values(docker.WORKSPACE_TEMPLATES).map(({ id, label, description }) => ({
+      id,
+      label,
+      description,
+    })),
+  });
+});
 
 // GET /api/projects — list all projects with live status
 router.get('/', requireAuth, async (req, res) => {
@@ -44,6 +70,9 @@ router.get('/', requireAuth, async (req, res) => {
 router.post('/', requireAuth, async (req, res) => {
   try {
     const { name, folder } = req.body;
+    const requestedTemplate = req.body.template || 'claude-code';
+    const template = docker.normalizeTemplate(requestedTemplate);
+    if (template !== requestedTemplate) return res.status(400).json({ error: 'Invalid workspace template.' });
     if (!name || !name.trim()) return res.status(400).json({ error: 'Project name is required.' });
     if (!folder || !folder.trim()) return res.status(400).json({ error: 'Project folder is required.' });
 
@@ -62,7 +91,7 @@ router.post('/', requireAuth, async (req, res) => {
     const inserted = db.insert(projects).values({
       name: name.trim(),
       folderPath,
-      template: 'claude-code',
+      template,
       status: 'starting',
       createdAt: now,
     }).returning().all();
@@ -70,7 +99,7 @@ router.post('/', requireAuth, async (req, res) => {
     const project = inserted[0];
 
     // Provision workspace container asynchronously
-    docker.createWorkspaceContainer(project.id, folderPath)
+    docker.createWorkspaceContainer(project.id, folderPath, template)
       .then(async ({ containerId, homeVolume }) => {
         db.update(projects).set({
           containerId,
@@ -157,18 +186,28 @@ router.get('/:id', requireAuth, async (req, res) => {
   }
 });
 
-// PATCH /api/projects/:id — update name or avatar
+// PATCH /api/projects/:id — update name, avatar, or workspace template
 router.patch('/:id', requireAuth, (req, res) => {
   const projectId = parseInt(req.params.id);
   try {
     const db = getDB();
-    const { name, avatar } = req.body;
+    const rows = db.select().from(projects).where(eq(projects.id, projectId)).all();
+    if (!rows.length) return res.status(404).json({ error: 'Project not found.' });
+
+    const { name, avatar, template } = req.body;
     const updates = {};
     if (name !== undefined) updates.name = name.trim();
     if (avatar !== undefined) updates.avatar = avatar;
+    if (template !== undefined) {
+      const templateId = docker.normalizeTemplate(template);
+      if (templateId !== template) return res.status(400).json({ error: 'Invalid workspace template.' });
+      updates.template = templateId;
+      if (templateId === 'private') clearClaudeAzureEnvSettings();
+    }
     if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'Nothing to update.' });
     db.update(projects).set(updates).where(eq(projects.id, projectId)).run();
-    res.json({ success: true });
+    const updated = db.select().from(projects).where(eq(projects.id, projectId)).all()[0];
+    res.json({ success: true, project: updated });
   } catch (err) {
     res.status(500).json({ error: 'Update failed.' });
   }
@@ -212,21 +251,21 @@ router.post('/:id/lifecycle', requireAuth, async (req, res) => {
 
       case 'recreate': {
         emitStatus('starting');
-        const { containerId: newId } = await docker.recreateContainer(projectId, project.folderPath);
+        const { containerId: newId } = await docker.recreateContainer(projectId, project.folderPath, project.template);
         db.update(projects).set({ containerId: newId }).where(eq(projects.id, projectId)).run();
         emitStatus('running');
         break;
       }
       case 'rebuild': {
         emitStatus('starting');
-        const { containerId: rebuiltId } = await docker.rebuildContainer(projectId, project.folderPath);
+        const { containerId: rebuiltId } = await docker.rebuildContainer(projectId, project.folderPath, project.template);
         db.update(projects).set({ containerId: rebuiltId }).where(eq(projects.id, projectId)).run();
         emitStatus('running');
         break;
       }
       case 'reset': {
         emitStatus('starting');
-        const { containerId: resetId } = await docker.resetEnvironment(projectId, project.folderPath);
+        const { containerId: resetId } = await docker.resetEnvironment(projectId, project.folderPath, project.template);
         db.update(projects).set({ containerId: resetId }).where(eq(projects.id, projectId)).run();
         emitStatus('running');
         break;

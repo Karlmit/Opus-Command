@@ -349,10 +349,19 @@ function TerminalInstance({
 }
 
 /* ── Workspace settings panel ──────────────────── */
-function WorkspacePanel({ projectId, project, csrfToken, addToast, onDelete }) {
+function WorkspacePanel({ projectId, project, csrfToken, addToast, onDelete, onProjectUpdated }) {
   const [logs, setLogs] = useState('');
   const [showLogs, setShowLogs] = useState(false);
   const [busy, setBusy] = useState(null);
+  const [templates, setTemplates] = useState([]);
+  const [templateBusy, setTemplateBusy] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/projects/templates')
+      .then(r => r.json())
+      .then(data => setTemplates(data.templates || []))
+      .catch(() => {});
+  }, []);
 
   async function runAction(action) {
     setBusy(action);
@@ -374,6 +383,31 @@ function WorkspacePanel({ projectId, project, csrfToken, addToast, onDelete }) {
     setLogs(d.logs || 'No logs.');
   }
 
+  async function changeTemplate(template) {
+    if (!template || template === project?.template) return;
+    setTemplateBusy(true);
+    try {
+      const r = await fetch(`/api/projects/${projectId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ template }),
+      });
+      const d = await r.json();
+      if (!d.success) {
+        addToast(d.error || 'Template update failed.', 'error');
+        return;
+      }
+      onProjectUpdated?.(d.project);
+      addToast(template === 'private'
+        ? 'Template set to Private. Claude Azure settings were cleared; Rebuild to apply.'
+        : 'Template set to Work. Rebuild to apply.');
+    } catch (e) {
+      addToast(e.message || 'Template update failed.', 'error');
+    } finally {
+      setTemplateBusy(false);
+    }
+  }
+
   const ACTIONS = [
     { id: 'start',    label: 'Start',             danger: false },
     { id: 'stop',     label: 'Stop',              danger: false },
@@ -392,6 +426,26 @@ function WorkspacePanel({ projectId, project, csrfToken, addToast, onDelete }) {
           <span className="ws-status-text">{project?.status || 'unknown'}</span>
         </div>
         <div className="panel-hint">Folder: <code>/projects/{project?.folderPath}</code></div>
+      </div>
+
+      <div className="panel-section">
+        <div className="panel-section-title">WORKSPACE TEMPLATE</div>
+        <select
+          className="input ws-template-select"
+          value={project?.template || 'claude-code'}
+          onChange={e => changeTemplate(e.target.value)}
+          disabled={templateBusy}
+        >
+          {(templates.length ? templates : [
+            { id: 'claude-code', label: 'Work' },
+            { id: 'private', label: 'Private' },
+          ]).map(template => (
+            <option key={template.id} value={template.id}>{template.label}</option>
+          ))}
+        </select>
+        <div className="panel-hint">
+          Rebuild applies the selected template. Private removes Claude Azure AI Foundry settings.
+        </div>
       </div>
 
       <div className="panel-section">
@@ -1561,7 +1615,14 @@ export default function ProjectCockpit() {
               {activeTab === 'settings' && (
                 <div className="side-panel">
                   <div className="side-panel-header">WORKSPACE</div>
-                  <WorkspacePanel projectId={projectId} project={project} csrfToken={csrfToken} addToast={addToast} onDelete={() => setShowDelete(true)} />
+                  <WorkspacePanel
+                    projectId={projectId}
+                    project={project}
+                    csrfToken={csrfToken}
+                    addToast={addToast}
+                    onDelete={() => setShowDelete(true)}
+                    onProjectUpdated={updated => setProject(prev => ({ ...prev, ...updated }))}
+                  />
                 </div>
               )}
 

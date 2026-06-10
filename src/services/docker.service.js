@@ -11,8 +11,24 @@ const docker = new Dockerode({ socketPath: '/var/run/docker.sock' });
 // terminal-agent can be reached at opus-workspace-{id}:7681.
 const INTERNAL_NETWORK = 'opus-internal';
 
-// Single workspace template — Claude Code with Node.js/npm/npx
-const WORKSPACE_IMAGE = 'ghcr.io/karlmit/opus-command-workspace-claude-code:latest';
+const WORKSPACE_TEMPLATES = {
+  'claude-code': {
+    id: 'claude-code',
+    label: 'Work',
+    description: 'Claude Code with Azure AI Foundry settings.',
+    image: 'ghcr.io/karlmit/opus-command-workspace-claude-code:latest',
+    fallbackPackages: ['@anthropic-ai/claude-code'],
+    azureClaude: true,
+  },
+  private: {
+    id: 'private',
+    label: 'Private',
+    description: 'Claude Code and Codex CLI without Azure AI Foundry settings.',
+    image: 'ghcr.io/karlmit/opus-command-workspace-private:latest',
+    fallbackPackages: ['@anthropic-ai/claude-code', '@openai/codex'],
+    azureClaude: false,
+  },
+};
 
 // Fallback used until the GHCR image is published.
 // node:20-slim has node, npm, npx — we can install Claude Code at first run.
@@ -26,22 +42,32 @@ function homeVolumeName(projectId) {
   return `opus-home-${projectId}`;
 }
 
-async function getWorkspaceImage() {
+function normalizeTemplate(template) {
+  return WORKSPACE_TEMPLATES[template] ? template : 'claude-code';
+}
+
+function getWorkspaceTemplate(template) {
+  return WORKSPACE_TEMPLATES[normalizeTemplate(template)];
+}
+
+async function getWorkspaceImage(template) {
+  const workspaceTemplate = getWorkspaceTemplate(template);
+  const workspaceImage = workspaceTemplate.image;
   // Try the published GHCR image first
   try {
-    await docker.getImage(WORKSPACE_IMAGE).inspect();
-    return WORKSPACE_IMAGE;
+    await docker.getImage(workspaceImage).inspect();
+    return workspaceImage;
   } catch {
     try {
       await new Promise((resolve, reject) => {
-        docker.pull(WORKSPACE_IMAGE, (err, stream) => {
+        docker.pull(workspaceImage, (err, stream) => {
           if (err) return reject(err);
           docker.modem.followProgress(stream, (err) => err ? reject(err) : resolve());
         });
       });
-      return WORKSPACE_IMAGE;
+      return workspaceImage;
     } catch {
-      console.log(`[docker] GHCR workspace image not yet published, using ${FALLBACK_IMAGE}`);
+      console.log(`[docker] GHCR workspace image ${workspaceImage} not yet published, using ${FALLBACK_IMAGE}`);
       return FALLBACK_IMAGE;
     }
   }
@@ -49,7 +75,8 @@ async function getWorkspaceImage() {
 
 // Shared startup Cmd — used by createWorkspaceContainer AND recreateContainer
 // so every container (new, recreated, rebuilt, reset) runs the same init script.
-function buildWorkspaceCmd(image) {
+function buildWorkspaceCmd(image, template) {
+  const workspaceTemplate = getWorkspaceTemplate(template);
   const opusCliPath = path.join(__dirname, '..', 'workspace', 'opus-cli.js');
   const opusCliBase64 = fs.existsSync(opusCliPath)
     ? Buffer.from(fs.readFileSync(opusCliPath, 'utf8')).toString('base64')
@@ -58,13 +85,15 @@ function buildWorkspaceCmd(image) {
   const connectorSkillBase64 = fs.existsSync(connectorSkillPath)
     ? Buffer.from(fs.readFileSync(connectorSkillPath, 'utf8')).toString('base64')
     : '';
-  const claudeSettings = JSON.stringify({
+  const workClaudeSettings = JSON.stringify({
     model: 'sonnet',
     enabledPlugins: { 'azure@azure-skills': true },
     extraKnownMarketplaces: {
       'azure-skills': { source: { source: 'github', repo: 'microsoft/azure-skills' } },
     },
   });
+  const privateClaudeSettings = JSON.stringify({ model: 'sonnet' });
+  const claudeSettings = workspaceTemplate.azureClaude ? workClaudeSettings : privateClaudeSettings;
 
   const opusSkillPointer = '\\n## Opus Managed Skills\\n\\nAlso read:\\n- .opus/skills/connectors.md\\n';
 
@@ -86,23 +115,29 @@ function buildWorkspaceCmd(image) {
     `grep -q ".opus/skills/connectors.md" ~/.claude/CLAUDE.md 2>/dev/null || printf '${opusSkillPointer}' >> ~/.claude/CLAUDE.md`,
     `grep -q ".opus/skills/connectors.md" /workspace/CLAUDE.md 2>/dev/null || printf '${opusSkillPointer}' >> /workspace/CLAUDE.md`,
     `grep -q ".opus/skills/connectors.md" /workspace/AGENTS.md 2>/dev/null || printf '${opusSkillPointer}' >> /workspace/AGENTS.md`,
-    `[ -f ~/.claude/settings.json ] || echo '${claudeSettings}' > ~/.claude/settings.json`,
+    workspaceTemplate.azureClaude
+      ? `[ -f ~/.claude/settings.json ] || echo '${claudeSettings}' > ~/.claude/settings.json`
+      : `grep -q "azure-skills" ~/.claude/settings.json 2>/dev/null && echo '${claudeSettings}' > ~/.claude/settings.json || true`,
     '[ -f ~/.npmrc ] || echo "prefix=${HOME}/.npm-global" > ~/.npmrc',
     'grep -q "Opus Command PATH" ~/.bashrc 2>/dev/null || ' +
     'printf "\\n# Opus Command PATH\\n' +
     'export PATH=\\"$HOME/bin:$HOME/.npm-global/bin:$HOME/.local/bin:$PATH\\"\\n' +
     'export NPM_CONFIG_PREFIX=\\"$HOME/.npm-global\\"\\n' +
     'export IS_SANDBOX=1\\n" >> ~/.bashrc',
-    // CLAUDE_CODE_USE_FOUNDRY=1 is required to activate Azure AI Foundry mode in Claude Code.
-    // All four vars are written to ~/.bashrc so they survive shell restarts.
-    // Idempotent: skipped if already present, and guarded by ANTHROPIC_FOUNDRY_RESOURCE being set.
-    'grep -q "CLAUDE_CODE_USE_FOUNDRY" ~/.bashrc 2>/dev/null || ' +
-    '[ -z "$ANTHROPIC_FOUNDRY_RESOURCE" ] || ' +
-    'printf "\\n# Claude Code — Azure AI Foundry\\n' +
-    'export CLAUDE_CODE_USE_FOUNDRY=1\\n' +
-    'export ANTHROPIC_FOUNDRY_RESOURCE=$ANTHROPIC_FOUNDRY_RESOURCE\\n' +
-    'export ANTHROPIC_DEFAULT_SONNET_MODEL=$ANTHROPIC_DEFAULT_SONNET_MODEL\\n' +
-    'export ANTHROPIC_FOUNDRY_API_KEY=$ANTHROPIC_FOUNDRY_API_KEY\\n" >> ~/.bashrc',
+    workspaceTemplate.azureClaude
+      ? (
+        // CLAUDE_CODE_USE_FOUNDRY=1 is required to activate Azure AI Foundry mode in Claude Code.
+        // All four vars are written to ~/.bashrc so they survive shell restarts.
+        // Idempotent: skipped if already present, and guarded by ANTHROPIC_FOUNDRY_RESOURCE being set.
+        'grep -q "CLAUDE_CODE_USE_FOUNDRY" ~/.bashrc 2>/dev/null || ' +
+        '[ -z "$ANTHROPIC_FOUNDRY_RESOURCE" ] || ' +
+        'printf "\\n# Claude Code — Azure AI Foundry\\n' +
+        'export CLAUDE_CODE_USE_FOUNDRY=1\\n' +
+        'export ANTHROPIC_FOUNDRY_RESOURCE=$ANTHROPIC_FOUNDRY_RESOURCE\\n' +
+        'export ANTHROPIC_DEFAULT_SONNET_MODEL=$ANTHROPIC_DEFAULT_SONNET_MODEL\\n' +
+        'export ANTHROPIC_FOUNDRY_API_KEY=$ANTHROPIC_FOUNDRY_API_KEY\\n" >> ~/.bashrc'
+      )
+      : 'sed -i "/# Claude Code .*Azure AI Foundry/,/^$/d;/ANTHROPIC_/d;/CLAUDE_CODE_USE_FOUNDRY/d" ~/.bashrc 2>/dev/null || true',
     // GH_TOKEN → write to ~/.bashrc so gh and git use it in interactive shells
     'grep -q "GH_TOKEN" ~/.bashrc 2>/dev/null || ' +
     '[ -z "$GH_TOKEN" ] || ' +
@@ -119,8 +154,13 @@ function buildWorkspaceCmd(image) {
     '[ -z "$GH_TOKEN" ] || { GH=$(command -v gh 2>/dev/null || echo ~/bin/gh); [ -x "$GH" ] && GH_TOKEN=$GH_TOKEN "$GH" auth setup-git 2>/dev/null; } || true',
   ].join('; ');
 
+  const fallbackInstall = workspaceTemplate.fallbackPackages
+    .map(pkg => `npm install -g ${pkg} --quiet 2>&1 | tail -1 || true`)
+    .join('; ');
+
   const fallbackInit = image === FALLBACK_IMAGE
-    ? 'command -v claude || npm install -g @anthropic-ai/claude-code --quiet 2>&1 | tail -1 || true; ' +
+    ? 'command -v claude >/dev/null 2>&1 || ' + fallbackInstall + '; ' +
+      (workspaceTemplate.id === 'private' ? 'command -v codex >/dev/null 2>&1 || npm install -g @openai/codex --quiet 2>&1 | tail -1 || true; ' : '') +
       'grep -q "Opus Command" /etc/bash.bashrc 2>/dev/null || ' +
       'printf \'\\nexport PATH="$HOME/bin:$HOME/.npm-global/bin:$HOME/.local/bin:$PATH"\\n' +
       'export NPM_CONFIG_PREFIX="$HOME/.npm-global"\\n' +
@@ -186,8 +226,9 @@ async function _connectToInternalNetwork(containerId) {
 
 // ────────────────────────────────────────────────────────────────────────────
 
-async function createWorkspaceContainer(projectId, folderPath) {
-  const image = await getWorkspaceImage();
+async function createWorkspaceContainer(projectId, folderPath, template = 'claude-code') {
+  const templateId = normalizeTemplate(template);
+  const image = await getWorkspaceImage(templateId);
   const name = containerName(projectId);
   const homeVol = homeVolumeName(projectId);
   const projectHostPath = path.join(HOST_PROJECTS_DIR, folderPath);
@@ -214,7 +255,7 @@ async function createWorkspaceContainer(projectId, folderPath) {
   const container = await docker.createContainer({
     name,
     Image: image,
-    Cmd: buildWorkspaceCmd(image),
+    Cmd: buildWorkspaceCmd(image, templateId),
     Env: userEnv,
     HostConfig: {
       Binds: [`${projectHostPath}:/workspace`, `${homeVol}:/root`],
@@ -247,9 +288,10 @@ async function restartContainer(projectId) {
   return getContainerStatus(projectId);
 }
 
-async function recreateContainer(projectId, folderPath) {
+async function recreateContainer(projectId, folderPath, template = 'claude-code') {
+  const templateId = normalizeTemplate(template);
   const homeVol = homeVolumeName(projectId);
-  const image = await getWorkspaceImage();
+  const image = await getWorkspaceImage(templateId);
   const name = containerName(projectId);
   const projectHostPath = path.join(HOST_PROJECTS_DIR, folderPath);
 
@@ -269,7 +311,7 @@ async function recreateContainer(projectId, folderPath) {
   const container = await docker.createContainer({
     name,
     Image: image,
-    Cmd: buildWorkspaceCmd(image),
+    Cmd: buildWorkspaceCmd(image, templateId),
     Env: userEnv,
     HostConfig: {
       Binds: [`${projectHostPath}:/workspace`, `${homeVol}:/root`],
@@ -283,19 +325,20 @@ async function recreateContainer(projectId, folderPath) {
   return { containerId: container.id };
 }
 
-async function rebuildContainer(projectId, folderPath) {
+async function rebuildContainer(projectId, folderPath, template = 'claude-code') {
+  const workspaceTemplate = getWorkspaceTemplate(template);
   // Pull latest workspace image
   await new Promise((resolve) => {
-    docker.pull(WORKSPACE_IMAGE, (err, stream) => {
+    docker.pull(workspaceTemplate.image, (err, stream) => {
       if (err || !stream) return resolve();
       docker.modem.followProgress(stream, () => resolve());
     });
   }).catch(() => {});
 
-  return recreateContainer(projectId, folderPath);
+  return recreateContainer(projectId, folderPath, workspaceTemplate.id);
 }
 
-async function resetEnvironment(projectId, folderPath) {
+async function resetEnvironment(projectId, folderPath, template = 'claude-code') {
   const homeVol = homeVolumeName(projectId);
 
   try {
@@ -308,7 +351,7 @@ async function resetEnvironment(projectId, folderPath) {
     await docker.getVolume(homeVol).remove();
   } catch (_) {}
 
-  return recreateContainer(projectId, folderPath);
+  return recreateContainer(projectId, folderPath, template);
 }
 
 async function removeWorkspace(projectId) {
@@ -511,4 +554,6 @@ module.exports = {
   streamContainerLogs,
   containerName,
   homeVolumeName,
+  WORKSPACE_TEMPLATES,
+  normalizeTemplate,
 };

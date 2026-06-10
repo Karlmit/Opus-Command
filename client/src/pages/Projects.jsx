@@ -15,9 +15,17 @@ function StatusPill({ status }) {
 
 function NewProjectModal({ onClose, onCreated }) {
   const { csrfToken } = useAuth();
-  const [form, setForm] = useState({ name: '', folder: '' });
+  const [form, setForm] = useState({ name: '', folder: '', template: 'claude-code' });
+  const [templates, setTemplates] = useState([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/projects/templates')
+      .then(r => r.json())
+      .then(data => setTemplates(data.templates || []))
+      .catch(() => {});
+  }, []);
 
   // Auto-fill folder from name
   function handleNameChange(name) {
@@ -83,9 +91,28 @@ function NewProjectModal({ onClose, onCreated }) {
               />
               <p className="form-hint">Subdirectory within <code>/projects</code> — created automatically</p>
             </div>
-            <div className="modal-workspace-info">
-              <span className="modal-workspace-badge">Claude Code workspace</span>
-              <span className="modal-workspace-desc">Node.js · npm · npx · Claude Code CLI · Azure AI Foundry</span>
+            <div className="form-group">
+              <label className="form-label">Workspace Template</label>
+              <div className="template-options">
+                {(templates.length ? templates : [
+                  { id: 'claude-code', label: 'Work', description: 'Claude Code with Azure AI Foundry settings.' },
+                  { id: 'private', label: 'Private', description: 'Claude Code and Codex CLI without Azure AI Foundry settings.' },
+                ]).map(template => (
+                  <label key={template.id} className={`template-option${form.template === template.id ? ' selected' : ''}`}>
+                    <input
+                      type="radio"
+                      name="workspace-template"
+                      value={template.id}
+                      checked={form.template === template.id}
+                      onChange={e => setForm(f => ({ ...f, template: e.target.value }))}
+                    />
+                    <span className="template-option-copy">
+                      <span className="template-option-label">{template.label}</span>
+                      <span className="template-option-desc">{template.description}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
             </div>
             {error && <p className="error-message">{error}</p>}
           </div>

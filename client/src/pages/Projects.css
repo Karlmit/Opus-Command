@@ -212,30 +212,50 @@
   accent-color: var(--color-accent);
 }
 
-/* Workspace info strip in modal */
-.modal-workspace-info {
+.template-options {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.template-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
   gap: var(--spacing-sm);
   padding: var(--spacing-sm) var(--spacing-md);
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  flex-wrap: wrap;
+  cursor: pointer;
+  transition: border-color var(--motion-hover), background var(--motion-hover);
 }
 
-.modal-workspace-badge {
+.template-option:hover,
+.template-option.selected {
+  background: var(--color-surface-elevated);
+  border-color: var(--color-border-strong);
+}
+
+.template-option input {
+  margin-top: 2px;
+  accent-color: var(--color-accent);
+}
+
+.template-option-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.template-option-label {
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text-primary);
-  background: var(--color-surface-elevated);
-  padding: 2px 8px;
-  border-radius: var(--radius-full);
-  border: 1px solid var(--color-border-strong);
-  white-space: nowrap;
 }
 
-.modal-workspace-desc {
+.template-option-desc {
   font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);
+  line-height: 1.35;
 }
