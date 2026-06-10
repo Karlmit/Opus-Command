@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="Logos/mark-dark.svg" alt="Opus Command" width="100" height="100" />
+<img src="client/public/mark-dark.svg" alt="Opus Command" width="100" height="100" />
 
-<img src="Logos/wordmark-dark.svg" alt="Opus Command" width="325" height="98" />
+<img src="client/public/wordmark-dark.svg" alt="Opus Command" width="325" height="98" />
 
 *An opus is a work. A magnum opus is **the** work. Opus Command helps you build both.*
 

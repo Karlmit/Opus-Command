@@ -14,3 +14,8 @@ dist/*
 OpusConnector-Setup-*.exe
 .cache/
 .claude/
+
+# Dev-only / tooling — not part of the app
+_bmad/
+_bmad-output/
+Logos/
