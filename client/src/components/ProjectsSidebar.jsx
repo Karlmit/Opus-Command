@@ -307,13 +307,13 @@ export default function ProjectsSidebar() {
   }
 
   /* ── Theme-aware logo ────────────────────────── */
-  const [theme, setTheme] = useState(() => document.documentElement.getAttribute('data-theme') || 'dark');
+  const [mode, setMode] = useState(() => document.documentElement.getAttribute('data-mode') || 'dark');
   useEffect(() => {
-    const obs = new MutationObserver(() => setTheme(document.documentElement.getAttribute('data-theme') || 'dark'));
-    obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    const obs = new MutationObserver(() => setMode(document.documentElement.getAttribute('data-mode') || 'dark'));
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-mode'] });
     return () => obs.disconnect();
   }, []);
-  const isDark  = theme !== 'light';
+  const isDark  = mode !== 'light';
   const logoSrc = isCollapsed ? (isDark ? '/mark-dark.svg' : '/mark-light.svg') : (isDark ? '/logo-dark.svg' : '/logo-light.svg');
 
   /* ── Project data ────────────────────────────── */

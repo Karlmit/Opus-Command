@@ -2,6 +2,7 @@
    DESIGN TOKENS — DARK MODE (default)
    ============================================================ */
 :root,
+[data-theme="opus-dark"],
 [data-theme="dark"] {
   --color-background: #2B2D31;
   --color-surface: #313338;
@@ -33,6 +34,7 @@
   --shadow-3: none;
 }
 
+[data-theme="opus-light"],
 [data-theme="light"] {
   --color-background: #F5F5F6;
   --color-surface: #FFFFFF;
@@ -61,6 +63,138 @@
   --shadow-1: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
   --shadow-2: 0 4px 12px rgba(0,0,0,0.10), 0 2px 4px rgba(0,0,0,0.06);
   --shadow-3: 0 8px 24px rgba(0,0,0,0.12), 0 4px 8px rgba(0,0,0,0.08);
+}
+
+/* ============================================================
+   CATPPUCCIN — LATTE (light)
+   ============================================================ */
+[data-theme="catppuccin-latte"] {
+  --color-background: #e6e9ef;       /* mantle */
+  --color-surface: #eff1f5;          /* base */
+  --color-surface-elevated: #ffffff;
+  --color-surface-overlay: #ffffff;
+  --color-border: rgba(76, 79, 105, 0.10);
+  --color-border-strong: rgba(76, 79, 105, 0.18);
+  --color-text-primary: #4c4f69;     /* text */
+  --color-text-secondary: rgba(76, 79, 105, 0.60);
+  --color-text-tertiary: rgba(76, 79, 105, 0.38);
+  --color-text-dim: rgba(76, 79, 105, 0.22);
+  --color-accent: #8839ef;           /* mauve */
+  --color-accent-hover: color-mix(in srgb, var(--color-accent) 85%, black);
+  --color-accent-subtle: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  --color-success: #40a02b;          /* green */
+  --color-success-subtle: color-mix(in srgb, var(--color-success) 12%, transparent);
+  --color-warning: #fe640b;          /* peach */
+  --color-warning-subtle: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  --color-error: #d20f39;            /* red */
+  --color-error-subtle: color-mix(in srgb, var(--color-error) 12%, transparent);
+  --color-terminal-bg: #dce0e8;      /* crust */
+  --color-terminal-text: #4c4f69;
+  --color-terminal-cursor: #8839ef;
+  --color-terminal-selection: color-mix(in srgb, var(--color-accent) 30%, transparent);
+
+  --shadow-1: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
+  --shadow-2: 0 4px 12px rgba(0,0,0,0.10), 0 2px 4px rgba(0,0,0,0.06);
+  --shadow-3: 0 8px 24px rgba(0,0,0,0.12), 0 4px 8px rgba(0,0,0,0.08);
+}
+
+/* ============================================================
+   CATPPUCCIN — FRAPPÉ (dark)
+   ============================================================ */
+[data-theme="catppuccin-frappe"] {
+  --color-background: #303446;       /* base */
+  --color-surface: #414559;          /* surface0 */
+  --color-surface-elevated: #51576d; /* surface1 */
+  --color-surface-overlay: #626880;  /* surface2 */
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-border-strong: rgba(255, 255, 255, 0.14);
+  --color-text-primary: #c6d0f5;     /* text */
+  --color-text-secondary: rgba(198, 208, 245, 0.60);
+  --color-text-tertiary: rgba(198, 208, 245, 0.38);
+  --color-text-dim: rgba(198, 208, 245, 0.22);
+  --color-accent: #ca9ee6;           /* mauve */
+  --color-accent-hover: #babbf1;     /* lavender */
+  --color-accent-subtle: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  --color-success: #a6d189;          /* green */
+  --color-success-subtle: color-mix(in srgb, var(--color-success) 12%, transparent);
+  --color-warning: #ef9f76;          /* peach */
+  --color-warning-subtle: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  --color-error: #e78284;            /* red */
+  --color-error-subtle: color-mix(in srgb, var(--color-error) 12%, transparent);
+  --color-terminal-bg: #232634;      /* crust */
+  --color-terminal-text: #c6d0f5;
+  --color-terminal-cursor: #ca9ee6;
+  --color-terminal-selection: color-mix(in srgb, var(--color-accent) 30%, transparent);
+
+  --shadow-1: none;
+  --shadow-2: none;
+  --shadow-3: none;
+}
+
+/* ============================================================
+   CATPPUCCIN — MACCHIATO (dark)
+   ============================================================ */
+[data-theme="catppuccin-macchiato"] {
+  --color-background: #24273a;       /* base */
+  --color-surface: #363a4f;          /* surface0 */
+  --color-surface-elevated: #494d64; /* surface1 */
+  --color-surface-overlay: #5b6078;  /* surface2 */
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-border-strong: rgba(255, 255, 255, 0.14);
+  --color-text-primary: #cad3f5;     /* text */
+  --color-text-secondary: rgba(202, 211, 245, 0.60);
+  --color-text-tertiary: rgba(202, 211, 245, 0.38);
+  --color-text-dim: rgba(202, 211, 245, 0.22);
+  --color-accent: #c6a0f6;           /* mauve */
+  --color-accent-hover: #b7bdf8;     /* lavender */
+  --color-accent-subtle: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  --color-success: #a6da95;          /* green */
+  --color-success-subtle: color-mix(in srgb, var(--color-success) 12%, transparent);
+  --color-warning: #f5a97f;          /* peach */
+  --color-warning-subtle: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  --color-error: #ed8796;            /* red */
+  --color-error-subtle: color-mix(in srgb, var(--color-error) 12%, transparent);
+  --color-terminal-bg: #181926;      /* crust */
+  --color-terminal-text: #cad3f5;
+  --color-terminal-cursor: #c6a0f6;
+  --color-terminal-selection: color-mix(in srgb, var(--color-accent) 30%, transparent);
+
+  --shadow-1: none;
+  --shadow-2: none;
+  --shadow-3: none;
+}
+
+/* ============================================================
+   CATPPUCCIN — MOCHA (dark)
+   ============================================================ */
+[data-theme="catppuccin-mocha"] {
+  --color-background: #1e1e2e;       /* base */
+  --color-surface: #313244;          /* surface0 */
+  --color-surface-elevated: #45475a; /* surface1 */
+  --color-surface-overlay: #585b70;  /* surface2 */
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-border-strong: rgba(255, 255, 255, 0.14);
+  --color-text-primary: #cdd6f4;     /* text */
+  --color-text-secondary: rgba(205, 214, 244, 0.60);
+  --color-text-tertiary: rgba(205, 214, 244, 0.38);
+  --color-text-dim: rgba(205, 214, 244, 0.22);
+  --color-accent: #cba6f7;           /* mauve */
+  --color-accent-hover: #b4befe;     /* lavender */
+  --color-accent-subtle: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  --color-success: #a6e3a1;          /* green */
+  --color-success-subtle: color-mix(in srgb, var(--color-success) 12%, transparent);
+  --color-warning: #fab387;          /* peach */
+  --color-warning-subtle: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  --color-error: #f38ba8;            /* red */
+  --color-error-subtle: color-mix(in srgb, var(--color-error) 12%, transparent);
+  --color-terminal-bg: #11111b;      /* crust */
+  --color-terminal-text: #cdd6f4;
+  --color-terminal-cursor: #cba6f7;
+  --color-terminal-selection: color-mix(in srgb, var(--color-accent) 30%, transparent);
+
+  --shadow-1: none;
+  --shadow-2: none;
+  --shadow-3: none;
 }
 
 /* ============================================================

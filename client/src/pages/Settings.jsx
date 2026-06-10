@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../components/Toast';
 import { useDevice } from '../context/DeviceContext';
 import { io } from 'socket.io-client';
+import { THEMES, applyTheme, normalizeTheme } from '../lib/themes';
 import './Settings.css';
 import './ClaudeSettings.css';
 
@@ -87,41 +88,56 @@ function AccountSection({ csrfToken, addToast }) {
   );
 }
 
-function AppearanceSection({ csrfToken, addToast }) {
-  const [theme, setTheme] = useState('dark');
+// Preserve THEMES order while grouping for display.
+const THEME_GROUPS = THEMES.reduce((acc, t) => {
+  (acc[t.group] = acc[t.group] || []).push(t);
+  return acc;
+}, {});
+
+function AppearanceSection({ csrfToken }) {
+  const [theme, setTheme] = useState(() => normalizeTheme(localStorage.getItem('theme')));
 
   useEffect(() => {
-    fetch('/api/settings/theme').then(r => r.json()).then(d => setTheme(d.theme || 'dark'));
+    fetch('/api/settings/theme').then(r => r.json()).then(d => setTheme(normalizeTheme(d.theme)));
   }, []);
 
-  async function handleTheme(t) {
-    setTheme(t);
-    localStorage.setItem('theme', t);
-    // Apply immediately
-    if (t === 'system') {
-      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      document.documentElement.setAttribute('data-theme', prefersDark ? 'dark' : 'light');
-    } else {
-      document.documentElement.setAttribute('data-theme', t);
-    }
+  async function handleTheme(id) {
+    setTheme(id);
+    applyTheme(id);
+    localStorage.setItem('theme', id);
     await fetch('/api/settings/theme', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-      body: JSON.stringify({ theme: t }),
+      body: JSON.stringify({ theme: id }),
     });
   }
 
   return (
     <div className="settings-section">
       <h2 className="settings-section-title">APPEARANCE</h2>
-      <div className="radio-group">
-        {['dark', 'light', 'system'].map(t => (
-          <label key={t} className="radio-option">
-            <input type="radio" name="theme" value={t} checked={theme === t} onChange={() => handleTheme(t)} />
-            <span>{t.charAt(0).toUpperCase() + t.slice(1)}{t === 'dark' ? ' (default)' : ''}</span>
-          </label>
-        ))}
-      </div>
+      {Object.entries(THEME_GROUPS).map(([group, themes]) => (
+        <div key={group} className="theme-group">
+          <span className="theme-group-label">{group}</span>
+          <div className="theme-grid">
+            {themes.map(t => (
+              <button
+                key={t.id}
+                type="button"
+                className={`theme-card${theme === t.id ? ' selected' : ''}`}
+                onClick={() => handleTheme(t.id)}
+                aria-pressed={theme === t.id}
+              >
+                <div className="theme-swatches">
+                  {t.swatch.map((c, i) => (
+                    <span key={i} className="theme-swatch" style={{ background: c }} />
+                  ))}
+                </div>
+                <span className="theme-card-label">{t.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -804,7 +820,7 @@ export default function Settings() {
       <div className="settings-content">
         {tab === 'general' && (
           <>
-            <AppearanceSection csrfToken={csrfToken} addToast={addToast} />
+            <AppearanceSection csrfToken={csrfToken} />
             <DeviceSection />
             <SoundSection csrfToken={csrfToken} />
           </>

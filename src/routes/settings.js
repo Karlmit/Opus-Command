@@ -5,14 +5,24 @@ const { getSetting, setSetting } = require('../services/auth.service');
 const { APP_VERSION } = require('../config');
 const https = require('https');
 
+// Selectable theme ids (see client/src/lib/themes.js). Legacy values from
+// older clients are normalized onto current ids rather than rejected.
+const THEME_IDS = [
+  'opus-dark', 'opus-light',
+  'catppuccin-latte', 'catppuccin-frappe', 'catppuccin-macchiato', 'catppuccin-mocha',
+];
+const LEGACY_THEMES = { dark: 'opus-dark', light: 'opus-light', system: 'opus-dark' };
+const normalizeTheme = (id) =>
+  THEME_IDS.includes(id) ? id : (LEGACY_THEMES[id] || null);
+
 router.get('/theme', requireAuth, (req, res) => {
-  const theme = getSetting('theme') || 'dark';
+  const theme = normalizeTheme(getSetting('theme')) || 'opus-dark';
   res.json({ theme });
 });
 
 router.post('/theme', requireAuth, (req, res) => {
-  const { theme } = req.body;
-  if (!['dark', 'light', 'system'].includes(theme)) {
+  const theme = normalizeTheme(req.body.theme);
+  if (!theme) {
     return res.status(400).json({ error: 'Invalid theme.' });
   }
   setSetting('theme', theme);

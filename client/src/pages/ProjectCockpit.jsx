@@ -9,6 +9,7 @@ import { ProjectAvatar } from '../components/ProjectsSidebar';
 import { useMobileUI } from '../context/MobileUIContext';
 import { useDevice } from '../context/DeviceContext';
 import { getSocket } from '../lib/socket';
+import { TERMINAL_ANSI } from '../lib/themes';
 import MobileTerminalView from '../components/MobileTerminalView';
 import SyntaxHighlightedEditor from '../components/SyntaxHighlightedEditor';
 import GitPage from './Git';
@@ -182,6 +183,30 @@ function runWhenIdle(fn) {
 /* ── Terminal instance ─────────────────────────── */
 let _xtermInstanceCounter = 0;
 
+// Build the xterm theme from the active CSS theme tokens. The base colors come
+// from `--color-terminal-*` custom properties so the terminal tracks whatever
+// theme is on <html>. ANSI (16-color) palettes are applied for Catppuccin
+// flavors only; Opus themes omit them so xterm keeps its default ANSI colors.
+// Reassigning `term.options.theme` resets any unspecified ANSI color back to
+// xterm's defaults, so switching Catppuccin -> Opus restores the original look.
+function buildTerminalTheme() {
+  const cs = getComputedStyle(document.documentElement);
+  const v = (n, fallback) => cs.getPropertyValue(n).trim() || fallback;
+  const bg = v('--color-terminal-bg', '#1E2024');
+  const base = {
+    background: bg,
+    foreground: v('--color-terminal-text', '#E8EAED'),
+    cursor: v('--color-terminal-cursor', '#3B82F6'),
+    cursorAccent: bg,
+    selectionBackground: v('--color-terminal-selection', 'rgba(59,130,246,0.30)'),
+    scrollbarSliderBackground: v('--color-border-strong', 'rgba(255,255,255,0.14)'),
+    scrollbarSliderHoverBackground: 'rgba(255,255,255,0.20)',
+    scrollbarSliderActiveBackground: 'rgba(255,255,255,0.30)',
+  };
+  const ansi = TERMINAL_ANSI[document.documentElement.getAttribute('data-theme')];
+  return ansi ? { ...base, ...ansi } : base;
+}
+
 function TerminalInstance({
   sessionId, active, termRefs, pendingScrollback,
   onScrollbackApplied, onTerminalDisposed,
@@ -207,21 +232,18 @@ function TerminalInstance({
       fontWeightBold: 700,
       lineHeight: 1.0,
       letterSpacing: 0,
-      theme: {
-        background: '#1E2024',
-        foreground: '#E8EAED',
-        cursor: '#3B82F6',
-        cursorAccent: '#1E2024',
-        selectionBackground: 'rgba(59,130,246,0.30)',
-        scrollbarSliderBackground: 'rgba(255,255,255,0.10)',
-        scrollbarSliderHoverBackground: 'rgba(255,255,255,0.20)',
-        scrollbarSliderActiveBackground: 'rgba(255,255,255,0.30)',
-      },
+      theme: buildTerminalTheme(),
       cursorBlink: true,
       cursorStyle: 'block',
       scrollback: 5000,
       allowTransparency: false,
     });
+
+    // Recolor this terminal live when the app theme changes (no reload needed).
+    const themeObserver = new MutationObserver(() => {
+      term.options.theme = buildTerminalTheme();
+    });
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -558,6 +580,7 @@ function TerminalInstance({
       cancelled = true;
       if (fitFrame) cancelAnimationFrame(fitFrame);
       console.log(`[xterm:${instanceId}] Disposing for session ${sessionId.slice(0,8)}`);
+      themeObserver.disconnect();
       ro?.disconnect();
       window.removeEventListener('resize', onWinResize);
       window.removeEventListener('focus', onVisible);
