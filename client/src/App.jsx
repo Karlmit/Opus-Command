@@ -6,6 +6,7 @@ import Setup from './pages/Setup';
 import Login from './pages/Login';
 import Settings from './pages/Settings';
 import ProjectCockpit from './pages/ProjectCockpit';
+import FileBrowser from './pages/FileBrowser';
 
 function Loading() {
   return (
@@ -48,6 +49,7 @@ export default function App() {
       <Route path="/" element={<AuthGuard><AppShell /></AuthGuard>}>
         <Route index          element={<NoProject />} />
         <Route path="project/:id" element={<ProjectCockpit />} />
+        <Route path="files"       element={<FileBrowser />} />
         <Route path="settings/*"  element={<Settings />} />
       </Route>
     </Routes>

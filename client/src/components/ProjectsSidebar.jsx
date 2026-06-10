@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { getNotificationSocket } from '../context/NotificationsContext';
 import './ProjectsSidebar.css';
@@ -268,7 +268,9 @@ function ProjectContextMenu({ project, position, onClose, onOpenAvatar, navigate
 export default function ProjectsSidebar() {
   const { id: activeId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { csrfToken } = useAuth();
+  const filesActive = location.pathname === '/files';
 
   const [projects, setProjects]   = useState([]);
   const [contextMenu, setContext] = useState(null);
@@ -347,6 +349,20 @@ export default function ProjectsSidebar() {
       <div className="sidebar-logo-area">
         <img src={logoSrc} alt="Opus Command" height={28} style={{ maxWidth: isCollapsed ? 32 : 160 }} />
       </div>
+
+      <div className="sidebar-divider" />
+
+      {/* File browser — not a project, kept separate at the top */}
+      <button
+        className={`sidebar-files-btn${filesActive ? ' active' : ''}`}
+        onClick={() => navigate('/files')}
+        title={isCollapsed ? 'File browser' : undefined}
+      >
+        <svg className="sidebar-files-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+        </svg>
+        {!isCollapsed && <span className="sidebar-files-label">File browser</span>}
+      </button>
 
       <div className="sidebar-divider" />
 

@@ -51,6 +51,39 @@ body.mobile-device .projects-sidebar { display: none; }
   flex-shrink: 0;
 }
 
+/* ── File browser button (top, above project list) ─ */
+.sidebar-files-btn {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 8px 7px 6px;
+  margin: 4px;
+  background: none;
+  border: none;
+  border-left: 2px solid transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  transition: color 120ms, background 120ms, border-color 120ms;
+  width: calc(100% - 8px);
+}
+.sidebar-files-btn:hover { color: var(--color-text-primary); background: var(--color-surface); }
+.sidebar-files-btn.active {
+  background: var(--color-surface);
+  border-left-color: var(--color-accent);
+  color: var(--color-text-primary);
+}
+.sidebar-files-icon { flex-shrink: 0; }
+.sidebar-files-label { font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); }
+
+/* Collapsed: center the icon */
+.projects-sidebar.collapsed .sidebar-files-btn {
+  justify-content: center;
+  padding: 7px 0;
+  margin: 4px 6px;
+  border-left: none;
+}
+
 /* ── Project list ──────────────────────────────── */
 .sidebar-projects {
   flex: 1;
