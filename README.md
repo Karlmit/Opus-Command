@@ -4,6 +4,8 @@
 
 <img src="Logos/wordmark-dark.svg" alt="Opus Command" width="325" height="98" />
 
+*An opus is a work. A magnum opus is **the** work. Opus Command helps you build both.*
+
 **An AI Development Control Plane.**  
 Give every project its own isolated, reproducible workspace — files, terminals, tools, connectors, and AI agents — managed from a single interface, on any device.
 
