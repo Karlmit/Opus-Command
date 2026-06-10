@@ -315,6 +315,16 @@ function TerminalInstance({
       if (sel) lastSelection = sel;
     });
 
+    // Copy-on-select: read the selection synchronously on mouseup — this runs
+    // *before* the app's next repaint clears it, and inside a real user gesture
+    // so execCommand('copy') is permitted on insecure (HTTP) origins. With mouse
+    // reporting on (Claude Code/Codex), selecting requires holding Shift; this
+    // then makes that selection actually land on the clipboard.
+    const onMouseUp = () => {
+      const sel = term.getSelection();
+      if (sel) { lastSelection = sel; copyText(sel); }
+    };
+
     // ── Clipboard paste ──────────────────────────────────────────────────────
     // Text paste is handled by xterm's own native browser 'paste' event (works
     // on insecure origins, and is bracketed-paste aware). We only intercept the
@@ -391,6 +401,8 @@ function TerminalInstance({
       // Catch image pastes before xterm; text pastes fall through to xterm.
       pasteEl = divRef.current;
       pasteEl.addEventListener('paste', onPasteCapture, true);
+      // Copy-on-select (see onMouseUp). Bubble phase, after xterm finalises it.
+      pasteEl.addEventListener('mouseup', onMouseUp);
 
       // ── Keyboard ergonomics ────────────────────────────────────────────────
       // Returning false stops xterm from sending the key to the PTY (but does
@@ -492,6 +504,7 @@ function TerminalInstance({
       ro?.disconnect();
       window.removeEventListener('resize', onWinResize);
       pasteEl?.removeEventListener('paste', onPasteCapture, true);
+      pasteEl?.removeEventListener('mouseup', onMouseUp);
       term.dispose();
       delete termRefs.current[sessionId];
       onTerminalDisposed?.(sessionId);
