@@ -185,7 +185,7 @@ body.mobile-device .projects-sidebar { display: none; }
   color: var(--color-text-dim);
 }
 
-.sidebar-spacer { flex: 1; min-height: 6px; }
+.sidebar-spacer { flex: 0 0 6px; }
 
 /* ── New project button ────────────────────────── */
 .sidebar-new-project {
