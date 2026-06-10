@@ -265,6 +265,18 @@ function TerminalInstance({
       fitAndKeepBottom();
       doResizeEmit();
     };
+    // Force xterm to re-measure the glyph cell size, then fit. Used as a safety
+    // net in case the first measurement happened with a fallback font (which is
+    // narrower → too many columns → PTY wider than the viewport).
+    const forceRemeasureFit = () => {
+      if (cancelled || !divRef.current) return;
+      try {
+        const fam = term.options.fontFamily;
+        term.options.fontFamily = 'monospace';
+        term.options.fontFamily = fam;
+      } catch (_) {}
+      fitActive();
+    };
     const getSize = () => {
       if (!activeStateRef.current) return null;
       return term.cols ? { cols: term.cols, rows: term.rows } : null;
@@ -325,21 +337,9 @@ function TerminalInstance({
     // so execCommand('copy') is permitted on insecure (HTTP) origins. With mouse
     // reporting on (Claude Code/Codex), selecting requires holding Shift; this
     // then makes that selection actually land on the clipboard.
-    let downX = 0, downY = 0, downShift = false, lastHintTs = 0;
-    const onMouseDown = (e) => { downX = e.clientX; downY = e.clientY; downShift = e.shiftKey; };
-    const onMouseUp = (e) => {
+    const onMouseUp = () => {
       const sel = term.getSelection();
-      if (sel) { lastSelection = sel; copyText(sel); return; }
-      // No selection was made. If the user dragged without Shift while the app
-      // has mouse reporting on (Claude Code/Codex), the drag was sent to the app
-      // instead of selecting — hint them to hold Shift. Throttled; nothing else.
-      const mode = term.modes?.mouseTrackingMode;
-      const mouseModeOn = mode && mode !== 'none';
-      const dragged = Math.abs(e.clientX - downX) > 5 || Math.abs(e.clientY - downY) > 5;
-      if (dragged && !downShift && !e.shiftKey && mouseModeOn && Date.now() - lastHintTs > 8000) {
-        lastHintTs = Date.now();
-        addToast?.('Hold Shift and drag to select text and copy it.');
-      }
+      if (sel) { lastSelection = sel; copyText(sel); }
     };
 
     // ── Clipboard paste ──────────────────────────────────────────────────────
@@ -419,7 +419,6 @@ function TerminalInstance({
       pasteEl = divRef.current;
       pasteEl.addEventListener('paste', onPasteCapture, true);
       // Copy-on-select (see onMouseUp). Bubble phase, after xterm finalises it.
-      pasteEl.addEventListener('mousedown', onMouseDown);
       pasteEl.addEventListener('mouseup', onMouseUp);
 
       // ── Keyboard ergonomics ────────────────────────────────────────────────
@@ -503,7 +502,7 @@ function TerminalInstance({
         fitActive();
         // Corrective re-fit once fonts/layout have fully settled, so an early
         // overshoot doesn't leave the PTY wider than the visible area.
-        setTimeout(() => { if (!cancelled && divRef.current) fitActive(); }, 350);
+        setTimeout(() => { if (!cancelled && divRef.current) forceRemeasureFit(); }, 350);
         ro = new ResizeObserver(scheduleFit);
         ro.observe(divRef.current);
         const parent = divRef.current?.parentElement;
@@ -514,8 +513,20 @@ function TerminalInstance({
       }));
     };
 
-    if (typeof document !== 'undefined' && document.fonts?.ready) {
-      document.fonts.ready.then(open);
+    // Open only once the *actual* terminal font is loaded — not merely
+    // document.fonts.ready, which can resolve before "Cascadia Mono" is ever
+    // requested (e.g. arriving from the Settings page, which never uses it).
+    // Measuring with the fallback font makes FitAddon overshoot the column
+    // count, leaving the PTY wider than the viewport.
+    const FONT_SPEC = '16px "Cascadia Mono"';
+    const fontsApi = (typeof document !== 'undefined') ? document.fonts : null;
+    if (fontsApi?.load) {
+      fontsApi.load(FONT_SPEC).then(
+        () => { if (!cancelled) open(); },
+        () => { if (!cancelled) open(); },
+      );
+    } else if (fontsApi?.ready) {
+      fontsApi.ready.then(open);
     } else {
       open();
     }
@@ -529,7 +540,6 @@ function TerminalInstance({
       window.removeEventListener('focus', onVisible);
       document.removeEventListener('visibilitychange', onVisible);
       pasteEl?.removeEventListener('paste', onPasteCapture, true);
-      pasteEl?.removeEventListener('mousedown', onMouseDown);
       pasteEl?.removeEventListener('mouseup', onMouseUp);
       term.dispose();
       delete termRefs.current[sessionId];
