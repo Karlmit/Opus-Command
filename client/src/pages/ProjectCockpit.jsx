@@ -360,12 +360,16 @@ function TerminalInstance({
         }).catch(() => {});
         const fd = new FormData();
         fd.append('files', new File([blob], fileName, { type: mime }));
-        fd.append('targetPath', '.opus-pastes');
-        const r = await fetch(`/api/projects/${projectId}/files/upload`, {
-          method: 'POST',
-          headers: { 'X-CSRF-Token': csrfToken },
-          body: fd,
-        });
+        // targetPath goes in the query string, not the form body: multer reads
+        // the upload destination before the body fields are parsed.
+        const r = await fetch(
+          `/api/projects/${projectId}/files/upload?targetPath=${encodeURIComponent('.opus-pastes')}`,
+          {
+            method: 'POST',
+            headers: { 'X-CSRF-Token': csrfToken },
+            body: fd,
+          },
+        );
         if (!r.ok) throw new Error('upload failed');
         const wsPath = `/workspace/.opus-pastes/${fileName}`;
         emitInput(`'${wsPath.replace(/'/g, "'\\''")}' `);

@@ -335,9 +335,11 @@ router.get('/content-search', requireAuth, (req, res) => {
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const projectRoot = getProjectRoot(req.params.projectId);
-    const uploadDir = req.body.targetPath
-      ? validatePath(projectRoot, req.body.targetPath)
-      : projectRoot;
+    // Read from the query string: multer parses multipart fields in stream
+    // order, so req.body.targetPath is not yet populated when a file part is
+    // processed before its targetPath field. req.query is always available.
+    const target = req.query.targetPath || req.body.targetPath;
+    const uploadDir = target ? validatePath(projectRoot, target) : projectRoot;
     cb(null, uploadDir || projectRoot);
   },
   filename: (req, file, cb) => cb(null, file.originalname),
