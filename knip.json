@@ -1,0 +1,18 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": ["src/index.js", "src/workspace/opus-cli.js"],
+      "project": ["src/**/*.js"]
+    },
+    "client": {
+      "entry": ["index.html", "src/main.jsx", "vite.config.js"],
+      "project": ["src/**/*.{js,jsx}"]
+    },
+    "connectors/*": {
+      "entry": ["src/index.js", "src/electron-main.js", "src/preload.js", "scripts/*.js"],
+      "project": ["src/**/*.js", "scripts/**/*.js"]
+    }
+  },
+  "ignore": ["workspace-images/**", "dist/**"]
+}

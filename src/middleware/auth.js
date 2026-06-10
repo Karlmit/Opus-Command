@@ -8,11 +8,6 @@ function requireAuth(req, res, next) {
   res.redirect('/login');
 }
 
-function requireNoAuth(req, res, next) {
-  if (req.session && req.session.userId) return res.redirect('/');
-  next();
-}
-
 function requireAuthOrWorkspaceToken(req, res, next) {
   if (req.session && req.session.userId) return next();
   if (isWorkspaceTokenRequest(req)) {
@@ -25,4 +20,4 @@ function requireAuthOrWorkspaceToken(req, res, next) {
   res.redirect('/login');
 }
 
-module.exports = { requireAuth, requireNoAuth, requireAuthOrWorkspaceToken };
+module.exports = { requireAuth, requireAuthOrWorkspaceToken };

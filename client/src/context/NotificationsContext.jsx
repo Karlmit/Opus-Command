@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 
 const NotificationsContext = createContext(null);
@@ -62,8 +62,4 @@ export function NotificationsProvider({ children }) {
       {children}
     </NotificationsContext.Provider>
   );
-}
-
-export function useNotifications() {
-  return useContext(NotificationsContext);
 }
