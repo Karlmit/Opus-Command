@@ -485,14 +485,19 @@ function TerminalInstance({
         emitResize,
       };
 
-      // Apply any scrollback that arrived while fonts were still loading.
-      const pending = pendingScrollback?.current?.[sessionId];
-      if (pending !== undefined) {
+      // Replays the buffered scrollback that the server captured at the real PTY
+      // width. This MUST run after the terminal has been fitted to its true size:
+      // a fresh xterm defaults to 80 cols, and writing wide history into an 80-col
+      // grid and then reflowing it up to the real width mangles every wrapped line.
+      const applyPendingScrollback = () => {
+        const pending = pendingScrollback?.current?.[sessionId];
+        if (pending === undefined) return;
         delete pendingScrollback.current[sessionId];
         term.reset();
         term.write(pending);
+        try { term.scrollToBottom(); } catch (_) {}
         onScrollbackApplied?.(sessionId);
-      }
+      };
 
       // Double rAF: ensures the flex layout has fully settled before FitAddon
       // measures the container. A single rAF is not enough after a hard refresh
@@ -500,9 +505,15 @@ function TerminalInstance({
       requestAnimationFrame(() => requestAnimationFrame(() => {
         if (cancelled || !divRef.current) return;
         fitActive();
+        // Now that the grid is the correct width, replay history into it.
+        applyPendingScrollback();
         // Corrective re-fit once fonts/layout have fully settled, so an early
         // overshoot doesn't leave the PTY wider than the visible area.
-        setTimeout(() => { if (!cancelled && divRef.current) forceRemeasureFit(); }, 350);
+        setTimeout(() => {
+          if (cancelled || !divRef.current) return;
+          forceRemeasureFit();
+          try { term.scrollToBottom(); } catch (_) {}
+        }, 350);
         ro = new ResizeObserver(scheduleFit);
         ro.observe(divRef.current);
         const parent = divRef.current?.parentElement;
