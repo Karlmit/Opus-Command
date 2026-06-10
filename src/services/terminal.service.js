@@ -84,21 +84,32 @@ async function createSession(projectId, io) {
     .all().length;
   const name = `Terminal ${sessionCount + 1}`;
 
-  // Ask the workspace terminal-agent to create the PTY session
+  // Ask the workspace terminal-agent to create the PTY session.
+  // On a freshly created/started workspace the agent (port 7681) may still be
+  // booting, so retry briefly instead of failing the very first terminal —
+  // that error previously forced users to refresh the page.
   let response;
-  try {
-    response = await fetch(`${agentHttp(projectId)}/sessions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId, name, cols: 80, rows: 24 }),
-      signal: AbortSignal.timeout(CONNECT_TIMEOUT_MS),
-    });
-  } catch (err) {
-    throw new Error(
-      `Cannot reach workspace terminal-agent. ` +
-      `Make sure the workspace container is running and rebuilt with the latest image. ` +
-      `(${err.message})`
-    );
+  const deadline = Date.now() + 20_000;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      response = await fetch(`${agentHttp(projectId)}/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId, name, cols: 80, rows: 24 }),
+        signal: AbortSignal.timeout(CONNECT_TIMEOUT_MS),
+      });
+      break;
+    } catch (err) {
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `Cannot reach workspace terminal-agent after several attempts. ` +
+          `Make sure the workspace container is running and rebuilt with the latest image. ` +
+          `(${err.message})`
+        );
+      }
+      console.log(`[terminal] agent not ready (attempt ${attempt}) for project ${projectId} — retrying: ${err.message}`);
+      await _sleep(1500);
+    }
   }
 
   if (!response.ok) {

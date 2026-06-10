@@ -167,6 +167,7 @@ let _xtermInstanceCounter = 0;
 function TerminalInstance({
   sessionId, active, termRefs, pendingScrollback,
   onScrollbackApplied, onTerminalDisposed,
+  projectId, csrfToken, addToast, lastInputRef,
 }) {
   const divRef = useRef(null);
   const activeStateRef = useRef(active);
@@ -225,10 +226,18 @@ function TerminalInstance({
       lastEmittedSize = nextSize;
       sock.emit('terminal:resize', { sessionId, cols: term.cols, rows: term.rows });
     };
+    // Fit, but keep the viewport pinned to the bottom if it already was.
+    // Without this, a reflow on resize scrolls the view up into the scrollback.
+    const fitAndKeepBottom = () => {
+      const buf = term.buffer?.active;
+      const wasBottom = !buf || buf.viewportY >= buf.baseY;
+      try { fit.fit(); } catch (_) {}
+      if (wasBottom) { try { term.scrollToBottom(); } catch (_) {} }
+    };
     const runFit = () => {
       fitFrame = null;
       if (!activeStateRef.current || cancelled || !divRef.current) return;
-      try { fit.fit(); } catch (_) {}
+      fitAndKeepBottom();
       doResizeEmit();
     };
     const scheduleFit = () => {
@@ -237,7 +246,7 @@ function TerminalInstance({
     };
     const fitActive = () => {
       if (!activeStateRef.current) return;
-      try { fit.fit(); } catch (_) {}
+      fitAndKeepBottom();
       doResizeEmit();
     };
     const getSize = () => {
@@ -246,12 +255,61 @@ function TerminalInstance({
     };
     const emitInput = data => {
       const sock = getSocket();
+      if (lastInputRef) lastInputRef.current = Date.now();
       if (sock.connected) {
         sock.emit('terminal:input', { sessionId, data });
       }
     };
     const emitResize = () => {
       doResizeEmit();
+    };
+
+    // ── Clipboard paste ──────────────────────────────────────────────────────
+    // xterm normally forwards Ctrl+V to the PTY as a raw ^V (\x16), which CLIs
+    // like Claude Code / Codex interpret as "paste image from system clipboard"
+    // — failing with "could not find an image". Instead we read the clipboard
+    // ourselves: text is pasted through xterm (bracketed-paste aware, so multi-
+    // line pastes don't auto-run), and images are uploaded and their path pasted.
+    const pasteImageBlob = async (blob, mime) => {
+      try {
+        const ext = (mime.split('/')[1] || 'png').replace('+xml', '');
+        const fileName = `pasted-${Date.now()}.${ext}`;
+        // Best-effort: keep pasted images tidy in their own folder.
+        await fetch(`/api/projects/${projectId}/files/create`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+          body: JSON.stringify({ filePath: '.opus-pastes', type: 'dir' }),
+        }).catch(() => {});
+        const fd = new FormData();
+        fd.append('files', new File([blob], fileName, { type: mime }));
+        fd.append('targetPath', '.opus-pastes');
+        const r = await fetch(`/api/projects/${projectId}/files/upload`, {
+          method: 'POST',
+          headers: { 'X-CSRF-Token': csrfToken },
+          body: fd,
+        });
+        if (!r.ok) throw new Error('upload failed');
+        const wsPath = `/workspace/.opus-pastes/${fileName}`;
+        emitInput(`'${wsPath.replace(/'/g, "'\\''")}' `);
+        addToast?.('Pasted image path into terminal.');
+      } catch (_) {
+        addToast?.('Could not paste image.', 'error');
+      }
+    };
+    const handlePaste = async () => {
+      // Prefer text — what users want most, and bracketed-paste safe.
+      try {
+        const text = await navigator.clipboard.readText();
+        if (text) { term.paste(text); return; }
+      } catch (_) {}
+      // No text → try an image (bonus).
+      try {
+        const items = await navigator.clipboard.read();
+        for (const item of items) {
+          const imgType = item.types.find(t => t.startsWith('image/'));
+          if (imgType) { await pasteImageBlob(await item.getType(imgType), imgType); return; }
+        }
+      } catch (_) {}
     };
 
     // open() is called inside fonts.ready so glyph widths are measured with
@@ -271,6 +329,48 @@ function TerminalInstance({
 
       term.onData(data => {
         emitInput(data);
+      });
+
+      // ── Keyboard ergonomics ────────────────────────────────────────────────
+      // Returning false stops xterm from sending the key to the PTY.
+      term.attachCustomKeyEventHandler(e => {
+        if (e.type !== 'keydown') return true;
+        const ctrl = e.ctrlKey && !e.altKey && !e.metaKey;
+
+        // Ctrl+C — if text is selected, copy it and unmark (don't send SIGINT).
+        // With no selection, fall through so Ctrl+C interrupts as usual.
+        if (ctrl && !e.shiftKey && (e.key === 'c' || e.key === 'C')) {
+          if (term.hasSelection()) {
+            const sel = term.getSelection();
+            if (sel) navigator.clipboard?.writeText(sel).catch(() => {});
+            term.clearSelection();
+            return false;
+          }
+          return true;
+        }
+
+        // Ctrl+Shift+C — explicit copy of the selection.
+        if (e.ctrlKey && e.shiftKey && (e.key === 'c' || e.key === 'C')) {
+          if (term.hasSelection()) {
+            navigator.clipboard?.writeText(term.getSelection()).catch(() => {});
+            term.clearSelection();
+            return false;
+          }
+          return true;
+        }
+
+        // Ctrl+V / Ctrl+Shift+V — paste text (or an image path) instead of ^V.
+        if (ctrl && (e.key === 'v' || e.key === 'V')) {
+          handlePaste();
+          return false;
+        }
+
+        // Word deletion: Ctrl+Backspace kills the previous word (^W),
+        // Ctrl+Delete kills the next word (Alt+d / ESC d).
+        if (ctrl && e.key === 'Backspace') { emitInput('\x17'); return false; }
+        if (ctrl && e.key === 'Delete')    { emitInput('\x1bd'); return false; }
+
+        return true;
       });
 
       // Register ref so live terminal:data events can write to the terminal.
@@ -717,6 +817,9 @@ export default function ProjectCockpit() {
 
   const termRefs         = useRef({});
   const activeRef        = useRef(null);
+  // Timestamp of the last terminal keystroke — used to pause background
+  // polling (file tree) while the user is actively typing, avoiding jank.
+  const lastInputRef     = useRef(0);
   // Track which sessions this socket client has already joined (and received scrollback for).
   // Cleared on socket reconnect because the server treats it as a brand-new client.
   const joinedSessions   = useRef(new Set());
@@ -839,7 +942,13 @@ export default function ProjectCockpit() {
     const t1 = setInterval(() => {
       if (!activeTabStateRef.current?.startsWith('term-')) loadProject();
     }, 5000);
-    const t2 = setInterval(loadTree, 750);
+    // Poll the file tree, but skip a cycle while the user is actively typing in
+    // a terminal — the fetch + full-tree JSON diff on the main thread otherwise
+    // shows up as periodic input lag.
+    const t2 = setInterval(() => {
+      if (Date.now() - lastInputRef.current < 1500) return;
+      loadTree();
+    }, 1500);
     return () => {
       clearInterval(t1);
       clearInterval(t2);
@@ -1500,7 +1609,7 @@ export default function ProjectCockpit() {
               <button className="tab-close" onClick={e => { e.stopPropagation(); killTerminal(t.id); }}>×</button>
             </div>
           ))}
-          <button className="cockpit-new-term" onClick={createTerminal}>+ Terminal</button>
+          <button className="cockpit-new-term" onClick={() => createTerminal()}>+ Terminal</button>
           <div
             className="cockpit-tab files-tab"
             role="tab"
@@ -1556,7 +1665,7 @@ export default function ProjectCockpit() {
                 <MobileTerminalView key={activeTermId} sessionId={activeTermId} />
               ) : (
                 <div className="cockpit-empty">
-                  <button className="btn btn-primary" onClick={createTerminal}>Open Terminal</button>
+                  <button className="btn btn-primary" onClick={() => createTerminal()}>Open Terminal</button>
                 </div>
               )
             ) : (
@@ -1571,11 +1680,15 @@ export default function ProjectCockpit() {
                     pendingScrollback={pendingScrollback}
                     onScrollbackApplied={markScrollbackApplied}
                     onTerminalDisposed={handleTerminalDisposed}
+                    projectId={projectId}
+                    csrfToken={csrfToken}
+                    addToast={addToast}
+                    lastInputRef={lastInputRef}
                   />
                 ))}
                 {termTabs.length === 0 && !showOverlay && (
                   <div className="cockpit-empty">
-                    <button className="btn btn-primary" onClick={createTerminal}>Open Terminal</button>
+                    <button className="btn btn-primary" onClick={() => createTerminal()}>Open Terminal</button>
                   </div>
                 )}
               </>
