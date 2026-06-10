@@ -433,6 +433,69 @@ function WorkspacePanel({ projectId, project, csrfToken, addToast, onDelete }) {
   );
 }
 
+function TasksPanel({ tasks, taskDraft, completedOpen, onDraftChange, onAddTask, onToggleTask, onDeleteTask, onToggleCompleted }) {
+  const activeTasks = tasks.filter(t => !t.completed);
+  const completedTasks = tasks.filter(t => t.completed);
+
+  function submitTask(e) {
+    e.preventDefault();
+    onAddTask();
+  }
+
+  return (
+    <div className="panel-content tasks-content">
+      <form className="task-add-row" onSubmit={submitTask}>
+        <input
+          className="task-input"
+          value={taskDraft}
+          onChange={e => onDraftChange(e.target.value)}
+          placeholder="Add task"
+        />
+        <button className="btn btn-primary" type="submit">Add</button>
+      </form>
+
+      <div className="task-list">
+        {activeTasks.length === 0 && <p className="panel-hint">No open tasks.</p>}
+        {activeTasks.map(task => (
+          <label key={task.id} className="task-row">
+            <input
+              type="checkbox"
+              checked={task.completed}
+              onChange={() => onToggleTask(task.id)}
+            />
+            <span className="task-title">{task.title}</span>
+            <button type="button" className="task-delete-btn" onClick={e => { e.preventDefault(); onDeleteTask(task.id); }}>×</button>
+          </label>
+        ))}
+      </div>
+
+      <div className="task-completed-section">
+        <button className="task-completed-toggle" type="button" onClick={onToggleCompleted}>
+          <span>{completedOpen ? '▾' : '▸'}</span>
+          <span>Completed tasks</span>
+          <span className="task-count">{completedTasks.length}</span>
+        </button>
+        {completedOpen && (
+          <div className="task-list completed">
+            {completedTasks.length === 0 && <p className="panel-hint">No completed tasks.</p>}
+            {completedTasks.map(task => (
+              <label key={task.id} className="task-row completed">
+                <input
+                  type="checkbox"
+                  checked={task.completed}
+                  onChange={() => onToggleTask(task.id)}
+                />
+                <span className="task-title">{task.title}</span>
+                <button type="button" className="task-delete-btn" onClick={e => { e.preventDefault(); onDeleteTask(task.id); }}>×</button>
+              </label>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ── Git panel ─────────────────────────────────── */
 function GitPanel({ projectId, csrfToken, addToast }) {
   const [status, setStatus] = useState(null);
@@ -568,6 +631,10 @@ export default function ProjectCockpit() {
   const [dirtyFiles, setDirty]    = useState({});
   const [activeTab, setActiveTab] = useState(null); // 'term-{id}' | 'file-{path}' | 'settings' | 'git'
   const [lastActiveTermId, setLastActiveTermId] = useState(null);
+  const [tasks, setTasks] = useState([]);
+  const [taskDraft, setTaskDraft] = useState('');
+  const [completedTasksOpen, setCompletedTasksOpen] = useState(false);
+  const [tasksOpen, setTasksOpen] = useState(false);
   const [reconnecting, setRecon]  = useState(false);
   const [reconSecs, setReconSecs] = useState(0);
   const [deleting, setDeleting]   = useState(false);
@@ -640,6 +707,17 @@ export default function ProjectCockpit() {
   }, [filePanelWidth]);
 
   useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(`opus:tasks:${projectId}`) || '[]');
+      setTasks(Array.isArray(saved) ? saved : []);
+    } catch {
+      setTasks([]);
+    }
+    setTaskDraft('');
+    setCompletedTasksOpen(false);
+  }, [projectId]);
+
+  useEffect(() => {
     if (!renameDialog) return;
     requestAnimationFrame(() => renameInputRef.current?.select());
   }, [renameDialog?.node.path]);
@@ -663,6 +741,7 @@ export default function ProjectCockpit() {
     const tab = searchParams.get('tab');
     if (tab === 'settings') { setActiveTab('settings'); activeRef.current = 'settings'; setSearchParams({}); }
     else if (tab === 'git') { setActiveTab('git'); activeRef.current = 'git'; setSearchParams({}); }
+    else if (tab === 'tasks') { setTasksOpen(true); setSearchParams({}); }
   }, [searchParams]);
 
   // Sync mobile tab → cockpit activeTab (only on mobile devices)
@@ -699,6 +778,8 @@ export default function ProjectCockpit() {
     setFileTabs([]);
     setFileContent({});
     setDirty({});
+    setTaskDraft('');
+    setTasksOpen(false);
     setMarkedNode(null);
     loadProject(); loadTree(); loadSessions();
     const t1 = setInterval(() => {
@@ -810,6 +891,55 @@ export default function ProjectCockpit() {
       treeSignatureRef.current = nextSignature;
       setTree(nextTree);
     } catch (_) {}
+  }
+
+  function persistTasks(nextTasks) {
+    localStorage.setItem(`opus:tasks:${projectId}`, JSON.stringify(nextTasks));
+  }
+
+  function updateTasks(updater) {
+    setTasks(prev => {
+      const next = updater(prev);
+      persistTasks(next);
+      return next;
+    });
+  }
+
+  function addTask() {
+    const title = taskDraft.trim();
+    if (!title) return;
+    updateTasks(prev => [
+      ...prev,
+      {
+        id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
+        title,
+        completed: false,
+        createdAt: Date.now(),
+        completedAt: null,
+      },
+    ]);
+    setTaskDraft('');
+  }
+
+  function toggleTask(id) {
+    updateTasks(prev => prev.map(task => (
+      task.id === id
+        ? { ...task, completed: !task.completed, completedAt: task.completed ? null : Date.now() }
+        : task
+    )));
+  }
+
+  function deleteTask(id) {
+    updateTasks(prev => prev.filter(task => task.id !== id));
+  }
+
+  function toggleTasksPanel() {
+    if (activeTab === 'git' || activeTab === 'settings') {
+      const term = termTabs.find(t => t.id === activeTermId) || termTabs[0];
+      if (term) activateTerm(term.id);
+      else setActiveTab(null);
+    }
+    setTasksOpen(open => !open);
   }
 
   function persistExpandedPaths(next) {
@@ -1351,12 +1481,13 @@ export default function ProjectCockpit() {
 
           {/* Panel tabs (right-aligned) */}
           <div className="tabs-spacer" />
-          <button className={`cockpit-panel-tab${activeTab === 'git' ? ' active' : ''}`} onClick={() => { setActiveTab('git'); activeRef.current = 'git'; }}>Git</button>
-          <button className={`cockpit-panel-tab${activeTab === 'settings' ? ' active' : ''}`} onClick={() => { setActiveTab('settings'); activeRef.current = 'settings'; }}>Workspace</button>
+          <button className={`cockpit-panel-tab${tasksOpen ? ' active' : ''}`} onClick={toggleTasksPanel}>Tasks</button>
+          <button className={`cockpit-panel-tab${activeTab === 'git' ? ' active' : ''}`} onClick={() => { setTasksOpen(false); setActiveTab('git'); activeRef.current = 'git'; }}>Git</button>
+          <button className={`cockpit-panel-tab${activeTab === 'settings' ? ' active' : ''}`} onClick={() => { setTasksOpen(false); setActiveTab('settings'); activeRef.current = 'settings'; }}>Workspace</button>
         </div>
 
         {/* Content */}
-        <div className={`cockpit-content${fileSplitActive ? ' file-split-active' : ''}${resizingFilePanel ? ' resizing-file-panel' : ''}`}>
+        <div className={`cockpit-content${fileSplitActive || tasksOpen ? ' file-split-active' : ''}${resizingFilePanel ? ' resizing-file-panel' : ''}`}>
           {/*
             Terminals layer is ALWAYS rendered and takes full space.
             Files/panels overlay on top using position:absolute.
@@ -1364,7 +1495,6 @@ export default function ProjectCockpit() {
           */}
           <div
             className="terminals-layer"
-            style={fileSplitActive ? { flexBasis: `calc(100% - ${filePanelWidth}px)`, flexGrow: 0 } : undefined}
           >
             {isMobile ? (
               /* Mobile: read-only log viewer — never mounts xterm, never resizes PTY */
@@ -1437,6 +1567,22 @@ export default function ProjectCockpit() {
 
               {/* Git panel */}
               {activeTab === 'git' && <GitPage />}
+            </div>
+          )}
+
+          {tasksOpen && (
+            <div className="tasks-drawer">
+              <div className="side-panel-header">TASKS</div>
+              <TasksPanel
+                tasks={tasks}
+                taskDraft={taskDraft}
+                completedOpen={completedTasksOpen}
+                onDraftChange={setTaskDraft}
+                onAddTask={addTask}
+                onToggleTask={toggleTask}
+                onDeleteTask={deleteTask}
+                onToggleCompleted={() => setCompletedTasksOpen(open => !open)}
+              />
             </div>
           )}
         </div>
