@@ -1745,7 +1745,6 @@ export default function ProjectCockpit() {
         <div className="cockpit-project-footer">
           {project && <ProjectAvatar project={project} size={22} />}
           <span className="cockpit-project-name">{project?.name}</span>
-          <button className="cockpit-delete-btn" onClick={() => setShowDelete(true)} title="Delete project">🗑</button>
         </div>
       </div>
 

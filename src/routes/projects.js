@@ -5,7 +5,7 @@ const fs = require('fs');
 const { requireAuth } = require('../middleware/auth');
 const { getDB } = require('../db');
 const { projects, terminalSessions, activityLog } = require('../db/schema');
-const { eq } = require('drizzle-orm');
+const { eq, asc } = require('drizzle-orm');
 const { PROJECTS_DIR } = require('../config');
 const docker = require('../services/docker.service');
 const terminal = require('../services/terminal.service');
@@ -40,7 +40,7 @@ router.get('/templates', requireAuth, (req, res) => {
 router.get('/', requireAuth, async (req, res) => {
   try {
     const db = getDB();
-    const rows = db.select().from(projects).all();
+    const rows = db.select().from(projects).orderBy(asc(projects.sortOrder), asc(projects.id)).all();
 
     const projectsWithStatus = await Promise.all(rows.map(async p => {
       const status = await docker.getContainerStatus(p.id).catch(() => 'stopped');
@@ -88,11 +88,15 @@ router.post('/', requireAuth, async (req, res) => {
 
     const db = getDB();
     const now = Date.now();
+    // Place new projects at the end of the current ordering.
+    const maxOrder = db.select().from(projects).all()
+      .reduce((max, p) => Math.max(max, p.sortOrder || 0), 0);
     const inserted = db.insert(projects).values({
       name: name.trim(),
       folderPath,
       template,
       status: 'starting',
+      sortOrder: maxOrder + 1,
       createdAt: now,
     }).returning().all();
 
@@ -144,6 +148,25 @@ router.post('/', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('[projects] Create error:', err);
     res.status(500).json({ error: 'Failed to create project.' });
+  }
+});
+
+// PATCH /api/projects/reorder — persist a new project ordering
+// Body: { order: [id, id, …] } — ids in the desired display order.
+router.patch('/reorder', requireAuth, (req, res) => {
+  try {
+    const { order } = req.body;
+    if (!Array.isArray(order)) return res.status(400).json({ error: 'order must be an array of project ids.' });
+
+    const db = getDB();
+    order.forEach((id, index) => {
+      db.update(projects).set({ sortOrder: index + 1 }).where(eq(projects.id, parseInt(id))).run();
+    });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[projects] Reorder error:', err);
+    res.status(500).json({ error: 'Failed to reorder projects.' });
   }
 });
 

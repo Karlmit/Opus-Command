@@ -766,24 +766,62 @@ function DeviceSection() {
   );
 }
 
+const SETTINGS_TABS = [
+  { id: 'general',      label: 'General' },
+  { id: 'integrations', label: 'Integrations' },
+  { id: 'account',      label: 'Account' },
+  { id: 'updates',      label: 'Updates' },
+];
+
 export default function Settings() {
   const { csrfToken } = useAuth();
   const { addToast } = useToast();
+  const [tab, setTab] = useState(() => localStorage.getItem('settings-tab') || 'general');
+
+  function selectTab(id) {
+    setTab(id);
+    localStorage.setItem('settings-tab', id);
+  }
 
   return (
     <div className="settings-page">
       <div className="settings-header">
         <h1 className="settings-title">SETTINGS</h1>
+        <div className="settings-tabs" role="tablist">
+          {SETTINGS_TABS.map(t => (
+            <button
+              key={t.id}
+              role="tab"
+              aria-selected={tab === t.id}
+              className={`settings-tab${tab === t.id ? ' active' : ''}`}
+              onClick={() => selectTab(t.id)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
       </div>
       <div className="settings-content">
-        <GitHubSection csrfToken={csrfToken} addToast={addToast} />
-        <ClaudeSection csrfToken={csrfToken} addToast={addToast} />
-        <ConnectorsSection csrfToken={csrfToken} addToast={addToast} />
-        <AccountSection csrfToken={csrfToken} addToast={addToast} />
-        <AppearanceSection csrfToken={csrfToken} addToast={addToast} />
-        <DeviceSection />
-        <SoundSection csrfToken={csrfToken} />
-        <UpdatesSection csrfToken={csrfToken} />
+        {tab === 'general' && (
+          <>
+            <AppearanceSection csrfToken={csrfToken} addToast={addToast} />
+            <DeviceSection />
+            <SoundSection csrfToken={csrfToken} />
+          </>
+        )}
+        {tab === 'integrations' && (
+          <>
+            <GitHubSection csrfToken={csrfToken} addToast={addToast} />
+            <ClaudeSection csrfToken={csrfToken} addToast={addToast} />
+            <ConnectorsSection csrfToken={csrfToken} addToast={addToast} />
+          </>
+        )}
+        {tab === 'account' && (
+          <AccountSection csrfToken={csrfToken} addToast={addToast} />
+        )}
+        {tab === 'updates' && (
+          <UpdatesSection csrfToken={csrfToken} />
+        )}
       </div>
     </div>
   );

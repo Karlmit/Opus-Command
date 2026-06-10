@@ -21,6 +21,7 @@ const projects = sqliteTable('projects', {
   homeVolume: text('home_volume'),
   status: text('status').default('stopped'),
   avatar: text('avatar').default(''),
+  sortOrder: integer('sort_order').default(0),
   createdAt: integer('created_at').notNull(),
 });
 

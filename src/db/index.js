@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS projects (
   home_volume TEXT,
   status TEXT DEFAULT 'stopped',
   avatar TEXT DEFAULT '',
+  sort_order INTEGER DEFAULT 0,
   created_at INTEGER NOT NULL
 );
 
@@ -144,6 +145,11 @@ function initDB() {
   sqlite.exec(SCHEMA_SQL);
   // Add avatar column to existing installations
   try { sqlite.exec("ALTER TABLE projects ADD COLUMN avatar TEXT DEFAULT ''"); } catch (_) {}
+  try {
+    sqlite.exec("ALTER TABLE projects ADD COLUMN sort_order INTEGER DEFAULT 0");
+    // Backfill existing rows so their order is stable (oldest first).
+    sqlite.exec("UPDATE projects SET sort_order = id WHERE sort_order = 0");
+  } catch (_) {}
   try { sqlite.exec("ALTER TABLE connectors ADD COLUMN labels TEXT DEFAULT '[]'"); } catch (_) {}
   try { sqlite.exec("ALTER TABLE connectors ADD COLUMN capabilities TEXT DEFAULT '{}'"); } catch (_) {}
   runMigrations(sqlite);

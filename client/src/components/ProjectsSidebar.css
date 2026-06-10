@@ -117,6 +117,11 @@ body.mobile-device .projects-sidebar { display: none; }
 
 .sidebar-project-item:hover { background: var(--color-surface); }
 
+.sidebar-project-item.dragging {
+  opacity: 0.45;
+  cursor: grabbing;
+}
+
 .sidebar-project-item.active {
   background: var(--color-surface);
   border-left-color: var(--color-accent);

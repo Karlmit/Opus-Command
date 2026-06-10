@@ -275,6 +275,11 @@ export default function ProjectsSidebar() {
   const [projects, setProjects]   = useState([]);
   const [contextMenu, setContext] = useState(null);
 
+  // Drag-to-reorder state
+  const [dragId, setDragId]   = useState(null);
+  const draggingRef = useRef(false);   // pause polling while a drag is in progress
+  const projectsRef = useRef(projects); // always-fresh order for persistence on drop
+
   // Popovers — store anchor element refs so SidebarPopover can position itself
   const [newProjectAnchor, setNewProjectAnchor] = useState(null); // HTMLElement | null
   const [avatarTarget, setAvatarTarget]         = useState(null); // { project, anchor }
@@ -334,7 +339,48 @@ export default function ProjectsSidebar() {
   }, []);
 
   async function load() {
+    // Don't clobber the optimistic order mid-drag.
+    if (draggingRef.current) return;
     try { const r = await fetch('/api/projects'); const d = await r.json(); setProjects(d.projects || []); } catch (_) {}
+  }
+
+  // Keep a fresh ref of the current order for persistence at drop time.
+  useEffect(() => { projectsRef.current = projects; }, [projects]);
+
+  /* ── Drag to reorder ─────────────────────────── */
+  function handleDragStart(e, id) {
+    setDragId(id);
+    draggingRef.current = true;
+    e.dataTransfer.effectAllowed = 'move';
+  }
+
+  function handleDragOver(e, overId) {
+    if (dragId == null) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragId === overId) return;
+    setProjects(prev => {
+      const from = prev.findIndex(p => p.id === dragId);
+      const to   = prev.findIndex(p => p.id === overId);
+      if (from === -1 || to === -1 || from === to) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      return next;
+    });
+  }
+
+  async function handleDragEnd() {
+    const ordered = projectsRef.current;
+    setDragId(null);
+    draggingRef.current = false;
+    try {
+      await fetch('/api/projects/reorder', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ order: ordered.map(p => p.id) }),
+      });
+    } catch (_) {}
   }
 
   function handleCreated(p) { setProjects(prev => [...prev, p]); navigate(`/project/${p.id}`); }
@@ -375,9 +421,13 @@ export default function ProjectsSidebar() {
           return (
             <div key={project.id}
               data-id={project.id}
-              className={`sidebar-project-item${isActive ? ' active' : ''}${aiActive ? ' ai-active' : ''}${aiWaiting ? ' ai-waiting' : ''}`}
+              draggable
+              className={`sidebar-project-item${isActive ? ' active' : ''}${aiActive ? ' ai-active' : ''}${aiWaiting ? ' ai-waiting' : ''}${dragId === project.id ? ' dragging' : ''}`}
               onClick={() => navigate(`/project/${project.id}`)}
               onContextMenu={e => handleContext(e, project)}
+              onDragStart={e => handleDragStart(e, project.id)}
+              onDragOver={e => handleDragOver(e, project.id)}
+              onDragEnd={handleDragEnd}
               title={isCollapsed ? project.name : undefined}
             >
               <div className="sidebar-avatar-wrap">

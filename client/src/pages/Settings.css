@@ -20,6 +20,37 @@
   color: var(--color-text-primary);
 }
 
+.settings-tabs {
+  display: flex;
+  gap: var(--spacing-xs);
+  margin-top: var(--spacing-md);
+  flex-wrap: wrap;
+}
+
+.settings-tab {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: var(--spacing-xs) var(--spacing-md);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-tertiary);
+  border: 1px solid transparent;
+  transition: background 120ms, color 120ms, border-color 120ms;
+}
+
+.settings-tab:hover {
+  color: var(--color-text-secondary);
+  background: var(--color-surface-elevated);
+}
+
+.settings-tab.active {
+  color: var(--color-text-primary);
+  background: var(--color-surface-elevated);
+  border-color: var(--color-border);
+}
+
 .settings-content {
   flex: 1;
   padding: var(--spacing-xl);
