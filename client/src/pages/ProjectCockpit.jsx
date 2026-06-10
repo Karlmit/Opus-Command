@@ -161,6 +161,16 @@ function FileNode({
   );
 }
 
+// Run work when the main thread is idle so it never competes with terminal
+// input. Falls back to setTimeout where requestIdleCallback is unavailable.
+function runWhenIdle(fn) {
+  if (typeof requestIdleCallback === 'function') {
+    requestIdleCallback(() => fn(), { timeout: 2000 });
+  } else {
+    setTimeout(fn, 0);
+  }
+}
+
 /* ── Terminal instance ─────────────────────────── */
 let _xtermInstanceCounter = 0;
 
@@ -212,6 +222,7 @@ function TerminalInstance({
     let ro = null;
     let fitFrame = null;
     let lastEmittedSize = null;
+    let pasteEl = null;
     const isDeviceMobile = () => document.body.classList.contains('mobile-device');
     const onWinResize = () => {
       scheduleFit();
@@ -264,12 +275,52 @@ function TerminalInstance({
       doResizeEmit();
     };
 
+    // ── Clipboard copy ───────────────────────────────────────────────────────
+    // navigator.clipboard only exists in secure contexts (HTTPS / localhost).
+    // Self-hosted over plain HTTP on a LAN IP, it's undefined — so writeText is a
+    // silent no-op. Fall back to a hidden textarea + execCommand('copy'), which
+    // works on insecure origins too.
+    const copyText = (text) => {
+      if (!text) return;
+      if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
+      } else {
+        fallbackCopy(text);
+      }
+    };
+    const fallbackCopy = (text) => {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.top = '-9999px';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      } catch (_) {}
+      // execCommand stole focus via the textarea — hand it back to the terminal.
+      try { term.focus(); } catch (_) {}
+    };
+
+    // Remember the most recent non-empty selection. Apps like Claude Code repaint
+    // constantly, and xterm drops the visible selection whenever a write touches
+    // the selected rows — so the live selection is usually gone by the time the
+    // user presses Ctrl+C. Capturing it here keeps copy working regardless.
+    let lastSelection = '';
+    term.onSelectionChange(() => {
+      const sel = term.getSelection();
+      if (sel) lastSelection = sel;
+    });
+
     // ── Clipboard paste ──────────────────────────────────────────────────────
-    // xterm normally forwards Ctrl+V to the PTY as a raw ^V (\x16), which CLIs
-    // like Claude Code / Codex interpret as "paste image from system clipboard"
-    // — failing with "could not find an image". Instead we read the clipboard
-    // ourselves: text is pasted through xterm (bracketed-paste aware, so multi-
-    // line pastes don't auto-run), and images are uploaded and their path pasted.
+    // Text paste is handled by xterm's own native browser 'paste' event (works
+    // on insecure origins, and is bracketed-paste aware). We only intercept the
+    // Ctrl+V *key* to suppress the raw ^V that CLIs like Claude Code misread as
+    // "paste image". Images are caught from the same paste event and uploaded,
+    // with their workspace path pasted into the terminal as a bonus.
     const pasteImageBlob = async (blob, mime) => {
       try {
         const ext = (mime.split('/')[1] || 'png').replace('+xml', '');
@@ -296,20 +347,26 @@ function TerminalInstance({
         addToast?.('Could not paste image.', 'error');
       }
     };
-    const handlePaste = async () => {
-      // Prefer text — what users want most, and bracketed-paste safe.
-      try {
-        const text = await navigator.clipboard.readText();
-        if (text) { term.paste(text); return; }
-      } catch (_) {}
-      // No text → try an image (bonus).
-      try {
-        const items = await navigator.clipboard.read();
-        for (const item of items) {
-          const imgType = item.types.find(t => t.startsWith('image/'));
-          if (imgType) { await pasteImageBlob(await item.getType(imgType), imgType); return; }
+    // Native paste event: hijack images, let xterm handle text normally.
+    const onPasteCapture = (e) => {
+      const cd = e.clipboardData;
+      if (!cd) return;
+      // Prefer text when present — only hijack when the clipboard is image-only.
+      if (Array.from(cd.types || []).includes('text/plain')) return;
+      const items = cd.items;
+      if (!items) return;
+      for (const item of items) {
+        if (item.type.startsWith('image/')) {
+          const blob = item.getAsFile();
+          if (blob) {
+            e.preventDefault();
+            e.stopPropagation();
+            pasteImageBlob(blob, item.type);
+            return;
+          }
         }
-      } catch (_) {}
+      }
+      // No image — do nothing; xterm's own paste handler inserts the text.
     };
 
     // open() is called inside fonts.ready so glyph widths are measured with
@@ -331,19 +388,26 @@ function TerminalInstance({
         emitInput(data);
       });
 
+      // Catch image pastes before xterm; text pastes fall through to xterm.
+      pasteEl = divRef.current;
+      pasteEl.addEventListener('paste', onPasteCapture, true);
+
       // ── Keyboard ergonomics ────────────────────────────────────────────────
-      // Returning false stops xterm from sending the key to the PTY.
+      // Returning false stops xterm from sending the key to the PTY (but does
+      // NOT preventDefault — so the browser's native paste still fires for ^V).
       term.attachCustomKeyEventHandler(e => {
         if (e.type !== 'keydown') return true;
         const ctrl = e.ctrlKey && !e.altKey && !e.metaKey;
 
-        // Ctrl+C — if text is selected, copy it and unmark (don't send SIGINT).
-        // With no selection, fall through so Ctrl+C interrupts as usual.
+        // Ctrl+C — if there's a (recent) selection, copy it and unmark instead
+        // of sending SIGINT. lastSelection survives repaints that clear the
+        // visible selection. With nothing selected, fall through to SIGINT.
         if (ctrl && !e.shiftKey && (e.key === 'c' || e.key === 'C')) {
-          if (term.hasSelection()) {
-            const sel = term.getSelection();
-            if (sel) navigator.clipboard?.writeText(sel).catch(() => {});
+          const sel = term.getSelection() || lastSelection;
+          if (sel) {
+            copyText(sel);
             term.clearSelection();
+            lastSelection = '';
             return false;
           }
           return true;
@@ -351,24 +415,32 @@ function TerminalInstance({
 
         // Ctrl+Shift+C — explicit copy of the selection.
         if (e.ctrlKey && e.shiftKey && (e.key === 'c' || e.key === 'C')) {
-          if (term.hasSelection()) {
-            navigator.clipboard?.writeText(term.getSelection()).catch(() => {});
+          const sel = term.getSelection() || lastSelection;
+          if (sel) {
+            copyText(sel);
             term.clearSelection();
+            lastSelection = '';
             return false;
           }
           return true;
         }
 
-        // Ctrl+V / Ctrl+Shift+V — paste text (or an image path) instead of ^V.
+        // Ctrl+V / Ctrl+Shift+V — suppress the raw ^V; the native paste event
+        // (handled by xterm for text, onPasteCapture for images) does the work.
         if (ctrl && (e.key === 'v' || e.key === 'V')) {
-          handlePaste();
           return false;
         }
 
         // Word deletion: Ctrl+Backspace kills the previous word (^W),
         // Ctrl+Delete kills the next word (Alt+d / ESC d).
-        if (ctrl && e.key === 'Backspace') { emitInput('\x17'); return false; }
-        if (ctrl && e.key === 'Delete')    { emitInput('\x1bd'); return false; }
+        if (ctrl && e.key === 'Backspace') { emitInput('\x17'); lastSelection = ''; return false; }
+        if (ctrl && e.key === 'Delete')    { emitInput('\x1bd'); lastSelection = ''; return false; }
+
+        // Any ordinary typing means the user has moved on — forget the
+        // remembered selection so a later lone Ctrl+C interrupts as expected.
+        if (!e.ctrlKey && !e.altKey && !e.metaKey && (e.key.length === 1 || e.key === 'Enter')) {
+          lastSelection = '';
+        }
 
         return true;
       });
@@ -419,6 +491,7 @@ function TerminalInstance({
       console.log(`[xterm:${instanceId}] Disposing for session ${sessionId.slice(0,8)}`);
       ro?.disconnect();
       window.removeEventListener('resize', onWinResize);
+      pasteEl?.removeEventListener('paste', onPasteCapture, true);
       term.dispose();
       delete termRefs.current[sessionId];
       onTerminalDisposed?.(sessionId);
@@ -942,13 +1015,13 @@ export default function ProjectCockpit() {
     const t1 = setInterval(() => {
       if (!activeTabStateRef.current?.startsWith('term-')) loadProject();
     }, 5000);
-    // Poll the file tree, but skip a cycle while the user is actively typing in
-    // a terminal — the fetch + full-tree JSON diff on the main thread otherwise
-    // shows up as periodic input lag.
+    // Poll the file tree, but (a) skip a cycle while the user is actively typing
+    // and (b) run the refresh — including the fetch, JSON diff and any re-render —
+    // in browser idle time, so it never lands on a keystroke and stalls input.
     const t2 = setInterval(() => {
       if (Date.now() - lastInputRef.current < 1500) return;
       loadTree();
-    }, 1500);
+    }, 2000);
     return () => {
       clearInterval(t1);
       clearInterval(t2);
@@ -1049,10 +1122,15 @@ export default function ProjectCockpit() {
       const r = await fetch(`/api/projects/${projectId}/files`);
       const d = await r.json();
       const nextTree = d.tree || [];
-      const nextSignature = JSON.stringify(nextTree);
-      if (nextSignature === treeSignatureRef.current) return;
-      treeSignatureRef.current = nextSignature;
-      setTree(nextTree);
+      // Do the expensive part — stringify diff + (possible) re-render — in idle
+      // time. requestIdleCallback waits for the main thread to be free, so this
+      // can't stall terminal input even right as the poll completes.
+      runWhenIdle(() => {
+        const nextSignature = JSON.stringify(nextTree);
+        if (nextSignature === treeSignatureRef.current) return;
+        treeSignatureRef.current = nextSignature;
+        setTree(nextTree);
+      });
     } catch (_) {}
   }
 
