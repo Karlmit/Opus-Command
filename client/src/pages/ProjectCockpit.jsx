@@ -1611,7 +1611,13 @@ export default function ProjectCockpit() {
       headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
       body: JSON.stringify({ path: node.path }),
     });
-    if ((await r.json()).success) loadTree();
+    if ((await r.json()).success) {
+      // Close any open tabs for the deleted file, or for files inside a deleted folder.
+      const prefix = `${node.path}/`;
+      const affected = fileTabs.filter(t => t.path === node.path || t.path.startsWith(prefix));
+      affected.forEach(t => closeFile(t.path));
+      loadTree();
+    }
     else addToast('Delete failed.', 'error');
   }
 
