@@ -84,25 +84,46 @@ function waitForProxyReady() {
   return new Promise(resolve => _proxyReadyResolvers.push(resolve));
 }
 
-// ── URL helpers ──────────────────────────────────────────────────────────────
+// ── URL / host / auth helpers ──────────────────────────────────────────────────
+// The agent lives inside the workspace, reached at <host>:7681. Docker resolves
+// <host> via the internal bridge DNS name; LXC resolves it to the container's
+// LAN IP (looked up over SSH). Because the LXC agent is LAN-reachable, every
+// request carries the per-workspace bearer token — the proxy is a Node client so
+// it can set the header on both REST and the WS upgrade.
 
-function agentHttp(projectId) {
-  return `http://${containerName(projectId)}:${AGENT_PORT}`;
+function agentHttp(host) {
+  return `http://${host}:${AGENT_PORT}`;
 }
 
-function agentWs(projectId, sessionId) {
-  return `ws://${containerName(projectId)}:${AGENT_PORT}/sessions/${sessionId}`;
+function agentWs(host, sessionId) {
+  return `ws://${host}:${AGENT_PORT}/sessions/${sessionId}`;
+}
+
+function _agentHeaders(projectId) {
+  const { getTerminalAgentToken } = require('./auth.service');
+  return { Authorization: `Bearer ${getTerminalAgentToken(projectId)}` };
+}
+
+// Resolve the agent host for a project. Docker → internal bridge DNS name;
+// LXC → the running container's IP (may be unavailable until it has booted, so
+// callers retry). Throws if an LXC container has no IP yet.
+async function _agentHostFor(projectId) {
+  const project = _getProject(projectId);
+  if (_isLxcProject(project)) {
+    const ip = await lxc.getContainerIp(project);
+    if (!ip) throw new Error('LXC container has no IP yet (is the workspace running?)');
+    return ip;
+  }
+  return containerName(projectId);
 }
 
 // ── Session lifecycle ────────────────────────────────────────────────────────
 
+// Create a PTY session via the in-container terminal-agent. Identical path for
+// Docker and LXC — only the agent host differs (resolved per attempt so an LXC
+// container that is still acquiring its IP / booting its agent is tolerated).
 async function createSession(projectId, io) {
   if (!_io) _io = io;
-
-  const project = _getProject(projectId);
-  if (_isLxcProject(project)) {
-    return _createLxcSession(projectId, io, project);
-  }
 
   const db = getDB();
   const sessionId = uuidv4();
@@ -110,18 +131,20 @@ async function createSession(projectId, io) {
     .where(eq(terminalSessions.projectId, projectId))
     .all().length;
   const name = `Terminal ${sessionCount + 1}`;
+  const headers = { 'Content-Type': 'application/json', ..._agentHeaders(projectId) };
 
-  // Ask the workspace terminal-agent to create the PTY session.
   // On a freshly created/started workspace the agent (port 7681) may still be
-  // booting, so retry briefly instead of failing the very first terminal —
-  // that error previously forced users to refresh the page.
+  // booting — and an LXC container may not have an IP yet — so retry briefly
+  // instead of failing the very first terminal.
   let response;
+  let host;
   const deadline = Date.now() + 20_000;
   for (let attempt = 1; ; attempt++) {
     try {
-      response = await fetch(`${agentHttp(projectId)}/sessions`, {
+      host = await _agentHostFor(projectId);
+      response = await fetch(`${agentHttp(host)}/sessions`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ sessionId, name, cols: 80, rows: 24 }),
         signal: AbortSignal.timeout(CONNECT_TIMEOUT_MS),
       });
@@ -130,7 +153,7 @@ async function createSession(projectId, io) {
       if (Date.now() >= deadline) {
         throw new Error(
           `Cannot reach workspace terminal-agent after several attempts. ` +
-          `Make sure the workspace container is running and rebuilt with the latest image. ` +
+          `Make sure the workspace is running (and, for Docker, rebuilt with the latest image). ` +
           `(${err.message})`
         );
       }
@@ -155,7 +178,7 @@ async function createSession(projectId, io) {
   }).run();
 
   // Open proxy WebSocket
-  _connectProxy(projectId, sessionId, io);
+  _connectProxy(projectId, sessionId, io, host);
 
   return { sessionId, name };
 }
@@ -178,102 +201,15 @@ function _ingestOutput(sessionId, entry, data, ioRef) {
   _detectAIState(sessionId, data, ioRef);
 }
 
-// ── LXC SSH PTY sessions ──────────────────────────────────────────────────────
-// LXC workspaces have no terminal-agent; instead we open an interactive PTY over
-// SSH (lxc-attach into /workspace) and feed it through the same proxy machinery.
-// These sessions do NOT survive an Opus Command restart (the SSH PTY lives in
-// this process), which matches the "PTY dies if the host process restarts" model.
-
-async function _createLxcSession(projectId, io, project) {
-  if (!_io && io) _io = io;
-  const db = getDB();
-  const sessionId = uuidv4();
-  const sessionCount = db.select().from(terminalSessions)
-    .where(eq(terminalSessions.projectId, projectId)).all().length;
-  const name = `Terminal ${sessionCount + 1}`;
-
-  const entry = {
-    ws: null,
-    lxcShell: null,
-    projectId,
-    buffer: '',
-    name,
-    aiState: 'none',
-    aiAgent: null,
-    inputBuffer: '',
-    alive: false,
-    lastOutputTime: Date.now(),
-    headless: null,
-    cols: 80,
-    rows: 24,
-    snapTimer: null,
-    lastSnapTime: 0,
-  };
-  activeProxies.set(sessionId, entry);
-
-  let shell;
-  try {
-    shell = await lxc.openTerminal(project, { cols: 80, rows: 24 }, {
-      onData: (data) => {
-        const e = activeProxies.get(sessionId);
-        if (e) _ingestOutput(sessionId, e, data, _io);
-      },
-      onClose: () => _lxcSessionExit(sessionId),
-      onError: (err) => console.error(`[terminal] lxc shell error ${sessionId.slice(0, 8)}:`, err.message),
-    });
-  } catch (err) {
-    activeProxies.delete(sessionId);
-    throw new Error(
-      `Cannot open LXC terminal: ${err.message}. ` +
-      `Make sure the workspace is running (Start Workspace) and the Unraid backend is reachable.`
-    );
-  }
-
-  entry.lxcShell = shell;
-  entry.alive = true;
-
-  db.insert(terminalSessions).values({
-    id: sessionId,
-    projectId,
-    name,
-    scrollback: '',
-    aiState: 'none',
-    createdAt: Date.now(),
-  }).run();
-
-  console.log(`[terminal] LXC session ${sessionId.slice(0, 8)} opened for project ${projectId}`);
-  _io?.to(`session:${sessionId}`).emit('terminal:session-attached', { sessionId });
-  return { sessionId, name };
-}
-
-function _lxcSessionExit(sessionId) {
-  const ioRef = _io;
-  const entry = activeProxies.get(sessionId);
-  const projectId = entry?.projectId || _getSessionProjectId(sessionId);
-  console.log(`[terminal] LXC session ${sessionId.slice(0, 8)} closed`);
-  _setAIState(sessionId, 'none', ioRef, { force: true });
-  if (entry) {
-    entry.alive = false;
-    _persistScrollback(sessionId, entry, true);
-    _disposeHeadless(entry);
-  }
-  activeProxies.delete(sessionId);
-  sessionClients.delete(sessionId);
-  viewerClients.delete(sessionId);
-  _deleteSessionRecord(sessionId);
-  if (projectId) _emitProjectAISummary(projectId, ioRef);
-  ioRef?.to(`session:${sessionId}`).emit('terminal:exit', { sessionId });
-}
-
 // ── Proxy WebSocket management ───────────────────────────────────────────────
 
-function _connectProxy(projectId, sessionId, io) {
+function _connectProxy(projectId, sessionId, io, host) {
   if (!_io && io) _io = io;
 
-  const wsUrl = agentWs(projectId, sessionId);
+  const wsUrl = agentWs(host, sessionId);
   let ws;
   try {
-    ws = new WebSocket(wsUrl);
+    ws = new WebSocket(wsUrl, { headers: _agentHeaders(projectId) });
   } catch (err) {
     console.error(`[terminal] Failed to open WS for ${sessionId.slice(0, 8)}:`, err.message);
     return;
@@ -282,6 +218,7 @@ function _connectProxy(projectId, sessionId, io) {
   const entry = {
     ws,
     projectId,
+    agentHost: host,   // remembered so killSession can reach the right agent
     buffer: '',
     name: '',
     aiState: 'none',
@@ -387,29 +324,36 @@ async function reconnectOnStartup(io) {
   }
 }
 
+// Probe the in-container agent for a session that existed before this restart.
+// Works identically for Docker and LXC now that LXC runs the agent as a service:
+// the agent (and its PTYs) survive an Opus Command restart, so a still-alive
+// session reconnects. A container restart loses sessions in both backends.
 async function _tryReconnect(session, io) {
   const projId = session.projectId;
-
-  // LXC sessions are SSH PTYs owned by this process — they cannot survive an
-  // Opus Command restart, so don't probe a (non-existent) agent for them.
-  if (_isLxcProject(_getProject(projId))) {
-    console.log(`[terminal] session ${session.id.slice(0, 8)} is LXC — pruning dead restart session`);
-    _deleteSessionRecord(session.id);
-    io?.to(`session:${session.id}`).emit('terminal:exit', { sessionId: session.id });
-    _emitProjectAISummary(projId, io);
-    return;
-  }
+  const headers = _agentHeaders(projId);
 
   const deadline = Date.now() + 25_000;
   let attempt = 0;
 
   while (Date.now() < deadline) {
     attempt++;
+    let host;
+    try {
+      host = await _agentHostFor(projId);
+    } catch (err) {
+      // LXC container may be stopped / IP not ready — retry until the deadline.
+      const rem = Math.ceil((deadline - Date.now()) / 1000);
+      console.log(`[terminal] probe ${session.id.slice(0, 8)}: host unresolved (${err.message}) — retrying (${rem}s left)`);
+      await _sleep(2000);
+      continue;
+    }
+
     const remaining = Math.ceil((deadline - Date.now()) / 1000);
-    console.log(`[terminal] probe attempt ${attempt} for session ${session.id.slice(0, 8)} → ${agentHttp(projId)} (${remaining}s left)`);
+    console.log(`[terminal] probe attempt ${attempt} for session ${session.id.slice(0, 8)} → ${agentHttp(host)} (${remaining}s left)`);
 
     try {
-      const res = await fetch(`${agentHttp(projId)}/sessions`, {
+      const res = await fetch(`${agentHttp(host)}/sessions`, {
+        headers,
         signal: AbortSignal.timeout(3000),
       });
 
@@ -424,7 +368,7 @@ async function _tryReconnect(session, io) {
 
       if (agentSession) {
         console.log(`[terminal] probe ${session.id.slice(0, 8)}: alive — connecting proxy`);
-        _connectProxy(projId, session.id, io);
+        _connectProxy(projId, session.id, io, host);
       } else {
         console.log(`[terminal] probe ${session.id.slice(0, 8)}: not found alive in agent — session dead`);
       }
@@ -447,10 +391,7 @@ function _sleep(ms) {
 
 function _doWrite(sessionId, data) {
   const proxy = activeProxies.get(sessionId);
-  if (proxy?.lxcShell) {
-    _detectAICommandInput(sessionId, data, _io);
-    proxy.lxcShell.write(data);
-  } else if (proxy?.ws?.readyState === WebSocket.OPEN) {
+  if (proxy?.ws?.readyState === WebSocket.OPEN) {
     _detectAICommandInput(sessionId, data, _io);
     proxy.ws.send(JSON.stringify({ type: 'input', data }));
   } else {
@@ -474,10 +415,7 @@ function _doResize(sessionId, cols, rows) {
       _scheduleSnapshot(sessionId);
     }
   };
-  if (proxy.lxcShell) {
-    applyToViewer();
-    proxy.lxcShell.resize(cols, rows);
-  } else if (proxy.ws?.readyState === WebSocket.OPEN) {
+  if (proxy.ws?.readyState === WebSocket.OPEN) {
     applyToViewer();
     proxy.ws.send(JSON.stringify({ type: 'resize', cols, rows }));
   } else {
@@ -507,7 +445,6 @@ function resizeSession(sessionId, cols, rows) {
 function isSessionAlive(sessionId) {
   const proxy = activeProxies.get(sessionId);
   if (!proxy) return false;
-  if (proxy.lxcShell) return proxy.alive === true;
   return proxy.alive === true && proxy.ws?.readyState === WebSocket.OPEN;
 }
 
@@ -515,11 +452,10 @@ function killSession(sessionId) {
   const proxy = activeProxies.get(sessionId);
   const projectId = proxy?.projectId || _getSessionProjectId(sessionId);
   if (proxy) {
-    if (proxy.lxcShell) {
-      try { proxy.lxcShell.close(); } catch (_) {}
-    } else {
-      fetch(`${agentHttp(proxy.projectId)}/sessions/${sessionId}`, {
+    if (proxy.agentHost) {
+      fetch(`${agentHttp(proxy.agentHost)}/sessions/${sessionId}`, {
         method: 'DELETE',
+        headers: _agentHeaders(proxy.projectId),
       }).catch(() => {});
     }
     proxy.ws?.close();
@@ -553,15 +489,10 @@ function renameSession(sessionId, name) {
 
 function listSessions(projectId) {
   const db = getDB();
-  const project = _getProject(projectId);
   const rows = db.select().from(terminalSessions)
     .where(eq(terminalSessions.projectId, projectId)).all();
 
-  const liveRows = _isLxcProject(project)
-    ? rows.filter(s => isSessionAlive(s.id))
-    : rows;
-
-  return liveRows.map(s => ({
+  return rows.map(s => ({
     id:       s.id,
     name:     activeProxies.get(s.id)?.name || s.name,
     active:   isSessionAlive(s.id),
@@ -573,7 +504,6 @@ function listSessions(projectId) {
 
 function getProjectAISummary(projectId) {
   const db = getDB();
-  const project = _getProject(projectId);
   const rows = db.select().from(terminalSessions)
     .where(eq(terminalSessions.projectId, projectId)).all();
 
@@ -582,7 +512,6 @@ function getProjectAISummary(projectId) {
   let terminalCount = 0;
 
   for (const row of rows) {
-    if (_isLxcProject(project) && !isSessionAlive(row.id)) continue;
     terminalCount++;
     const state = activeProxies.get(row.id)?.aiState || row.aiState || 'none';
     if (state === 'active') aiActive++;

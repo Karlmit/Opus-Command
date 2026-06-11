@@ -232,10 +232,18 @@ function buildWorkspaceCmd(image, template) {
       'cd() { builtin cd "${@:-/workspace}"; }\\n\' >> /etc/bash.bashrc; '
     : '';
 
-  // Start the terminal-agent in the background if it's present in the image.
-  // The agent owns PTY sessions so they survive Opus Command restarts.
-  const agentStart =
-    '[ -f /opt/terminal-agent/index.js ] && node /opt/terminal-agent/index.js &';
+  // Inject the terminal-agent from its single canonical source and start it in
+  // the background. The agent owns PTY sessions so they survive Opus Command
+  // restarts; injecting at start (rather than COPYing into the image) keeps the
+  // Docker and LXC backends running byte-identical agent code. Auth token comes
+  // from TERMINAL_AGENT_TOKEN in the container env (see create/recreate).
+  const agentPath = path.join(__dirname, '..', 'workspace', 'terminal-agent.js');
+  const agentBase64 = fs.existsSync(agentPath)
+    ? Buffer.from(fs.readFileSync(agentPath, 'utf8')).toString('base64')
+    : '';
+  const agentStart = agentBase64
+    ? `mkdir -p /opt/terminal-agent; printf '%s' '${agentBase64}' | base64 -d > /opt/terminal-agent/index.js; node /opt/terminal-agent/index.js &`
+    : '[ -f /opt/terminal-agent/index.js ] && node /opt/terminal-agent/index.js &';
 
   return ['bash', '-c', `${fallbackInit}${initScript}\n${agentStart}\nwhile true; do sleep 60; done`];
 }
@@ -300,11 +308,12 @@ async function createWorkspaceContainer(projectId, folderPath, template = 'claud
   const localProjectPath = path.join(PROJECTS_DIR, folderPath);
   const extraBinds = buildExtraBinds(volumes);
 
-  const { getWorkspaceEnvVars, getWorkspaceAccessToken } = require('./auth.service');
+  const { getWorkspaceEnvVars, getWorkspaceAccessToken, getTerminalAgentToken } = require('./auth.service');
   const userEnv = [
     ...getWorkspaceEnvVars().map(({ key, value }) => `${key}=${value}`),
     `OPUS_COMMAND_URL=${process.env.OPUS_WORKSPACE_COMMAND_URL || `http://opus-command:${PORT}`}`,
     `OPUS_WORKSPACE_TOKEN=${getWorkspaceAccessToken()}`,
+    `TERMINAL_AGENT_TOKEN=${getTerminalAgentToken(projectId)}`,
   ];
 
   ensurePlanningArea(localProjectPath);
@@ -366,11 +375,12 @@ async function recreateContainer(projectId, folderPath, template = 'claude-code'
   const localProjectPath = path.join(PROJECTS_DIR, folderPath);
   const extraBinds = buildExtraBinds(volumes);
 
-  const { getWorkspaceEnvVars, getWorkspaceAccessToken } = require('./auth.service');
+  const { getWorkspaceEnvVars, getWorkspaceAccessToken, getTerminalAgentToken } = require('./auth.service');
   const userEnv = [
     ...getWorkspaceEnvVars().map(({ key, value }) => `${key}=${value}`),
     `OPUS_COMMAND_URL=${process.env.OPUS_WORKSPACE_COMMAND_URL || `http://opus-command:${PORT}`}`,
     `OPUS_WORKSPACE_TOKEN=${getWorkspaceAccessToken()}`,
+    `TERMINAL_AGENT_TOKEN=${getTerminalAgentToken(projectId)}`,
   ];
 
   ensurePlanningArea(localProjectPath);

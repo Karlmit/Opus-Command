@@ -73,6 +73,33 @@ function getWorkspaceAccessToken() {
   return token;
 }
 
+// Per-workspace terminal-agent token. Distinct from workspace_access_token,
+// which is a single global secret deliberately exposed to workspace user code
+// (env + /etc/profile.d) for the `opus` CLI. The agent token must NOT be that
+// secret: a per-project token means leaking one workspace's token only grants a
+// shell in that workspace (which the holder already has), not every LXC on the
+// LAN. Stored plaintext (we must present it) in the settings table, same as the
+// workspace access token.
+function terminalAgentTokenKey(projectId) {
+  return `terminal_agent_token:${projectId}`;
+}
+
+function getTerminalAgentToken(projectId) {
+  const key = terminalAgentTokenKey(projectId);
+  let token = getSetting(key);
+  if (!token) {
+    token = `opus_ta_${crypto.randomBytes(32).toString('base64url')}`;
+    setSetting(key, token);
+  }
+  return token;
+}
+
+function rotateTerminalAgentToken(projectId) {
+  const token = `opus_ta_${crypto.randomBytes(32).toString('base64url')}`;
+  setSetting(terminalAgentTokenKey(projectId), token);
+  return token;
+}
+
 function timingSafeEqual(a, b) {
   const left = Buffer.from(String(a || ''));
   const right = Buffer.from(String(b || ''));
@@ -103,5 +130,7 @@ module.exports = {
   setSetting,
   getWorkspaceEnvVars,
   getWorkspaceAccessToken,
+  getTerminalAgentToken,
+  rotateTerminalAgentToken,
   isWorkspaceTokenRequest,
 };

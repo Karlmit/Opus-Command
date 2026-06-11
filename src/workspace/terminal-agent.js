@@ -1,19 +1,34 @@
 #!/usr/bin/env node
 /**
- * terminal-agent — runs inside each workspace container.
+ * terminal-agent — runs inside each workspace container (Docker AND Unraid LXC).
  *
  * Owns all PTY sessions for the workspace. Opus Command connects to this
  * process to proxy terminal I/O. Sessions survive Opus Command restarts
  * because they live here, not in the main app.
  *
- * HTTP REST API:
+ * SINGLE SOURCE: this file is the only copy. It is injected into every
+ * workspace at startup (base64) — Docker via buildWorkspaceCmd, LXC via the
+ * provisioning script — so the two backends always run identical agent code.
+ *
+ * AUTH: on Docker the agent sits on a private internal bridge. On LXC it sits
+ * on the LAN bridge (br0) with a routable IP, so the agent is reachable by any
+ * LAN device. Every request therefore requires a per-workspace bearer token
+ * (Authorization: Bearer <token>) on both the REST endpoints and the WebSocket
+ * upgrade. The proxy in Opus Command is the only client and is a Node process,
+ * so it can set the header (unlike a browser, which never talks to the agent).
+ *
+ * The token is provided via TERMINAL_AGENT_TOKEN_FILE (a 0600 file, re-read on
+ * every check so rotation needs no restart) or TERMINAL_AGENT_TOKEN (env). If
+ * neither yields a token the agent refuses to start — there is no insecure mode.
+ *
+ * HTTP REST API (all require auth except GET /health):
  *   GET  /health
  *   GET  /sessions
  *   POST /sessions              body: { sessionId, name, cols, rows }
  *   DELETE /sessions/:id
  *   POST /sessions/:id/resize   body: { cols, rows }
  *
- * WebSocket API (one connection per session):
+ * WebSocket API (one connection per session, auth on upgrade):
  *   ws://host:7681/sessions/:id
  *
  *   Client → Agent:
@@ -30,6 +45,8 @@
 'use strict';
 
 const http   = require('http');
+const fs     = require('fs');
+const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
 const pty    = require('node-pty');
 const { randomUUID } = require('crypto');
@@ -37,11 +54,50 @@ const url    = require('url');
 
 const PORT       = parseInt(process.env.TERMINAL_AGENT_PORT || '7681', 10);
 const MAX_BUFFER = 500_000; // bytes of raw terminal sequences to keep
+const TOKEN_FILE = process.env.TERMINAL_AGENT_TOKEN_FILE || '';
+const TOKEN_ENV  = process.env.TERMINAL_AGENT_TOKEN || '';
+
+// ── Auth ───────────────────────────────────────────────────────────────────
+// Resolve the expected token fresh on each check: env is fixed for the process,
+// but the file is re-read so a rotated token takes effect without restarting the
+// agent (a restart would kill every PTY it owns).
+
+function expectedToken() {
+  if (TOKEN_FILE) {
+    try {
+      const v = fs.readFileSync(TOKEN_FILE, 'utf8').trim();
+      if (v) return v;
+    } catch (_) { /* fall through to env */ }
+  }
+  return TOKEN_ENV.trim();
+}
+
+function timingSafeEqual(a, b) {
+  const left  = Buffer.from(String(a || ''));
+  const right = Buffer.from(String(b || ''));
+  return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
+function tokenFromHeader(req) {
+  const auth = String(req.headers?.authorization || '');
+  if (auth.toLowerCase().startsWith('bearer ')) return auth.slice(7).trim();
+  return '';
+}
+
+function isAuthorized(req) {
+  const expected = expectedToken();
+  if (!expected) return false; // fail closed — should never happen (see startup guard)
+  return timingSafeEqual(tokenFromHeader(req), expected);
+}
+
+function peerIp(req) {
+  return req.socket?.remoteAddress || 'unknown';
+}
+
+// ── Session management ───────────────────────────────────────────────────────
 
 // Map<sessionId, SessionEntry>
 const sessions = new Map();
-
-// ── Session management ───────────────────────────────────────────────────────
 
 function createSession({ sessionId, name, cols = 80, rows = 24 } = {}) {
   const id   = sessionId || randomUUID();
@@ -121,9 +177,16 @@ const httpServer = http.createServer(async (req, res) => {
   const { pathname } = url.parse(req.url || '/');
   const method = req.method || 'GET';
 
-  // GET /health
+  // GET /health — unauthenticated liveness probe. Deliberately leaks nothing
+  // about session activity to the LAN.
   if (method === 'GET' && pathname === '/health') {
-    return send(res, 200, { status: 'ok', sessions: sessions.size });
+    return send(res, 200, { status: 'ok' });
+  }
+
+  // Everything else requires the per-workspace bearer token.
+  if (!isAuthorized(req)) {
+    console.warn(`[agent] 401 ${method} ${pathname} from ${peerIp(req)}`);
+    return send(res, 401, { error: 'Unauthorized' });
   }
 
   // GET /sessions
@@ -174,8 +237,21 @@ const httpServer = http.createServer(async (req, res) => {
 });
 
 // ── WebSocket server ─────────────────────────────────────────────────────────
+// noServer mode: authenticate the upgrade request ourselves before handing the
+// socket to ws. An unauthorized upgrade gets a raw 401 and the socket destroyed,
+// so unauthenticated clients never reach the message phase.
 
-const wss = new WebSocketServer({ server: httpServer });
+const wss = new WebSocketServer({ noServer: true });
+
+httpServer.on('upgrade', (req, socket, head) => {
+  if (!isAuthorized(req)) {
+    console.warn(`[agent] 401 WS upgrade ${req.url} from ${peerIp(req)}`);
+    socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+  wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
+});
 
 wss.on('connection', (ws, req) => {
   const { pathname } = url.parse(req.url || '/');
@@ -228,8 +304,18 @@ wss.on('connection', (ws, req) => {
 
 // ── Start ────────────────────────────────────────────────────────────────────
 
+// Fail closed: refuse to start without a token. The only install paths (Docker
+// init + LXC provisioning) always supply one, so this only trips on misconfig.
+if (!expectedToken()) {
+  console.error(
+    '[terminal-agent] FATAL: no token configured ' +
+    '(set TERMINAL_AGENT_TOKEN_FILE or TERMINAL_AGENT_TOKEN). Refusing to start.'
+  );
+  process.exit(1);
+}
+
 httpServer.listen(PORT, '0.0.0.0', () => {
-  console.log(`[terminal-agent] Listening on port ${PORT}`);
+  console.log(`[terminal-agent] Listening on port ${PORT} (auth required)`);
 });
 
 process.on('uncaughtException', err => {

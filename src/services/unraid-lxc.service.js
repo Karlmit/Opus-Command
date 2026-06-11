@@ -187,6 +187,8 @@ async function restartWorkspace(project) {
 
 const OPUS_CLI_PATH = path.join(__dirname, '..', 'workspace', 'opus-cli.js');
 const CONNECTORS_SKILL_PATH = path.join(__dirname, '..', 'workspace', 'connectors.md');
+const TERMINAL_AGENT_PATH = path.join(__dirname, '..', 'workspace', 'terminal-agent.js');
+const TERMINAL_AGENT_PORT = parseInt(process.env.TERMINAL_AGENT_PORT || '7681', 10);
 
 function b64(str) {
   return Buffer.from(str, 'utf8').toString('base64');
@@ -252,8 +254,11 @@ function buildProvisionScript(project, { envVars } = {}) {
   const template = lxcTemplateFor(project);
   const isAzure = template !== 'private';
 
+  const { getTerminalAgentToken } = require('./auth.service');
   const opusCliB64 = b64File(OPUS_CLI_PATH);
   const connectorsB64 = b64File(CONNECTORS_SKILL_PATH);
+  const agentB64 = b64File(TERMINAL_AGENT_PATH);
+  const agentTokenB64 = b64(getTerminalAgentToken(project.id));
   const claudeB64 = b64(lxcInstructionsDoc('claude'));
   const agentsB64 = b64(lxcInstructionsDoc('agents'));
   const gitGuidanceB64 = b64(GIT_GUIDANCE);
@@ -304,7 +309,7 @@ grep -qxF ".planning/" /workspace/.gitignore 2>/dev/null || printf ".planning/\\
 
 echo "[opus] apt update + base packages…"
 apt-get update -y || true
-apt-get install -y --no-install-recommends git curl wget ca-certificates gnupg gh python3-pip python3-venv pipx xvfb ffmpeg >/dev/null 2>&1 || true
+apt-get install -y --no-install-recommends git curl wget ca-certificates gnupg gh python3-pip python3-venv pipx xvfb ffmpeg build-essential >/dev/null 2>&1 || true
 
 if ! command -v node >/dev/null 2>&1; then
   echo "[opus] installing Node.js 20…"
@@ -366,6 +371,49 @@ command -v claude >/dev/null 2>&1 && command -v markitdown-mcp >/dev/null 2>&1 &
 command -v codex >/dev/null 2>&1 && command -v playwright-mcp >/dev/null 2>&1 && { codex mcp get playwright >/dev/null 2>&1 || codex mcp add playwright -- playwright-mcp >/dev/null 2>&1; } || true
 command -v codex >/dev/null 2>&1 && command -v markitdown-mcp >/dev/null 2>&1 && { codex mcp get markitdown >/dev/null 2>&1 || codex mcp add markitdown -- markitdown-mcp >/dev/null 2>&1; } || true
 
+# ── terminal-agent ────────────────────────────────────────────────────────────
+# The agent owns PTY sessions inside the container and is reached by Opus Command
+# over the LAN at <container-ip>:${TERMINAL_AGENT_PORT}, so it is gated by a
+# per-workspace bearer token. The token is written 0600 (NOT under /workspace,
+# which is the bind-mounted share) and the agent re-reads it per request so a
+# rotation needs no restart. Agent code is the single canonical source, injected
+# here; a systemd unit keeps it running and restarts it on boot/crash.
+echo "[opus] installing terminal-agent…"
+mkdir -p /opt/terminal-agent /etc/opus
+( umask 077; printf '%s' '${agentTokenB64}' | base64 -d > /etc/opus/terminal-agent.token )
+chmod 600 /etc/opus/terminal-agent.token
+${agentB64 ? `printf '%s' '${agentB64}' | base64 -d > /opt/terminal-agent/index.js` : 'echo "[opus] WARNING: terminal-agent source missing"'}
+if command -v npm >/dev/null 2>&1; then
+  ( cd /opt/terminal-agent && { [ -d node_modules/node-pty ] && [ -d node_modules/ws ]; } || npm install --no-save --omit=dev node-pty ws >/dev/null 2>&1 ) || true
+fi
+cat > /etc/systemd/system/opus-terminal-agent.service <<'EOFUNIT'
+[Unit]
+Description=Opus Command terminal agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/env node /opt/terminal-agent/index.js
+Environment=HOME=/root
+Environment=TERMINAL_AGENT_TOKEN_FILE=/etc/opus/terminal-agent.token
+Environment=TERMINAL_AGENT_PORT=${TERMINAL_AGENT_PORT}
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+EOFUNIT
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  systemctl enable opus-terminal-agent >/dev/null 2>&1 || true
+  # restart (not just start) so a re-provision picks up new agent code
+  systemctl restart opus-terminal-agent >/dev/null 2>&1 || true
+else
+  # No systemd in this container — best-effort background launch.
+  pkill -f /opt/terminal-agent/index.js 2>/dev/null || true
+  TERMINAL_AGENT_TOKEN_FILE=/etc/opus/terminal-agent.token TERMINAL_AGENT_PORT=${TERMINAL_AGENT_PORT} HOME=/root setsid node /opt/terminal-agent/index.js >/var/log/opus-terminal-agent.log 2>&1 < /dev/null &
+fi
+
 echo "[opus] provisioning complete."
 `
   );
@@ -405,10 +453,19 @@ async function removeWorkspace(project) {
 
 // ── terminal ──────────────────────────────────────────────────────────────────
 
-// Remote command that opens an interactive login shell inside /workspace.
-function terminalCommand(project) {
-  const name = containerNameFor(project);
-  return `lxc-attach -n ${shq(name)} -- bash -lc 'cd /workspace 2>/dev/null; exec bash -l'`;
+// Resolve the container's IP so Opus Command can reach the in-container
+// terminal-agent at <ip>:7681. Returns null if the container is stopped or has
+// not acquired an IP yet (callers retry). The terminal itself no longer uses
+// SSH — only this lookup does, so the future Unraid plugin needs to expose the
+// IP via lxc.status rather than a long-lived SSH PTY channel.
+async function getContainerIp(project) {
+  try {
+    const { values } = await runHelper('status', ['--name', containerNameFor(project)], { timeoutMs: 20_000 });
+    const ip = (values.IP || '').trim();
+    return ip || null;
+  } catch {
+    return null;
+  }
 }
 
 // Wait until the container's init is up enough for lxc-attach to work. Right
@@ -431,17 +488,6 @@ async function waitUntilAttachable(project, { attempts = 25, delayMs = 400 } = {
   }
 }
 
-// Open an interactive PTY (over SSH) attached to the container's /workspace.
-// Waits for the container to be attachable first so the first terminal after a
-// start doesn't fail with the init-pid race. Returns the ssh.openShell handle.
-async function openTerminal(project, { cols = 80, rows = 24 } = {}, handlers = {}) {
-  const ready = await waitUntilAttachable(project);
-  if (!ready) {
-    throw new Error('the container is not ready to attach (it may be stopped or still starting)');
-  }
-  return ssh.openShell({ command: terminalCommand(project), cols, rows }, handlers);
-}
-
 module.exports = {
   NAME_PREFIX,
   containerNameFor,
@@ -458,7 +504,6 @@ module.exports = {
   execWorkspace,
   removeWorkspace,
   buildProvisionScript,
-  terminalCommand,
   waitUntilAttachable,
-  openTerminal,
+  getContainerIp,
 };

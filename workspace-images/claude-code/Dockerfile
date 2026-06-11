@@ -31,10 +31,12 @@ RUN npm install -g @anthropic-ai/claude-code
 # Smoke-test node/npm — skip claude --version as it can fail non-interactively
 RUN node --version && npm --version && npx --version
 
-# Install terminal-agent — owns PTY sessions so they survive Opus Command restarts
-COPY terminal-agent.js /opt/terminal-agent/index.js
-COPY terminal-agent-package.json /opt/terminal-agent/package.json
-RUN cd /opt/terminal-agent && npm install --omit=dev
+# terminal-agent deps — owns PTY sessions so they survive Opus Command restarts.
+# The agent code (index.js) is injected at container start from the single
+# canonical source (src/workspace/terminal-agent.js), so only deps live here.
+RUN mkdir -p /opt/terminal-agent \
+    && cd /opt/terminal-agent \
+    && npm install --omit=dev node-pty@^1.0.0 ws@^8.0.0
 
 # Workspace shell config — applied to every interactive bash session via /etc/bash.bashrc
 # 1. PATH: home volume bin dirs always take precedence over system dirs

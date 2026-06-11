@@ -205,47 +205,10 @@ async function testConnection(override) {
   }
 }
 
-/**
- * Open an interactive PTY running `command` on the remote host. Returns an
- * object exposing the live stream plus write/resize/close helpers, used by the
- * terminal service to back LXC terminal sessions over SSH.
- *
- * handlers: { onData(str), onClose(code), onError(err) }
- */
-function openShell({ command, cols = 80, rows = 24 }, handlers = {}) {
-  return new Promise(async (resolve, reject) => {
-    let conn;
-    try {
-      conn = await connect();
-    } catch (err) {
-      return reject(err);
-    }
-    const ptyOpts = { term: 'xterm-256color', cols, rows };
-    const cb = (err, stream) => {
-      if (err) { try { conn.end(); } catch (_) {} return reject(err); }
-      stream.on('data', (d) => handlers.onData && handlers.onData(d.toString('utf8')));
-      stream.stderr.on('data', (d) => handlers.onData && handlers.onData(d.toString('utf8')));
-      stream.on('close', (code) => {
-        try { conn.end(); } catch (_) {}
-        handlers.onClose && handlers.onClose(code == null ? 0 : code);
-      });
-      conn.on('error', (e) => handlers.onError && handlers.onError(e));
-      resolve({
-        write: (data) => { try { stream.write(data); } catch (_) {} },
-        resize: (c, r) => { try { stream.setWindow(r, c, 0, 0); } catch (_) {} },
-        close: () => { try { stream.end(); } catch (_) {} try { conn.end(); } catch (_) {} },
-      });
-    };
-    // Run the requested command inside a PTY.
-    conn.exec(command, { pty: ptyOpts }, cb);
-  });
-}
-
 module.exports = {
   exec,
   execScript,
   execWithInput,
   uploadFile,
   testConnection,
-  openShell,
 };

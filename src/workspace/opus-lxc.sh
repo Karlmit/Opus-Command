@@ -177,6 +177,9 @@ cmd_restart() {
 cmd_status() {
   require_name
   echo "STATE=$(container_state)"
+  # Container IP — Opus Command reaches the in-container terminal-agent at
+  # <ip>:7681. Empty if stopped or not yet assigned; the caller retries.
+  echo "IP=$(lxc-info -n "$ARG_NAME" -iH 2>/dev/null | head -1)"
 }
 
 cmd_destroy() {
