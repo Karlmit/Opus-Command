@@ -24,8 +24,11 @@ const DEFAULTS = {
   sshPort: 22,
   sshUser: 'root',
   sshKeyPath: path.join(DATA_DIR, 'ssh', 'opus-unraid-nopass'),
+  // LXC rootfs / runtime data lives here (per Unraid LXC plugin).
   basePath: '/mnt/system_nvme/linux',
-  sharePath: '/mnt/user/opus-workspaces',
+  // Project files live in the shared project storage — the SAME location Docker
+  // workspaces use. One project = one project folder, regardless of backend.
+  sharePath: '/mnt/user/opus-projects',
   dist: 'ubuntu',
   release: 'noble',
   arch: 'amd64',

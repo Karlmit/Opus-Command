@@ -29,7 +29,13 @@ function containerNameFor(project) {
 }
 
 function projectPathFor(project, cfg = lxcConfig.getConfig()) {
-  return project.lxcProjectPath || `${cfg.sharePath.replace(/\/+$/, '')}/${containerNameFor(project)}`;
+  // One project = one project folder. LXC and Docker workspaces share the same
+  // project storage location: <share>/<folderPath>. Only the LXC rootfs/runtime
+  // lives separately, under the LXC base path (container name). Existing projects
+  // keep their stored lxcProjectPath, so nothing is migrated implicitly.
+  if (project.lxcProjectPath) return project.lxcProjectPath;
+  const folder = String(project.folderPath || containerNameFor(project)).replace(/^\/+/, '');
+  return `${cfg.sharePath.replace(/\/+$/, '')}/${folder}`;
 }
 
 function lxcTemplateFor(project) {

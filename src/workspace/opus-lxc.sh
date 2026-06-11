@@ -13,8 +13,8 @@
 #   - Never deletes project files; destroy removes the container only.
 #
 # Configuration via environment (set by the caller; sane defaults below):
-#   OPUS_LXC_BASE     LXC base path        (default /mnt/system_nvme/linux)
-#   OPUS_SHARE_ROOT   workspace share root (default /mnt/user/opus-workspaces)
+#   OPUS_LXC_BASE     LXC rootfs/runtime path (default /mnt/system_nvme/linux)
+#   OPUS_SHARE_ROOT   project files share root (default /mnt/user/opus-projects)
 #   OPUS_LXC_DIST     download dist        (default ubuntu)
 #   OPUS_LXC_RELEASE  download release     (default noble)
 #   OPUS_LXC_ARCH     download arch        (default amd64)
@@ -25,7 +25,7 @@
 set -u
 
 OPUS_LXC_BASE="${OPUS_LXC_BASE:-/mnt/system_nvme/linux}"
-OPUS_SHARE_ROOT="${OPUS_SHARE_ROOT:-/mnt/user/opus-workspaces}"
+OPUS_SHARE_ROOT="${OPUS_SHARE_ROOT:-/mnt/user/opus-projects}"
 OPUS_LXC_DIST="${OPUS_LXC_DIST:-ubuntu}"
 OPUS_LXC_RELEASE="${OPUS_LXC_RELEASE:-noble}"
 OPUS_LXC_ARCH="${OPUS_LXC_ARCH:-amd64}"

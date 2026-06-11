@@ -163,7 +163,8 @@ Opus Command supports a pluggable workspace backend, chosen per project at creat
   - Configured from **Settings → Workspace → Unraid LXC** (host, SSH key, paths, default distro/release/arch)
   - **Test SSH Connection**, **Run LXC Preflight**, and **Install Helper** buttons surface clear, actionable results
   - All host interaction goes through a single `opus-lxc` helper script (installed to `/usr/local/bin/opus-lxc`), so a future host-agent backend can replace SSH/root without changing the app
-  - Helper only manages containers named `opus-workspace-*` and only binds project paths under the configured workspace share; the project folder is bind-mounted to `/workspace`
+  - **One project = one project folder.** LXC and Docker workspaces share the same project storage (`<project share>/<folder>`, e.g. `/mnt/user/opus-projects`); only the LXC rootfs/runtime lives separately under the LXC base path (`/mnt/system_nvme/linux`)
+  - Helper only manages containers named `opus-workspace-*` and only binds project paths under the configured project share; the project folder is bind-mounted to `/workspace`
   - The terminal attaches over an SSH PTY (`lxc-attach` into `/workspace`) and behaves like the Docker terminal (interactive, Ctrl+C, resize); LXC sessions end when Opus Command restarts (the SSH PTY lives in the app process)
   - **Update Workspace** runs a template provisioning script inside the LXC (apt, Node.js, Git/curl/wget, Claude Code/Codex per template, workspace instructions) **without recreating** the container — LXC workspaces are persistent
   - The SSH private key is stored on disk under `data/ssh/` (never in the database or git)
@@ -342,7 +343,7 @@ The Unraid LXC backend is normally configured from **Settings → Workspace → 
 | `UNRAID_SSH_USER` | `root` | SSH username (root for V1) |
 | `UNRAID_SSH_KEY_PATH` | `/app/data/ssh/opus-unraid-nopass` | Path to the SSH private key (stored on the data volume, never in git) |
 | `UNRAID_LXC_BASE_PATH` | `/mnt/system_nvme/linux` | LXC base path on the Unraid host |
-| `UNRAID_WORKSPACE_SHARE` | `/mnt/user/opus-workspaces` | Workspace share root; project folders live here and are bind-mounted to `/workspace` |
+| `UNRAID_WORKSPACE_SHARE` | `/mnt/user/opus-projects` | Project share root (shared with Docker workspaces); each project's folder lives here and is bind-mounted to `/workspace` |
 | `UNRAID_LXC_DIST` | `ubuntu` | Default LXC distro |
 | `UNRAID_LXC_RELEASE` | `noble` | Default LXC release |
 | `UNRAID_LXC_ARCH` | `amd64` | Default LXC architecture |
@@ -366,7 +367,7 @@ In addition to Docker, a project can run as an **LXC container on an Unraid serv
 
 **Setup**
 
-1. On the Unraid host, ensure the LXC plugin is installed and `lxc-create`/`lxc-start`/`lxc-attach`/`lxc-stop`/`lxc-ls` exist, and create the workspace share (e.g. `/mnt/user/opus-workspaces`).
+1. On the Unraid host, ensure the LXC plugin is installed and `lxc-create`/`lxc-start`/`lxc-attach`/`lxc-stop`/`lxc-ls` exist, and that your project share exists (e.g. `/mnt/user/opus-projects` — the same share your Docker projects use).
 2. Generate an SSH key pair and authorize the public key for `root` on Unraid.
 3. In Opus Command, open **Settings → Workspace → Unraid LXC**, enable the backend, fill in the host/paths, and paste the **private key** (stored on the data volume, never committed).
 4. Click **Test SSH Connection**, then **Run LXC Preflight** (verifies SSH, the LXC tools, the base and share paths, and installs the `opus-lxc` helper).
@@ -374,12 +375,12 @@ In addition to Docker, a project can run as an **LXC container on an Unraid serv
 
 **How it works**
 
-- The container is named `opus-workspace-<slug>-<id>` and created from the configured distro/release/arch (Ubuntu Noble amd64 by default).
-- The project folder under the workspace share is bind-mounted to `/workspace` inside the LXC — files written in the workspace appear on the Unraid share and persist across stop/start.
+- The container is named `opus-workspace-<slug>-<id>` and created from the configured distro/release/arch (Ubuntu Noble amd64 by default). The container's rootfs/runtime lives under the LXC base path (`/mnt/system_nvme/linux`), **not** in your project share.
+- The project's folder in the project share (`<project share>/<folder>`, same location a Docker workspace would use) is bind-mounted to `/workspace` inside the LXC — files written in the workspace appear in the project share and persist across stop/start.
 - Lifecycle (Start / Stop / Restart / Update / Status) and the terminal are driven from the project Workspace panel, the same as Docker.
 - **Update Workspace** provisions tools inside the LXC without recreating it, so the container stays persistent.
 
-> **V1 scope:** the backend uses root SSH access and is intended for a trusted personal Unraid host. The file browser reads `PROJECTS_DIR`, so to browse LXC project files in the UI, mount the Unraid workspace share at `PROJECTS_DIR`; otherwise use the terminal (the primary interface for LXC in V1). Security hardening (a local host agent, forced-command keys) is planned for V2.
+> **V1 scope:** the backend uses root SSH access and is intended for a trusted personal Unraid host. The file browser reads `PROJECTS_DIR`; when Opus Command's `PROJECTS_DIR` maps to the same project share (`/mnt/user/opus-projects`), LXC project files show up in the UI just like Docker projects — otherwise use the terminal (the primary interface for LXC in V1). Security hardening (a local host agent, forced-command keys) is planned for V2.
 
 ## Managed Workspace Skills
 
