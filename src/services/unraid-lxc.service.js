@@ -275,6 +275,9 @@ grep -q "azure-skills" /root/.claude/settings.json 2>/dev/null || printf '%s' '$
   return (
 `export DEBIAN_FRONTEND=noninteractive
 mkdir -p /root/.claude /root/bin /workspace/.opus/skills
+mkdir -p /workspace/.planning
+touch /workspace/.gitignore
+grep -qxF ".planning/" /workspace/.gitignore 2>/dev/null || printf ".planning/\\n" >> /workspace/.gitignore
 
 echo "[opus] apt update + base packages…"
 apt-get update -y || true

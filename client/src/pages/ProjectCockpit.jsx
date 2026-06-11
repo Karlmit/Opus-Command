@@ -1167,6 +1167,7 @@ export default function ProjectCockpit() {
 
   const [project, setProject]     = useState(null);
   const [tree, setTree]           = useState([]);
+  const [planningTree, setPlanningTree] = useState([]);
   const [termTabs, setTermTabs]   = useState([]);
   const [fileTabs, setFileTabs]   = useState([]);
   const [fileContent, setFileContent] = useState({});
@@ -1201,6 +1202,7 @@ export default function ProjectCockpit() {
   const fileTreePanelRef = useRef(null);
   const uploadInputRef = useRef(null);
   const uploadTargetRef = useRef('');
+  const uploadLabelRef = useRef('Project Files');
   const autosaveTimers = useRef({});
   const fileContentRef = useRef({});
   const treeSignatureRef = useRef('');
@@ -1325,6 +1327,7 @@ export default function ProjectCockpit() {
     setFileTabs([]);
     setFileContent({});
     setDirty({});
+    setPlanningTree([]);
     setTaskDraft('');
     setTasksOpen(false);
     setMarkedNode(null);
@@ -1438,15 +1441,17 @@ export default function ProjectCockpit() {
     try {
       const r = await fetch(`/api/projects/${projectId}/files`);
       const d = await r.json();
-      const nextTree = d.tree || [];
+      const nextTree = d.projectTree || d.tree || [];
+      const nextPlanningTree = d.planningTree || [];
       // Do the expensive part — stringify diff + (possible) re-render — in idle
       // time. requestIdleCallback waits for the main thread to be free, so this
       // can't stall terminal input even right as the poll completes.
       runWhenIdle(() => {
-        const nextSignature = JSON.stringify(nextTree);
+        const nextSignature = JSON.stringify({ project: nextTree, planning: nextPlanningTree });
         if (nextSignature === treeSignatureRef.current) return;
         treeSignatureRef.current = nextSignature;
         setTree(nextTree);
+        setPlanningTree(nextPlanningTree);
       });
     } catch (_) {}
   }
@@ -1561,6 +1566,10 @@ export default function ProjectCockpit() {
   function workspacePath(node) {
     const suffix = node?.path ? `/${node.path}` : '';
     return `/workspace${suffix}`;
+  }
+
+  function isPlanningRootNode(node) {
+    return node?.path === '.planning';
   }
 
   function quoteForTerminal(value) {
@@ -1834,8 +1843,9 @@ export default function ProjectCockpit() {
     else addToast('Create failed.', 'error');
   }
 
-  function triggerUpload(targetPath) {
+  function triggerUpload(targetPath, label = 'Project Files') {
     uploadTargetRef.current = targetPath || '';
+    uploadLabelRef.current = label;
     uploadInputRef.current?.click();
   }
 
@@ -1854,7 +1864,7 @@ export default function ProjectCockpit() {
       if (!r.ok) throw new Error('upload failed');
       const d = await r.json();
       const n = d.uploaded?.length ?? files.length;
-      addToast(`Uploaded ${n} file${n === 1 ? '' : 's'}.`);
+      addToast(`Uploaded ${n} file${n === 1 ? '' : 's'} to ${uploadLabelRef.current}.`);
       loadTree();
     } catch {
       addToast('Upload failed.', 'error');
@@ -1909,7 +1919,9 @@ export default function ProjectCockpit() {
 
     if (action === 'new-file') await createInNode(node, 'file');
     else if (action === 'new-folder') await createInNode(node, 'dir');
-    else if (action === 'upload') triggerUpload(node?.type === 'dir' ? node.path : '');
+    else if (action === 'upload') triggerUpload(node?.type === 'dir' ? node.path : '', node?.path?.startsWith('.planning') ? 'Planning Files' : 'Project Files');
+    else if (action === 'upload-project') triggerUpload('', 'Project Files');
+    else if (action === 'upload-planning') triggerUpload('.planning', 'Planning Files');
     else if (action === 'paste') await pasteClipboard(node?.type === 'dir' ? node.path : parentPath(node));
     else if (!node) return;
     else if (action === 'unpack-here') await unzipNode(node, parentPath(node));
@@ -2038,7 +2050,8 @@ export default function ProjectCockpit() {
             {!treeCollapsed && <>
               <button className="ft-btn ft-icon-btn" title="New file" aria-label="New file" onClick={() => createInNode(null, 'file')}><NewFileIcon /></button>
               <button className="ft-btn ft-icon-btn" title="New folder" aria-label="New folder" onClick={() => createInNode(null, 'dir')}><NewFolderIcon /></button>
-              <button className="ft-btn ft-icon-btn" title="Upload files" aria-label="Upload files" onClick={() => triggerUpload('')}><UploadIcon /></button>
+              <button className="ft-btn ft-icon-btn" title="Upload to Project Files" aria-label="Upload to Project Files" onClick={() => triggerUpload('', 'Project Files')}><UploadIcon /></button>
+              <button className="ft-btn ft-icon-btn" title="Upload to Planning Files" aria-label="Upload to Planning Files" onClick={() => triggerUpload('.planning', 'Planning Files')}><UploadIcon /></button>
             </>}
             <button className="ft-btn ft-collapse-btn" title={treeCollapsed ? 'Expand files' : 'Collapse files'} onClick={() => setTreeCollapsed(c => !c)}>
               {treeCollapsed ? '›' : '‹'}
@@ -2058,7 +2071,35 @@ export default function ProjectCockpit() {
             if (e.target === e.currentTarget) setMarkedNode(null);
           }}
         >
-          {tree.length === 0 && <p className="filetree-empty">Empty project</p>}
+          <div
+            className="filetree-section"
+            onContextMenu={e => {
+              if (e.target !== e.currentTarget) return;
+              e.preventDefault();
+              openFileContextMenu({ name: 'Planning Files', path: '.planning', type: 'dir' }, e.clientX, e.clientY);
+            }}
+          >
+            <div className="filetree-section-title">Planning Files</div>
+            {planningTree.length === 0 && <p className="filetree-empty filetree-empty-section">Empty</p>}
+            {planningTree.map(n => (
+              <FileNode
+                key={n.path}
+                node={n}
+                depth={0}
+                onOpenFile={openFile}
+                activeFilePath={activeFileTab?.path}
+                onOpenContextMenu={openFileContextMenu}
+                onOpenRenameDialog={openRenameDialog}
+                markedPath={markedNode?.path}
+                onMarkNode={setMarkedNode}
+                expandedPaths={expandedPaths}
+                onToggleFolder={toggleFolder}
+              />
+            ))}
+          </div>
+          <div className="filetree-section">
+            <div className="filetree-section-title">Project Files</div>
+            {tree.length === 0 && <p className="filetree-empty filetree-empty-section">Empty project</p>}
           {tree.map(n => (
             <FileNode
               key={n.path}
@@ -2074,6 +2115,7 @@ export default function ProjectCockpit() {
               onToggleFolder={toggleFolder}
             />
           ))}
+          </div>
         </div>
         {!treeCollapsed && (
           <div
@@ -2273,6 +2315,8 @@ export default function ProjectCockpit() {
           {(!fileContextMenu.node || fileContextMenu.node.type === 'dir') && <button role="menuitem" onClick={() => handleFileContextAction('new-file')}>New File</button>}
           {(!fileContextMenu.node || fileContextMenu.node.type === 'dir') && <button role="menuitem" onClick={() => handleFileContextAction('new-folder')}>New Folder</button>}
           {(!fileContextMenu.node || fileContextMenu.node.type === 'dir') && <button role="menuitem" onClick={() => handleFileContextAction('upload')}>Upload Files…</button>}
+          {!fileContextMenu.node && <button role="menuitem" onClick={() => handleFileContextAction('upload-project')}>Upload to Project Files</button>}
+          {!fileContextMenu.node && <button role="menuitem" onClick={() => handleFileContextAction('upload-planning')}>Upload to Planning Files</button>}
           <button role="menuitem" onClick={() => handleFileContextAction('paste')}>Paste</button>
           {fileContextMenu.node?.type === 'file' && fileContextMenu.node.name.toLowerCase().endsWith('.zip') && <>
             <div className="context-separator" />
@@ -2281,14 +2325,14 @@ export default function ProjectCockpit() {
             <button role="menuitem" onClick={() => handleFileContextAction('unpack-to')}>Unpack…</button>
           </>}
           {fileContextMenu.node && <div className="context-separator" />}
-          {fileContextMenu.node && <button role="menuitem" onClick={() => handleFileContextAction('rename')}>Rename</button>}
+          {fileContextMenu.node && !isPlanningRootNode(fileContextMenu.node) && <button role="menuitem" onClick={() => handleFileContextAction('rename')}>Rename</button>}
           {fileContextMenu.node && <button role="menuitem" onClick={() => handleFileContextAction('reference')}>Reference</button>}
           {fileContextMenu.node && <button role="menuitem" onClick={() => handleFileContextAction('copy-path')}>Copy Path</button>}
-          {fileContextMenu.node && <button role="menuitem" onClick={() => handleFileContextAction('copy')}>Copy</button>}
-          {fileContextMenu.node && <button role="menuitem" onClick={() => handleFileContextAction('cut')}>Cut</button>}
+          {fileContextMenu.node && !isPlanningRootNode(fileContextMenu.node) && <button role="menuitem" onClick={() => handleFileContextAction('copy')}>Copy</button>}
+          {fileContextMenu.node && !isPlanningRootNode(fileContextMenu.node) && <button role="menuitem" onClick={() => handleFileContextAction('cut')}>Cut</button>}
           {fileContextMenu.node?.type !== 'dir' && fileContextMenu.node && <button role="menuitem" onClick={() => handleFileContextAction('download')}>Download</button>}
-          {fileContextMenu.node && <div className="context-separator" />}
-          {fileContextMenu.node && <button role="menuitem" className="context-danger" onClick={() => handleFileContextAction('delete')}>Delete</button>}
+          {fileContextMenu.node && !isPlanningRootNode(fileContextMenu.node) && <div className="context-separator" />}
+          {fileContextMenu.node && !isPlanningRootNode(fileContextMenu.node) && <button role="menuitem" className="context-danger" onClick={() => handleFileContextAction('delete')}>Delete</button>}
         </div>
       )}
 

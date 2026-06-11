@@ -3,6 +3,7 @@ const { PROJECTS_DIR, HOST_PROJECTS_DIR, PORT } = require('../config');
 const path = require('path');
 const os   = require('os');
 const fs = require('fs');
+const { ensurePlanningArea } = require('./project-files.service');
 
 const docker = new Dockerode({ socketPath: '/var/run/docker.sock' });
 
@@ -133,7 +134,9 @@ function buildWorkspaceCmd(image, template) {
   const opusSkillPointer = '\\n## Opus Managed Skills\\n\\nAlso read:\\n- .opus/skills/connectors.md\\n';
 
   const initScript = [
-    'mkdir -p ~/.claude ~/bin ~/.npm-global /workspace/.opus/skills',
+    'mkdir -p ~/.claude ~/bin ~/.npm-global /workspace/.opus/skills /workspace/.planning',
+    'touch /workspace/.gitignore',
+    'grep -qxF ".planning/" /workspace/.gitignore 2>/dev/null || printf ".planning/\\n" >> /workspace/.gitignore',
     // Clean up the removed cdesktop integration from existing workspace home volumes.
     'pkill -f "cdesktop" 2>/dev/null || true',
     'npm uninstall -g cdesktop >/dev/null 2>&1 || true',
@@ -267,6 +270,7 @@ async function createWorkspaceContainer(projectId, folderPath, template = 'claud
   const name = containerName(projectId);
   const homeVol = homeVolumeName(projectId);
   const projectHostPath = path.join(HOST_PROJECTS_DIR, folderPath);
+  const localProjectPath = path.join(PROJECTS_DIR, folderPath);
   const extraBinds = buildExtraBinds(volumes);
 
   const { getWorkspaceEnvVars, getWorkspaceAccessToken } = require('./auth.service');
@@ -275,6 +279,8 @@ async function createWorkspaceContainer(projectId, folderPath, template = 'claud
     `OPUS_COMMAND_URL=${process.env.OPUS_WORKSPACE_COMMAND_URL || `http://opus-command:${PORT}`}`,
     `OPUS_WORKSPACE_TOKEN=${getWorkspaceAccessToken()}`,
   ];
+
+  ensurePlanningArea(localProjectPath);
 
   try {
     await docker.getVolume(homeVol).inspect();
@@ -330,6 +336,7 @@ async function recreateContainer(projectId, folderPath, template = 'claude-code'
   const image = await getWorkspaceImage(templateId);
   const name = containerName(projectId);
   const projectHostPath = path.join(HOST_PROJECTS_DIR, folderPath);
+  const localProjectPath = path.join(PROJECTS_DIR, folderPath);
   const extraBinds = buildExtraBinds(volumes);
 
   const { getWorkspaceEnvVars, getWorkspaceAccessToken } = require('./auth.service');
@@ -338,6 +345,8 @@ async function recreateContainer(projectId, folderPath, template = 'claude-code'
     `OPUS_COMMAND_URL=${process.env.OPUS_WORKSPACE_COMMAND_URL || `http://opus-command:${PORT}`}`,
     `OPUS_WORKSPACE_TOKEN=${getWorkspaceAccessToken()}`,
   ];
+
+  ensurePlanningArea(localProjectPath);
 
   try {
     const existing = docker.getContainer(name);

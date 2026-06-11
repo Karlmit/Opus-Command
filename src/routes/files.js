@@ -9,12 +9,19 @@ const { PROJECTS_DIR } = require('../config');
 const { getDB } = require('../db');
 const { projects } = require('../db/schema');
 const { eq } = require('drizzle-orm');
+const {
+  PLANNING_DIR_NAME,
+  planningPathFor,
+  ensurePlanningArea,
+} = require('../services/project-files.service');
 
 function getProjectRoot(projectId) {
   const db = getDB();
   const rows = db.select().from(projects).where(eq(projects.id, parseInt(projectId))).all();
   if (!rows.length) return null;
-  return path.resolve(PROJECTS_DIR, rows[0].folderPath);
+  const projectRoot = path.resolve(PROJECTS_DIR, rows[0].folderPath);
+  ensurePlanningArea(projectRoot);
+  return projectRoot;
 }
 
 function validatePath(projectRoot, reqPath) {
@@ -51,12 +58,15 @@ function copyRecursive(src, dest) {
   }
 }
 
-function buildTree(dir, root, depth = 0) {
+function buildTree(dir, root, depth = 0, options = {}) {
   if (depth > 10) return [];
   try {
     const entries = fs.readdirSync(dir, { withFileTypes: true });
     return entries
-      .filter(e => !e.name.startsWith('.git') || depth === 0)
+      .filter(e => {
+        if (options.excludePlanning && depth === 0 && e.name === PLANNING_DIR_NAME) return false;
+        return !e.name.startsWith('.git') || depth === 0;
+      })
       .sort((a, b) => {
         if (a.isDirectory() && !b.isDirectory()) return -1;
         if (!a.isDirectory() && b.isDirectory()) return 1;
@@ -66,7 +76,7 @@ function buildTree(dir, root, depth = 0) {
         const fullPath = path.join(dir, entry.name);
         const relativePath = path.relative(root, fullPath);
         if (entry.isDirectory()) {
-          return { name: entry.name, path: relativePath, type: 'dir', children: buildTree(fullPath, root, depth + 1) };
+          return { name: entry.name, path: relativePath, type: 'dir', children: buildTree(fullPath, root, depth + 1, options) };
         }
         return { name: entry.name, path: relativePath, type: 'file' };
       });
@@ -81,6 +91,7 @@ function walkDir(dir, root, results = []) {
     for (const entry of entries) {
       const fullPath = path.join(dir, entry.name);
       const relative = path.relative(root, fullPath);
+      if (relative === PLANNING_DIR_NAME || relative.startsWith(`${PLANNING_DIR_NAME}${path.sep}`)) continue;
       if (entry.isDirectory() && !entry.name.startsWith('.')) {
         walkDir(fullPath, root, results);
       } else if (entry.isFile()) {
@@ -96,13 +107,18 @@ router.get('/', requireAuth, (req, res) => {
   const projectRoot = getProjectRoot(req.params.projectId);
   if (!projectRoot) return res.status(404).json({ error: 'Project not found.' });
 
-  if (!fs.existsSync(projectRoot)) {
-    fs.mkdirSync(projectRoot, { recursive: true });
-    return res.json({ tree: [] });
-  }
+  if (!fs.existsSync(projectRoot)) ensurePlanningArea(projectRoot);
 
-  const tree = buildTree(projectRoot, projectRoot);
-  res.json({ tree, root: projectRoot });
+  const projectTree = buildTree(projectRoot, projectRoot, 0, { excludePlanning: true });
+  const planningRoot = planningPathFor(projectRoot);
+  const planningTree = buildTree(planningRoot, projectRoot);
+  res.json({
+    tree: projectTree,
+    projectTree,
+    planningTree,
+    root: projectRoot,
+    planningRoot,
+  });
 });
 
 // GET /api/projects/:projectId/files/read — read file content
@@ -336,11 +352,14 @@ router.get('/content-search', requireAuth, (req, res) => {
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const projectRoot = getProjectRoot(req.params.projectId);
+    if (!projectRoot) return cb(new Error('Project not found.'));
     // Read from the query string: multer parses multipart fields in stream
     // order, so req.body.targetPath is not yet populated when a file part is
     // processed before its targetPath field. req.query is always available.
     const target = req.query.targetPath || req.body.targetPath;
     const uploadDir = target ? validatePath(projectRoot, target) : projectRoot;
+    if (!uploadDir) return cb(new Error('Invalid upload path.'));
+    fs.mkdirSync(uploadDir, { recursive: true });
     cb(null, uploadDir || projectRoot);
   },
   filename: (req, file, cb) => cb(null, file.originalname),

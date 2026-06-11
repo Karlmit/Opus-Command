@@ -115,7 +115,11 @@ cmd_create() {
     *) die "project path must be under $OPUS_SHARE_ROOT (got '$ARG_PROJECT_PATH')" ;;
   esac
 
-  mkdir -p "$ARG_PROJECT_PATH" || die "could not create project path $ARG_PROJECT_PATH"
+  mkdir -p "$ARG_PROJECT_PATH/.planning" || die "could not create project path $ARG_PROJECT_PATH"
+  touch "$ARG_PROJECT_PATH/.gitignore" || die "could not create .gitignore in $ARG_PROJECT_PATH"
+  if ! grep -qxF ".planning/" "$ARG_PROJECT_PATH/.gitignore" 2>/dev/null; then
+    printf ".planning/\n" >> "$ARG_PROJECT_PATH/.gitignore"
+  fi
 
   if container_exists; then
     ensure_mount_entry
@@ -204,7 +208,9 @@ provision_script() {
   cat <<PROVISION
 set -e
 export DEBIAN_FRONTEND=noninteractive
-mkdir -p /workspace
+mkdir -p /workspace/.planning
+touch /workspace/.gitignore
+grep -qxF ".planning/" /workspace/.gitignore 2>/dev/null || printf ".planning/\n" >> /workspace/.gitignore
 echo "[opus-lxc] apt update…"
 apt-get update -y || true
 echo "[opus-lxc] ensuring base packages…"

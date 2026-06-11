@@ -126,6 +126,30 @@
   text-align: center;
 }
 
+.filetree-section {
+  padding: 2px 0 8px;
+}
+
+.filetree-section + .filetree-section {
+  border-top: 1px solid var(--color-border);
+  margin-top: 6px;
+  padding-top: 8px;
+}
+
+.filetree-section-title {
+  padding: 4px 10px 5px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+}
+
+.filetree-empty-section {
+  margin: 0;
+  padding: 8px 12px 10px;
+  text-align: left;
+}
+
 /* File nodes */
 .file-node-wrap { position: relative; }
 

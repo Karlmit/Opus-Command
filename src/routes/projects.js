@@ -12,6 +12,7 @@ const workspace = require('../services/workspace.service');
 const lxcConfig = require('../services/unraid-lxc.config');
 const terminal = require('../services/terminal.service');
 const { getSetting, setSetting } = require('../services/auth.service');
+const { ensurePlanningArea } = require('../services/project-files.service');
 
 const WORKSPACE_BACKENDS = new Set(['docker', 'unraid_lxc']);
 
@@ -168,7 +169,7 @@ router.post('/', requireAuth, async (req, res) => {
       if (!resolved.startsWith(PROJECTS_DIR)) {
         return res.status(403).json({ error: 'Access denied. The path is outside the project folder.' });
       }
-      fs.mkdirSync(resolved, { recursive: true });
+      ensurePlanningArea(resolved);
     }
 
     const db = getDB();
