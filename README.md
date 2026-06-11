@@ -36,6 +36,7 @@ Opus Command is designed for developers who primarily **direct AI agents** rathe
 - **Terminal-first** experience with AI-friendly workflows
 - **Connectors** extend workspaces to Windows, Linux, Android, and other environments
 - Workspaces are **disposable, reproducible, and portable**
+- **Pluggable workspace backends** — Docker by default, with an optional **Unraid LXC** backend for running workspaces as LXC containers on an Unraid server over SSH
 - Opus Command is the **control plane**, not the development machine
 
 Opus Command is not trying to replace Claude Code or Codex. It provides the **infrastructure around them**.
@@ -145,14 +146,27 @@ Open **http://localhost:3000**. First startup shows a setup screen to create you
 
 #### Workspace Containers
 - Isolated Docker containers per project, provisioned automatically on creation
-- Workspace templates: General, Node.js, Python, PowerShell
-- Full lifecycle controls: Start, Stop, Restart, Recreate, Rebuild, Reset Environment
+- Workspace templates: Work (Claude Code + Azure AI Foundry) and Private (Claude Code + Codex)
+- Full lifecycle controls: Start, Stop, Restart, Update, Recreate, Rebuild, Reset Environment
 - Each action has a confirmation modal describing exactly what will and won't be deleted
 - Container logs viewer (live tail)
 - Persistent home volume — tools and config survive restarts and container replacement
 - Workspace containers do not have access to the Docker socket
 - Workspace-scoped `opus` CLI is installed automatically for connector access
 - Managed Opus skills are refreshed under `.opus/skills/` on workspace start, while user-owned `CLAUDE.md` and `AGENTS.md` files are only given a small pointer if missing
+
+#### Workspace Backends
+Opus Command supports a pluggable workspace backend, chosen per project at creation. Docker remains the portable default; **Unraid LXC** is an optional advanced backend for a personal Unraid server.
+
+- **Docker** (default) — isolated Docker container per project, fully portable
+- **Unraid LXC** — runs the workspace as an LXC container on an Unraid host over SSH
+  - Configured from **Settings → Workspace → Unraid LXC** (host, SSH key, paths, default distro/release/arch)
+  - **Test SSH Connection**, **Run LXC Preflight**, and **Install Helper** buttons surface clear, actionable results
+  - All host interaction goes through a single `opus-lxc` helper script (installed to `/usr/local/bin/opus-lxc`), so a future host-agent backend can replace SSH/root without changing the app
+  - Helper only manages containers named `opus-workspace-*` and only binds project paths under the configured workspace share; the project folder is bind-mounted to `/workspace`
+  - The terminal attaches over an SSH PTY (`lxc-attach` into `/workspace`) and behaves like the Docker terminal (interactive, Ctrl+C, resize); LXC sessions end when Opus Command restarts (the SSH PTY lives in the app process)
+  - **Update Workspace** runs a template provisioning script inside the LXC (apt, Node.js, Git/curl/wget, Claude Code/Codex per template, workspace instructions) **without recreating** the container — LXC workspaces are persistent
+  - The SSH private key is stored on disk under `data/ssh/` (never in the database or git)
 
 #### Terminal System
 - Multiple named PTY sessions per project, running inside workspace containers
@@ -279,6 +293,7 @@ opus connector artifacts get <job-id>
 | **Mobile terminal** | Log viewer works for simple commands but not full-screen TUIs (Claude Code, htop, vim). Mobile terminal is read-only with command input; it does not render cursor-addressed output correctly |
 | **Bundle size** | JS bundle is ~560 KB (xterm.js is the main contributor) — loads fast on LAN |
 | **Connector workspace rollout** | Existing workspace containers must be Rebuilt or Recreated once after upgrading to get the `opus` CLI and workspace token |
+| **Unraid LXC** | V1 uses root SSH to a trusted personal Unraid host; terminal sessions end on Opus Command restart; file browser needs the Unraid share mounted at `PROJECTS_DIR` (terminal is the primary interface). Host-agent + key hardening planned for V2 |
 
 ---
 
@@ -289,6 +304,7 @@ opus connector artifacts get <job-id>
 - **Stash / unstash, cherry-pick, interactive rebase** — advanced git operations from the panel
 - **Multi-terminal split view** — side-by-side terminal panes
 - **Push notifications** — notify your phone when Claude Code is waiting for input, without needing the browser open
+- **Unraid LXC hardening (V2)** — replace root SSH with a local host agent and forced-command keys; snapshots/cloning and richer file access
 - **Additional Opus Connector targets** — macOS and Android, Windows feature parity with Linux, and richer artifact workflows
 - **Additional workspace templates** — community-contributed templates for Rust, Go, Java, etc.
 - **AI session timeline** — history of AI sessions per project with diffs at each checkpoint
@@ -314,6 +330,23 @@ opus connector artifacts get <job-id>
 | `PROJECTS_DIR` | `/projects` | Override projects directory path |
 | `PORT` | `3000` | HTTP port |
 
+### Unraid LXC backend (optional)
+
+The Unraid LXC backend is normally configured from **Settings → Workspace → Unraid LXC**. For advanced setups, these environment variables override the stored UI settings (precedence: **env > UI setting > default**):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `UNRAID_LXC_ENABLED` | `false` | Enable the Unraid LXC backend |
+| `UNRAID_HOST` | `192.168.1.66` | Unraid host / IP |
+| `UNRAID_SSH_PORT` | `22` | SSH port |
+| `UNRAID_SSH_USER` | `root` | SSH username (root for V1) |
+| `UNRAID_SSH_KEY_PATH` | `/app/data/ssh/opus-unraid-nopass` | Path to the SSH private key (stored on the data volume, never in git) |
+| `UNRAID_LXC_BASE_PATH` | `/mnt/system_nvme/linux` | LXC base path on the Unraid host |
+| `UNRAID_WORKSPACE_SHARE` | `/mnt/user/opus-workspaces` | Workspace share root; project folders live here and are bind-mounted to `/workspace` |
+| `UNRAID_LXC_DIST` | `ubuntu` | Default LXC distro |
+| `UNRAID_LXC_RELEASE` | `noble` | Default LXC release |
+| `UNRAID_LXC_ARCH` | `amd64` | Default LXC architecture |
+
 ## Workspace Templates
 
 Workspace containers are isolated Docker environments per project:
@@ -324,6 +357,29 @@ Workspace containers are isolated Docker environments per project:
 | Private | `ghcr.io/karlmit/opus-command-workspace-private:latest` | Node.js, npm, Git, GitHub CLI, Claude Code, Codex CLI, Opus CLI |
 
 Template changes are made from the project Workspace panel and require Rebuild to apply. Switching a project to Private clears Claude API environment settings from Opus Command and removes Azure AI Foundry startup exports on the next rebuild.
+
+The same Work / Private templates are reused by the Unraid LXC backend, where they map to provisioning scripts run inside the LXC by **Update Workspace** (installing Node.js, Git, Claude Code, and — for Private — Codex).
+
+## Unraid LXC Workspaces (optional backend)
+
+In addition to Docker, a project can run as an **LXC container on an Unraid server**, managed over SSH. Docker stays the default; LXC is an advanced backend for a personal Unraid setup.
+
+**Setup**
+
+1. On the Unraid host, ensure the LXC plugin is installed and `lxc-create`/`lxc-start`/`lxc-attach`/`lxc-stop`/`lxc-ls` exist, and create the workspace share (e.g. `/mnt/user/opus-workspaces`).
+2. Generate an SSH key pair and authorize the public key for `root` on Unraid.
+3. In Opus Command, open **Settings → Workspace → Unraid LXC**, enable the backend, fill in the host/paths, and paste the **private key** (stored on the data volume, never committed).
+4. Click **Test SSH Connection**, then **Run LXC Preflight** (verifies SSH, the LXC tools, the base and share paths, and installs the `opus-lxc` helper).
+5. Create a project and choose **Unraid LXC** as the workspace backend.
+
+**How it works**
+
+- The container is named `opus-workspace-<slug>-<id>` and created from the configured distro/release/arch (Ubuntu Noble amd64 by default).
+- The project folder under the workspace share is bind-mounted to `/workspace` inside the LXC — files written in the workspace appear on the Unraid share and persist across stop/start.
+- Lifecycle (Start / Stop / Restart / Update / Status) and the terminal are driven from the project Workspace panel, the same as Docker.
+- **Update Workspace** provisions tools inside the LXC without recreating it, so the container stays persistent.
+
+> **V1 scope:** the backend uses root SSH access and is intended for a trusted personal Unraid host. The file browser reads `PROJECTS_DIR`, so to browse LXC project files in the UI, mount the Unraid workspace share at `PROJECTS_DIR`; otherwise use the terminal (the primary interface for LXC in V1). Security hardening (a local host agent, forced-command keys) is planned for V2.
 
 ## Managed Workspace Skills
 
