@@ -12,6 +12,31 @@ const docker = new Dockerode({ socketPath: '/var/run/docker.sock' });
 // terminal-agent can be reached at opus-workspace-{id}:7681.
 const INTERNAL_NETWORK = 'opus-internal';
 
+const OPUS_GIT_GUIDANCE = `
+
+## Git and Opus Command
+
+Opus Command's Git menu looks for a repository at \`/workspace/.git\` first, then
+for one repository one or two levels under \`/workspace\`. To keep the Git menu
+working correctly:
+
+- Keep the project repository rooted at \`/workspace\` whenever possible.
+- If cloning into a subdirectory, clone directly under \`/workspace\`, not deeper.
+- Do not move \`.git\` outside \`/workspace\` or work from a repo under \`/root\`.
+- If the project is not initialized and the user expects the Git menu to work,
+  run \`git init\` in \`/workspace\` before making changes.
+- Run Git commands from the repo root, or use \`git -C /workspace ...\`.
+- Check \`git status --porcelain\` before and after edits so the Git menu and your
+  summary agree about changed files.
+- Do not run destructive commands such as \`git reset --hard\`, \`git clean -fd\`,
+  rebases, or history rewrites unless the user explicitly asks.
+- Opus snapshots are annotated tags named \`snapshot/YYYY-MM-DD-HH-MM-SS\`; do not
+  delete, move, or overwrite them unless the user explicitly asks.
+
+Stage or commit only when the user asks. Otherwise leave changed files visible
+for review in the Opus Command Git menu.
+`;
+
 const WORKSPACE_TEMPLATES = {
   'claude-code': {
     id: 'claude-code',
@@ -121,6 +146,7 @@ function buildWorkspaceCmd(image, template) {
   const connectorSkillBase64 = fs.existsSync(connectorSkillPath)
     ? Buffer.from(fs.readFileSync(connectorSkillPath, 'utf8')).toString('base64')
     : '';
+  const gitGuidanceBase64 = Buffer.from(OPUS_GIT_GUIDANCE, 'utf8').toString('base64');
   const workClaudeSettings = JSON.stringify({
     model: 'sonnet',
     enabledPlugins: { 'azure@azure-skills': true },
@@ -153,6 +179,7 @@ function buildWorkspaceCmd(image, template) {
     `grep -q ".opus/skills/connectors.md" ~/.claude/CLAUDE.md 2>/dev/null || printf '${opusSkillPointer}' >> ~/.claude/CLAUDE.md`,
     `grep -q ".opus/skills/connectors.md" /workspace/CLAUDE.md 2>/dev/null || printf '${opusSkillPointer}' >> /workspace/CLAUDE.md`,
     `grep -q ".opus/skills/connectors.md" /workspace/AGENTS.md 2>/dev/null || printf '${opusSkillPointer}' >> /workspace/AGENTS.md`,
+    `for f in ~/.claude/CLAUDE.md /workspace/CLAUDE.md /workspace/AGENTS.md; do grep -q "Opus Command's Git menu" "$f" 2>/dev/null || printf '%s' '${gitGuidanceBase64}' | base64 -d >> "$f"; done`,
     workspaceTemplate.azureClaude
       ? `[ -f ~/.claude/settings.json ] || echo '${claudeSettings}' > ~/.claude/settings.json`
       : `grep -q "azure-skills" ~/.claude/settings.json 2>/dev/null && echo '${claudeSettings}' > ~/.claude/settings.json || true`,

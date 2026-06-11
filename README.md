@@ -380,7 +380,7 @@ In addition to Docker, a project can run as an **LXC container on an Unraid serv
 - Lifecycle (Start / Stop / Restart / Update / Status) and the terminal are driven from the project Workspace panel, the same as Docker.
 - **Update Workspace** provisions tools inside the LXC without recreating it, so the container stays persistent.
 
-> **V1 scope:** the backend uses root SSH access and is intended for a trusted personal Unraid host. The file browser reads `PROJECTS_DIR`; when Opus Command's `PROJECTS_DIR` maps to the same project share (`/mnt/user/opus-projects`), LXC project files show up in the UI just like Docker projects — otherwise use the terminal (the primary interface for LXC in V1). Security hardening (a local host agent, forced-command keys) is planned for V2.
+> **V1 scope:** the backend uses root SSH access and is intended for a trusted personal Unraid host. In this workspace, the current SSH action surface is tracked outside the Git project at `/workspace/.planning/unraid-lxc-ssh-actions.md` so a future Unraid plugin/app can replace root SSH with a middle-man that exposes only pre-approved actions. The file browser reads `PROJECTS_DIR`; when Opus Command's `PROJECTS_DIR` maps to the same project share (`/mnt/user/opus-projects`), LXC project files show up in the UI just like Docker projects — otherwise use the terminal (the primary interface for LXC in V1).
 
 ## Managed Workspace Skills
 

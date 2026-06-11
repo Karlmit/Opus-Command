@@ -5,6 +5,7 @@ const { getDB } = require('../db');
 const { projects } = require('../db/schema');
 const { eq } = require('drizzle-orm');
 const { docker } = require('../services/docker.service');
+const lxc = require('../services/unraid-lxc.service');
 
 function getProjectInfo(projectId) {
   const db = getDB();
@@ -22,7 +23,7 @@ function shellQuote(value) {
 }
 
 // Execute a shell command inside the workspace container
-function execInContainer(containerName, command) {
+function execInDockerContainer(containerName, command) {
   return new Promise((resolve, reject) => {
     const container = docker.getContainer(containerName);
     container.exec({
@@ -53,19 +54,31 @@ function execInContainer(containerName, command) {
   });
 }
 
-// Cache git root per container so we only pay the detection cost once.
+function isLxcProject(project) {
+  return project?.workspaceBackend === 'unraid_lxc';
+}
+
+async function execInWorkspace(project, command) {
+  if (isLxcProject(project)) {
+    return lxc.execWorkspace(project, command);
+  }
+  return execInDockerContainer(containerName(project.id), command);
+}
+
+// Cache git root per workspace so we only pay the detection cost once.
 const gitRootCache = new Map();
 
-async function getGitRoot(contName) {
-  if (gitRootCache.has(contName)) return gitRootCache.get(contName);
+async function getGitRoot(project) {
+  const cacheKey = `${project.workspaceBackend || 'docker'}:${project.id}`;
+  if (gitRootCache.has(cacheKey)) return gitRootCache.get(cacheKey);
   try {
     // Try /workspace first (most common); fall back to first .git found one level down.
-    const r = await execInContainer(contName,
+    const r = await execInWorkspace(project,
       'if [ -d /workspace/.git ]; then echo /workspace; ' +
       'else find /workspace -maxdepth 2 -name ".git" -type d 2>/dev/null | head -1 | sed "s|/\\.git$||"; fi'
     );
     const root = r.stdout.trim() || '/workspace';
-    gitRootCache.set(contName, root);
+    gitRootCache.set(cacheKey, root);
     return root;
   } catch {
     return '/workspace';
@@ -77,17 +90,17 @@ router.get('/status', requireAuth, async (req, res) => {
   const project = getProjectInfo(req.params.projectId);
   if (!project) return res.status(404).json({ error: 'Project not found.' });
 
-  const contName = containerName(project.id);
   try {
-    const root = await getGitRoot(contName);
-    const branchResult = await execInContainer(contName, `git -C '${root}' branch --show-current 2>/dev/null || echo ""`);
-    const branch = branchResult.stdout.trim();
-
-    if (!branch && branchResult.stderr.includes('not a git repository')) {
+    const root = await getGitRoot(project);
+    const repoResult = await execInWorkspace(project, `git -C '${root}' rev-parse --is-inside-work-tree 2>/dev/null || echo false`);
+    if (repoResult.stdout.trim() !== 'true') {
       return res.json({ initialized: false });
     }
 
-    const statusResult = await execInContainer(contName, `git -C '${root}' status --porcelain 2>/dev/null`);
+    const branchResult = await execInWorkspace(project, `git -C '${root}' branch --show-current 2>/dev/null || echo ""`);
+    const branch = branchResult.stdout.trim();
+
+    const statusResult = await execInWorkspace(project, `git -C '${root}' status --porcelain 2>/dev/null`);
     const files = statusResult.stdout
       .split('\n')
       .filter(Boolean)
@@ -115,11 +128,10 @@ router.get('/diff', requireAuth, async (req, res) => {
   const filePath = req.query.path;
   if (!filePath) return res.status(400).json({ error: 'Path required.' });
 
-  const contName = containerName(project.id);
   try {
-    const root = await getGitRoot(contName);
+    const root = await getGitRoot(project);
     const safe = filePath.replace(/'/g, "\\'");
-    const result = await execInContainer(contName,
+    const result = await execInWorkspace(project,
       `git -C '${root}' diff -- '${safe}' 2>/dev/null; git -C '${root}' diff --cached -- '${safe}' 2>/dev/null`
     );
     res.json({ diff: result.stdout });
@@ -136,14 +148,13 @@ router.post('/stage', requireAuth, async (req, res) => {
   const { files, unstage } = req.body;
   if (!Array.isArray(files) || !files.length) return res.status(400).json({ error: 'Files required.' });
 
-  const contName = containerName(project.id);
   try {
-    const root = await getGitRoot(contName);
+    const root = await getGitRoot(project);
     const safePaths = files.map(f => `'${f.replace(/'/g, "\\'")}'`).join(' ');
     const cmd = unstage
       ? `git -C '${root}' reset HEAD -- ${safePaths}`
       : `git -C '${root}' add -- ${safePaths}`;
-    await execInContainer(contName, cmd);
+    await execInWorkspace(project, cmd);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: `Git operation failed: ${err.message}` });
@@ -158,11 +169,10 @@ router.post('/commit', requireAuth, async (req, res) => {
   const { message } = req.body;
   if (!message || !message.trim()) return res.status(400).json({ error: 'Commit message is required.' });
 
-  const contName = containerName(project.id);
   const safeMsg = message.replace(/'/g, "\\'");
   try {
-    const root = await getGitRoot(contName);
-    const result = await execInContainer(contName,
+    const root = await getGitRoot(project);
+    const result = await execInWorkspace(project,
       `git -C '${root}' -c user.email="opus@command" -c user.name="Opus Command" commit -m '${safeMsg}' 2>&1`
     );
     if (result.stdout.includes('nothing to commit')) {
@@ -180,9 +190,8 @@ router.post('/revert', requireAuth, async (req, res) => {
   if (!project) return res.status(404).json({ error: 'Project not found.' });
 
   const { filePath, all } = req.body;
-  const contName = containerName(project.id);
   try {
-    const root = await getGitRoot(contName);
+    const root = await getGitRoot(project);
     let cmd;
     if (all) {
       cmd = `git -C '${root}' checkout -- . && git -C '${root}' clean -fd 2>&1`;
@@ -191,7 +200,7 @@ router.post('/revert', requireAuth, async (req, res) => {
       const safe = filePath.replace(/'/g, "\\'");
       cmd = `git -C '${root}' checkout -- '${safe}' 2>&1`;
     }
-    await execInContainer(contName, cmd);
+    await execInWorkspace(project, cmd);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: `Git operation failed: ${err.message}` });
@@ -206,11 +215,10 @@ router.post('/branch', requireAuth, async (req, res) => {
   const { name } = req.body;
   if (!name || !name.trim()) return res.status(400).json({ error: 'Branch name required.' });
 
-  const contName = containerName(project.id);
   const safe = name.trim().replace(/'/g, "\\'");
   try {
-    const root = await getGitRoot(contName);
-    const result = await execInContainer(contName, `git -C '${root}' checkout -b '${safe}' 2>&1`);
+    const root = await getGitRoot(project);
+    const result = await execInWorkspace(project, `git -C '${root}' checkout -b '${safe}' 2>&1`);
     if (result.stdout.includes('fatal') || result.stderr.includes('fatal')) {
       return res.status(400).json({ error: result.stdout || result.stderr });
     }
@@ -231,12 +239,11 @@ router.post('/snapshot', requireAuth, async (req, res) => {
   const tag = `snapshot/${ts}`;
   const msg = label ? `${ts}: ${label}` : ts;
 
-  const contName = containerName(project.id);
   const safeTag = tag.replace(/'/g, "\\'");
   const safeMsg = msg.replace(/'/g, "\\'");
   try {
-    const root = await getGitRoot(contName);
-    await execInContainer(contName,
+    const root = await getGitRoot(project);
+    await execInWorkspace(project,
       `git -C '${root}' -c user.email="opus@command" -c user.name="Opus Command" tag -a '${safeTag}' -m '${safeMsg}' 2>&1`
     );
     res.json({ success: true, tag });
@@ -250,10 +257,9 @@ router.get('/snapshots', requireAuth, async (req, res) => {
   const project = getProjectInfo(req.params.projectId);
   if (!project) return res.status(404).json({ error: 'Project not found.' });
 
-  const contName = containerName(project.id);
   try {
-    const root = await getGitRoot(contName);
-    const result = await execInContainer(contName,
+    const root = await getGitRoot(project);
+    const result = await execInWorkspace(project,
       `git -C '${root}' tag -l "snapshot/*" --sort=-creatordate --format="%(refname:short)|%(creatordate:iso)|%(subject)" 2>/dev/null`
     );
     const snapshots = result.stdout.split('\n').filter(Boolean).map(line => {
@@ -281,16 +287,15 @@ router.post('/restore', requireAuth, async (req, res) => {
     return res.status(400).json({ error: 'Invalid snapshot tag.' });
   }
 
-  const contName = containerName(project.id);
   try {
-    const root = await getGitRoot(contName);
+    const root = await getGitRoot(project);
     const quotedRoot = shellQuote(root);
     const quotedTag = shellQuote(tag);
     const quotedCommit = shellQuote(`${tag}^{commit}`);
 
     // A snapshot restore is a safety rollback: move the current branch/worktree
     // back to the snapshot commit, then remove files added after the snapshot.
-    await execInContainer(contName,
+    await execInWorkspace(project,
       `git -C ${quotedRoot} rev-parse --verify --quiet ${quotedCommit} >/dev/null 2>&1 && ` +
       `git -C ${quotedRoot} reset --hard ${quotedTag} 2>&1 && ` +
       `git -C ${quotedRoot} clean -fd 2>&1`
@@ -306,10 +311,9 @@ router.get('/log', requireAuth, async (req, res) => {
   const project = getProjectInfo(req.params.projectId);
   if (!project) return res.status(404).json({ error: 'Project not found.' });
 
-  const contName = containerName(project.id);
   try {
-    const root = await getGitRoot(contName);
-    const result = await execInContainer(contName,
+    const root = await getGitRoot(project);
+    const result = await execInWorkspace(project,
       `git -C '${root}' log --all --date-order --format="%H%x1f%h%x1f%s%x1f%an%x1f%ar%x1f%D%x1f%P" -60 2>/dev/null`
     );
     const commits = result.stdout.split('\n').filter(Boolean).map(line => {
@@ -335,19 +339,18 @@ router.get('/remote', requireAuth, async (req, res) => {
   const project = getProjectInfo(req.params.projectId);
   if (!project) return res.status(404).json({ error: 'Project not found.' });
 
-  const contName = containerName(project.id);
   try {
-    const root = await getGitRoot(contName);
-    const urlResult = await execInContainer(contName,
+    const root = await getGitRoot(project);
+    const urlResult = await execInWorkspace(project,
       `git -C '${root}' remote get-url origin 2>/dev/null || echo ""`
     );
     const remoteUrl = urlResult.stdout.trim();
     if (!remoteUrl) return res.json({ hasRemote: false });
 
     const [trackingResult, aheadResult, behindResult] = await Promise.all([
-      execInContainer(contName, `git -C '${root}' rev-parse --abbrev-ref HEAD@{upstream} 2>/dev/null || echo ""`),
-      execInContainer(contName, `git -C '${root}' rev-list HEAD@{upstream}..HEAD --count 2>/dev/null || echo "0"`),
-      execInContainer(contName, `git -C '${root}' rev-list HEAD..HEAD@{upstream} --count 2>/dev/null || echo "0"`),
+      execInWorkspace(project, `git -C '${root}' rev-parse --abbrev-ref HEAD@{upstream} 2>/dev/null || echo ""`),
+      execInWorkspace(project, `git -C '${root}' rev-list HEAD@{upstream}..HEAD --count 2>/dev/null || echo "0"`),
+      execInWorkspace(project, `git -C '${root}' rev-list HEAD..HEAD@{upstream} --count 2>/dev/null || echo "0"`),
     ]);
 
     res.json({
@@ -367,10 +370,9 @@ router.post('/fetch', requireAuth, async (req, res) => {
   const project = getProjectInfo(req.params.projectId);
   if (!project) return res.status(404).json({ error: 'Project not found.' });
 
-  const contName = containerName(project.id);
   try {
-    const root = await getGitRoot(contName);
-    const result = await execInContainer(contName, `git -C '${root}' fetch --prune 2>&1`);
+    const root = await getGitRoot(project);
+    const result = await execInWorkspace(project, `git -C '${root}' fetch --prune 2>&1`);
     const output = (result.stdout + ' ' + result.stderr).trim();
     if (output.includes('fatal:') || output.includes('error:')) {
       return res.status(400).json({ error: output });
@@ -386,10 +388,9 @@ router.post('/pull', requireAuth, async (req, res) => {
   const project = getProjectInfo(req.params.projectId);
   if (!project) return res.status(404).json({ error: 'Project not found.' });
 
-  const contName = containerName(project.id);
   try {
-    const root = await getGitRoot(contName);
-    const result = await execInContainer(contName, `git -C '${root}' pull 2>&1`);
+    const root = await getGitRoot(project);
+    const result = await execInWorkspace(project, `git -C '${root}' pull 2>&1`);
     const output = (result.stdout + ' ' + result.stderr).trim();
     if (output.includes('fatal:') || output.includes('error:')) {
       return res.status(400).json({ error: output });
@@ -405,10 +406,9 @@ router.post('/push', requireAuth, async (req, res) => {
   const project = getProjectInfo(req.params.projectId);
   if (!project) return res.status(404).json({ error: 'Project not found.' });
 
-  const contName = containerName(project.id);
   try {
-    const root = await getGitRoot(contName);
-    const result = await execInContainer(contName, `git -C '${root}' push 2>&1`);
+    const root = await getGitRoot(project);
+    const result = await execInWorkspace(project, `git -C '${root}' push 2>&1`);
     const output = (result.stdout + ' ' + result.stderr).trim();
     if (output.includes('fatal:') || output.includes('error:')) {
       return res.status(400).json({ error: output });

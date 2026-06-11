@@ -201,6 +201,29 @@ function shSingleQuote(v) {
 // Managed agent-instruction content (LXC-appropriate — the container is
 // persistent, unlike a Docker workspace whose system dirs are wiped on recreate).
 const SKILL_POINTER = '\n## Opus Managed Skills\n\nAlso read:\n- .opus/skills/connectors.md\n';
+const GIT_GUIDANCE = `
+## Git and Opus Command
+
+Opus Command's Git menu looks for a repository at \`/workspace/.git\` first, then
+for one repository one or two levels under \`/workspace\`. To keep the Git menu
+working correctly:
+
+- Keep the project repository rooted at \`/workspace\` whenever possible.
+- If cloning into a subdirectory, clone directly under \`/workspace\`, not deeper.
+- Do not move \`.git\` outside \`/workspace\` or work from a repo under \`/root\`.
+- If the project is not initialized and the user expects the Git menu to work,
+  run \`git init\` in \`/workspace\` before making changes.
+- Run Git commands from the repo root, or use \`git -C /workspace ...\`.
+- Check \`git status --porcelain\` before and after edits so the Git menu and your
+  summary agree about changed files.
+- Do not run destructive commands such as \`git reset --hard\`, \`git clean -fd\`,
+  rebases, or history rewrites unless the user explicitly asks.
+- Opus snapshots are annotated tags named \`snapshot/YYYY-MM-DD-HH-MM-SS\`; do not
+  delete, move, or overwrite them unless the user explicitly asks.
+
+Stage or commit only when the user asks. Otherwise leave changed files visible
+for review in the Opus Command Git menu.
+`;
 
 function lxcInstructionsDoc(kind) {
   return (
@@ -212,6 +235,7 @@ This workspace runs inside a persistent Unraid LXC container managed by Opus Com
 - The container is persistent: tools you install (apt, \`npm -g\`, \`pip\`) survive
   stop/start and are not wiped — install normally.
 - Files written under \`/workspace\` appear on the Unraid project share and persist.
+${GIT_GUIDANCE}
 ${SKILL_POINTER}`
   );
 }
@@ -232,6 +256,7 @@ function buildProvisionScript(project, { envVars } = {}) {
   const connectorsB64 = b64File(CONNECTORS_SKILL_PATH);
   const claudeB64 = b64(lxcInstructionsDoc('claude'));
   const agentsB64 = b64(lxcInstructionsDoc('agents'));
+  const gitGuidanceB64 = b64(GIT_GUIDANCE);
 
   const settings = isAzure
     ? JSON.stringify({
@@ -249,6 +274,7 @@ function buildProvisionScript(project, { envVars } = {}) {
   const envLines = [
     '# Opus Command — managed workspace environment (regenerated on update; do not edit)',
     'export PATH="$HOME/bin:$HOME/.local/bin:$PATH"',
+    'export NPM_CONFIG_PREFIX="$HOME/.npm-global"',
     'export IS_SANDBOX=1',
   ];
   for (const { key, value } of vars) {
@@ -271,6 +297,7 @@ grep -q "azure-skills" /root/.claude/settings.json 2>/dev/null || printf '%s' '$
   return (
 `export DEBIAN_FRONTEND=noninteractive
 mkdir -p /root/.claude /root/bin /workspace/.opus/skills
+mkdir -p /root/.npm-global
 mkdir -p /workspace/.planning
 touch /workspace/.gitignore
 grep -qxF ".planning/" /workspace/.gitignore 2>/dev/null || printf ".planning/\\n" >> /workspace/.gitignore
@@ -312,6 +339,7 @@ ${connectorsB64 ? `printf '%s' '${connectorsB64}' | base64 -d > /workspace/.opus
 [ -f /root/.claude/CLAUDE.md ] || printf '%s' '${claudeB64}' | base64 -d > /root/.claude/CLAUDE.md
 for f in /root/.claude/CLAUDE.md /workspace/CLAUDE.md /workspace/AGENTS.md; do
   grep -q ".opus/skills/connectors.md" "$f" 2>/dev/null || printf '${SKILL_POINTER.replace(/\n/g, '\\n')}' >> "$f"
+  grep -q "Opus Command's Git menu" "$f" 2>/dev/null || printf '%s' '${gitGuidanceB64}' | base64 -d >> "$f"
 done
 
 # Claude settings (model + Azure marketplace for the work template)
@@ -319,6 +347,15 @@ ${settingsStep}
 
 # managed environment / auth (foundry, GH_TOKEN, PATH, IS_SANDBOX) for all shells
 printf '%s' '${envB64}' | base64 -d > /etc/profile.d/opus-workspace.sh && chmod 0644 /etc/profile.d/opus-workspace.sh
+touch /root/.bashrc
+sed -i '/# Opus Command managed environment/,/# End Opus Command managed environment/d' /root/.bashrc 2>/dev/null || true
+cat >> /root/.bashrc <<'EOFBASHRC'
+
+# Opus Command managed environment
+[ -f /etc/profile.d/opus-workspace.sh ] && . /etc/profile.d/opus-workspace.sh
+# End Opus Command managed environment
+EOFBASHRC
+. /etc/profile.d/opus-workspace.sh
 
 # git credential helper via gh, if gh + GH_TOKEN are present
 [ -z "$GH_TOKEN" ] || { command -v gh >/dev/null 2>&1 && GH_TOKEN="$GH_TOKEN" gh auth setup-git 2>/dev/null; } || true
@@ -345,6 +382,16 @@ async function updateWorkspace(project) {
     throw new Error(`LXC provisioning failed (exit ${code}): ${(stderr || stdout || '').trim().slice(-400)}`);
   }
   return { log: `${stderr || ''}${stdout || ''}`.trim() };
+}
+
+async function execWorkspace(project, command, { cwd = '/workspace', timeoutMs = 60_000 } = {}) {
+  const name = containerNameFor(project);
+  const ready = await waitUntilAttachable(project);
+  if (!ready) throw new Error('container is not running/attachable');
+  const inner = `cd ${shq(cwd)} 2>/dev/null; HOME=/root GIT_TERMINAL_PROMPT=0 ${command}`;
+  const cmd = `lxc-attach -n ${shq(name)} -- bash -lc ${shq(inner)}`;
+  const { code, stdout, stderr } = await ssh.exec(cmd, { timeoutMs });
+  return { code, stdout: String(stdout || '').trim(), stderr: String(stderr || '').trim() };
 }
 
 async function removeWorkspace(project) {
@@ -408,6 +455,7 @@ module.exports = {
   stopWorkspace,
   restartWorkspace,
   updateWorkspace,
+  execWorkspace,
   removeWorkspace,
   buildProvisionScript,
   terminalCommand,

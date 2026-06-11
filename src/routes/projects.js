@@ -199,10 +199,15 @@ router.post('/', requireAuth, async (req, res) => {
         const merged = { ...project, ...fields };
         const status = await workspace.start(merged);
 
+        if (backend === 'unraid_lxc') {
+          await workspace.update(merged);
+        }
+
         db.update(projects).set({
           status,
           lxcStatus: backend === 'unraid_lxc' ? status : null,
           lastStartedAt: Date.now(),
+          ...(backend === 'unraid_lxc' ? { lastUpdatedAt: Date.now() } : {}),
         }).where(eq(projects.id, project.id)).run();
         if (io) io.emit('project:status', { id: project.id, status });
 
@@ -213,20 +218,13 @@ router.post('/', requireAuth, async (req, res) => {
           createdAt: Date.now(),
         }).run();
 
-        // LXC: provision tools (node, Claude Code, …) in the background so the
-        // workspace is usable immediately while the install runs.
         if (backend === 'unraid_lxc') {
-          workspace.update(merged)
-            .then(() => {
-              db.update(projects).set({ lastUpdatedAt: Date.now() }).where(eq(projects.id, project.id)).run();
-              db.insert(activityLog).values({
-                projectId: project.id,
-                type: 'workspace_updated',
-                message: 'LXC workspace provisioned (tools installed).',
-                createdAt: Date.now(),
-              }).run();
-            })
-            .catch(err => console.warn('[projects] LXC background provision warning:', err.message));
+          db.insert(activityLog).values({
+            projectId: project.id,
+            type: 'workspace_updated',
+            message: 'LXC workspace provisioned (tools installed).',
+            createdAt: Date.now(),
+          }).run();
         }
       })
       .catch(err => {

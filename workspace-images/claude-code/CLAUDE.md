@@ -67,6 +67,30 @@ The following are already in `PATH` in this workspace:
 
 ---
 
+## Git and the Opus Command Git Menu
+
+Opus Command's Git menu looks for a repository at `/workspace/.git` first, then
+for one repository one or two levels under `/workspace`. To keep the Git menu
+working correctly:
+
+- Keep the project repository rooted at `/workspace` whenever possible.
+- If cloning into a subdirectory, clone directly under `/workspace`, not deeper.
+- Do not move `.git` outside `/workspace` or work from a repo under `/root`.
+- If the project is not initialized and the user expects the Git menu to work,
+  run `git init` in `/workspace` before making changes.
+- Run Git commands from the repo root, or use `git -C /workspace ...`.
+- Check `git status --porcelain` before and after edits so the Git menu and your
+  summary agree about changed files.
+- Do not run destructive commands such as `git reset --hard`, `git clean -fd`,
+  rebases, or history rewrites unless the user explicitly asks.
+- Opus snapshots are annotated tags named `snapshot/YYYY-MM-DD-HH-MM-SS`; do not
+  delete, move, or overwrite them unless the user explicitly asks.
+
+Stage or commit only when the user asks. Otherwise leave changed files visible
+for review in the Opus Command Git menu.
+
+---
+
 ## Opus Managed Skills
 
 Also read the managed Opus skill files in this project:

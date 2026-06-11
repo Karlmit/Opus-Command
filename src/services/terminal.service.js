@@ -249,6 +249,7 @@ async function _createLxcSession(projectId, io, project) {
 function _lxcSessionExit(sessionId) {
   const ioRef = _io;
   const entry = activeProxies.get(sessionId);
+  const projectId = entry?.projectId || _getSessionProjectId(sessionId);
   console.log(`[terminal] LXC session ${sessionId.slice(0, 8)} closed`);
   _setAIState(sessionId, 'none', ioRef, { force: true });
   if (entry) {
@@ -259,6 +260,8 @@ function _lxcSessionExit(sessionId) {
   activeProxies.delete(sessionId);
   sessionClients.delete(sessionId);
   viewerClients.delete(sessionId);
+  _deleteSessionRecord(sessionId);
+  if (projectId) _emitProjectAISummary(projectId, ioRef);
   ioRef?.to(`session:${sessionId}`).emit('terminal:exit', { sessionId });
 }
 
@@ -390,7 +393,10 @@ async function _tryReconnect(session, io) {
   // LXC sessions are SSH PTYs owned by this process — they cannot survive an
   // Opus Command restart, so don't probe a (non-existent) agent for them.
   if (_isLxcProject(_getProject(projId))) {
-    console.log(`[terminal] session ${session.id.slice(0, 8)} is LXC — dead after restart`);
+    console.log(`[terminal] session ${session.id.slice(0, 8)} is LXC — pruning dead restart session`);
+    _deleteSessionRecord(session.id);
+    io?.to(`session:${session.id}`).emit('terminal:exit', { sessionId: session.id });
+    _emitProjectAISummary(projId, io);
     return;
   }
 
@@ -520,9 +526,7 @@ function killSession(sessionId) {
     activeProxies.delete(sessionId);
   }
   sessionClients.delete(sessionId);
-  try {
-    getDB().delete(terminalSessions).where(eq(terminalSessions.id, sessionId)).run();
-  } catch (_) {}
+  _deleteSessionRecord(sessionId);
   if (projectId) _emitProjectAISummary(projectId, _io);
 }
 
@@ -549,10 +553,15 @@ function renameSession(sessionId, name) {
 
 function listSessions(projectId) {
   const db = getDB();
+  const project = _getProject(projectId);
   const rows = db.select().from(terminalSessions)
     .where(eq(terminalSessions.projectId, projectId)).all();
 
-  return rows.map(s => ({
+  const liveRows = _isLxcProject(project)
+    ? rows.filter(s => isSessionAlive(s.id))
+    : rows;
+
+  return liveRows.map(s => ({
     id:       s.id,
     name:     activeProxies.get(s.id)?.name || s.name,
     active:   isSessionAlive(s.id),
@@ -564,13 +573,17 @@ function listSessions(projectId) {
 
 function getProjectAISummary(projectId) {
   const db = getDB();
+  const project = _getProject(projectId);
   const rows = db.select().from(terminalSessions)
     .where(eq(terminalSessions.projectId, projectId)).all();
 
   let aiActive = 0;
   let aiWaiting = 0;
+  let terminalCount = 0;
 
   for (const row of rows) {
+    if (_isLxcProject(project) && !isSessionAlive(row.id)) continue;
+    terminalCount++;
     const state = activeProxies.get(row.id)?.aiState || row.aiState || 'none';
     if (state === 'active') aiActive++;
     else if (state === 'waiting') aiWaiting++;
@@ -578,7 +591,7 @@ function getProjectAISummary(projectId) {
 
   return {
     projectId,
-    terminalCount: rows.length,
+    terminalCount,
     aiActive,
     aiWaiting,
     aiBusy: aiActive + aiWaiting,
@@ -716,6 +729,12 @@ function _persistScrollback(sessionId, proxy, immediate = false) {
         .where(eq(terminalSessions.id, sessionId)).run();
     } catch (_) {}
   }, delay);
+}
+
+function _deleteSessionRecord(sessionId) {
+  try {
+    getDB().delete(terminalSessions).where(eq(terminalSessions.id, sessionId)).run();
+  } catch (_) {}
 }
 
 // ── AI state detection ───────────────────────────────────────────────────────
