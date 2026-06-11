@@ -214,7 +214,7 @@ grep -qxF ".planning/" /workspace/.gitignore 2>/dev/null || printf ".planning/\n
 echo "[opus-lxc] apt update…"
 apt-get update -y || true
 echo "[opus-lxc] ensuring base packages…"
-apt-get install -y --no-install-recommends git curl wget ca-certificates gnupg >/dev/null 2>&1 || true
+apt-get install -y --no-install-recommends git curl wget ca-certificates gnupg gh python3-pip python3-venv pipx xvfb ffmpeg >/dev/null 2>&1 || true
 
 if ! command -v node >/dev/null 2>&1; then
   echo "[opus-lxc] installing Node.js 20…"
@@ -225,16 +225,22 @@ echo "[opus-lxc] node: \$(node -v 2>/dev/null || echo missing), npm: \$(npm -v 2
 
 if command -v npm >/dev/null 2>&1; then
   command -v claude >/dev/null 2>&1 || { echo "[opus-lxc] installing Claude Code…"; npm install -g @anthropic-ai/claude-code >/dev/null 2>&1 || true; }
-PROVISION
-
-  if [ "$template" = "private" ]; then
-    cat <<'PROVISION'
   command -v codex >/dev/null 2>&1 || { echo "[opus-lxc] installing Codex CLI…"; npm install -g @openai/codex >/dev/null 2>&1 || true; }
-PROVISION
-  fi
-
-  cat <<'PROVISION'
+  { command -v playwright >/dev/null 2>&1 && command -v playwright-mcp >/dev/null 2>&1; } || { echo "[opus-lxc] installing Playwright + MCP…"; npm install -g playwright @playwright/mcp >/dev/null 2>&1 || true; }
+  command -v playwright >/dev/null 2>&1 && playwright install --with-deps chromium >/dev/null 2>&1 || true
 fi
+
+if command -v pipx >/dev/null 2>&1; then
+  export PIPX_HOME=/opt/pipx
+  export PIPX_BIN_DIR=/usr/local/bin
+  command -v markitdown >/dev/null 2>&1 || { echo "[opus-lxc] installing MarkItDown…"; pipx install 'markitdown[all]' >/dev/null 2>&1 || true; }
+  command -v markitdown-mcp >/dev/null 2>&1 || { echo "[opus-lxc] installing MarkItDown MCP…"; pipx install markitdown-mcp >/dev/null 2>&1 || true; }
+fi
+
+command -v claude >/dev/null 2>&1 && command -v playwright-mcp >/dev/null 2>&1 && { claude mcp get playwright >/dev/null 2>&1 || claude mcp add -s user playwright -- playwright-mcp >/dev/null 2>&1; } || true
+command -v claude >/dev/null 2>&1 && command -v markitdown-mcp >/dev/null 2>&1 && { claude mcp get markitdown >/dev/null 2>&1 || claude mcp add -s user markitdown -- markitdown-mcp >/dev/null 2>&1; } || true
+command -v codex >/dev/null 2>&1 && command -v playwright-mcp >/dev/null 2>&1 && { codex mcp get playwright >/dev/null 2>&1 || codex mcp add playwright -- playwright-mcp >/dev/null 2>&1; } || true
+command -v codex >/dev/null 2>&1 && command -v markitdown-mcp >/dev/null 2>&1 && { codex mcp get markitdown >/dev/null 2>&1 || codex mcp add markitdown -- markitdown-mcp >/dev/null 2>&1; } || true
 
 # Write Opus workspace instructions if missing.
 if [ ! -f /workspace/CLAUDE.md ]; then

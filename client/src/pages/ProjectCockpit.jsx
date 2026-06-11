@@ -1843,6 +1843,10 @@ export default function ProjectCockpit() {
     else addToast('Create failed.', 'error');
   }
 
+  async function createInPath(basePath, type) {
+    await createInNode(basePath ? { path: basePath, type: 'dir' } : null, type);
+  }
+
   function triggerUpload(targetPath, label = 'Project Files') {
     uploadTargetRef.current = targetPath || '';
     uploadLabelRef.current = label;
@@ -2048,8 +2052,6 @@ export default function ProjectCockpit() {
           {!treeCollapsed && <span className="filetree-title">FILES</span>}
           <div className="filetree-actions">
             {!treeCollapsed && <>
-              <button className="ft-btn ft-icon-btn" title="New file" aria-label="New file" onClick={() => createInNode(null, 'file')}><NewFileIcon /></button>
-              <button className="ft-btn ft-icon-btn" title="New folder" aria-label="New folder" onClick={() => createInNode(null, 'dir')}><NewFolderIcon /></button>
               <button className="ft-btn ft-icon-btn" title="Upload to Project Files" aria-label="Upload to Project Files" onClick={() => triggerUpload('', 'Project Files')}><UploadIcon /></button>
               <button className="ft-btn ft-icon-btn" title="Upload to Planning Files" aria-label="Upload to Planning Files" onClick={() => triggerUpload('.planning', 'Planning Files')}><UploadIcon /></button>
             </>}
@@ -2074,12 +2076,18 @@ export default function ProjectCockpit() {
           <div
             className="filetree-section"
             onContextMenu={e => {
-              if (e.target !== e.currentTarget) return;
               e.preventDefault();
+              e.stopPropagation();
               openFileContextMenu({ name: 'Planning Files', path: '.planning', type: 'dir' }, e.clientX, e.clientY);
             }}
           >
-            <div className="filetree-section-title">Planning Files</div>
+            <div className="filetree-section-header">
+              <div className="filetree-section-title">Planning Files</div>
+              <div className="filetree-section-actions">
+                <button className="ft-btn ft-icon-btn" title="New planning file" aria-label="New planning file" onClick={() => createInPath('.planning', 'file')}><NewFileIcon /></button>
+                <button className="ft-btn ft-icon-btn" title="New planning folder" aria-label="New planning folder" onClick={() => createInPath('.planning', 'dir')}><NewFolderIcon /></button>
+              </div>
+            </div>
             {planningTree.length === 0 && <p className="filetree-empty filetree-empty-section">Empty</p>}
             {planningTree.map(n => (
               <FileNode
@@ -2097,8 +2105,21 @@ export default function ProjectCockpit() {
               />
             ))}
           </div>
-          <div className="filetree-section">
-            <div className="filetree-section-title">Project Files</div>
+          <div
+            className="filetree-section"
+            onContextMenu={e => {
+              e.preventDefault();
+              e.stopPropagation();
+              openFileContextMenu(null, e.clientX, e.clientY);
+            }}
+          >
+            <div className="filetree-section-header">
+              <div className="filetree-section-title">Project Files</div>
+              <div className="filetree-section-actions">
+                <button className="ft-btn ft-icon-btn" title="New project file" aria-label="New project file" onClick={() => createInPath('', 'file')}><NewFileIcon /></button>
+                <button className="ft-btn ft-icon-btn" title="New project folder" aria-label="New project folder" onClick={() => createInPath('', 'dir')}><NewFolderIcon /></button>
+              </div>
+            </div>
             {tree.length === 0 && <p className="filetree-empty filetree-empty-section">Empty project</p>}
           {tree.map(n => (
             <FileNode

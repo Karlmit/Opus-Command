@@ -261,10 +261,6 @@ function buildProvisionScript(project, { envVars } = {}) {
   }
   const envB64 = b64(envLines.join('\n') + '\n');
 
-  const codexInstall = template === 'private'
-    ? 'command -v codex >/dev/null 2>&1 || { echo "[opus] installing Codex CLI…"; npm install -g @openai/codex >/dev/null 2>&1 || true; }'
-    : 'true';
-
   // settings.json: create if missing; for the work template also (re)write when an
   // older settings file lacks the azure marketplace, matching the Docker backend.
   const settingsStep = isAzure
@@ -281,7 +277,7 @@ grep -qxF ".planning/" /workspace/.gitignore 2>/dev/null || printf ".planning/\\
 
 echo "[opus] apt update + base packages…"
 apt-get update -y || true
-apt-get install -y --no-install-recommends git curl wget ca-certificates gnupg >/dev/null 2>&1 || true
+apt-get install -y --no-install-recommends git curl wget ca-certificates gnupg gh python3-pip python3-venv pipx xvfb ffmpeg >/dev/null 2>&1 || true
 
 if ! command -v node >/dev/null 2>&1; then
   echo "[opus] installing Node.js 20…"
@@ -290,8 +286,19 @@ if ! command -v node >/dev/null 2>&1; then
 fi
 echo "[opus] node=$(node -v 2>/dev/null || echo missing) npm=$(npm -v 2>/dev/null || echo missing)"
 
-command -v claude >/dev/null 2>&1 || { echo "[opus] installing Claude Code…"; npm install -g @anthropic-ai/claude-code >/dev/null 2>&1 || true; }
-${codexInstall}
+if command -v npm >/dev/null 2>&1; then
+  command -v claude >/dev/null 2>&1 || { echo "[opus] installing Claude Code…"; npm install -g @anthropic-ai/claude-code >/dev/null 2>&1 || true; }
+  command -v codex >/dev/null 2>&1 || { echo "[opus] installing Codex CLI…"; npm install -g @openai/codex >/dev/null 2>&1 || true; }
+  { command -v playwright >/dev/null 2>&1 && command -v playwright-mcp >/dev/null 2>&1; } || { echo "[opus] installing Playwright + MCP…"; npm install -g playwright @playwright/mcp >/dev/null 2>&1 || true; }
+  command -v playwright >/dev/null 2>&1 && playwright install --with-deps chromium >/dev/null 2>&1 || true
+fi
+
+if command -v pipx >/dev/null 2>&1; then
+  export PIPX_HOME=/opt/pipx
+  export PIPX_BIN_DIR=/usr/local/bin
+  command -v markitdown >/dev/null 2>&1 || { echo "[opus] installing MarkItDown…"; pipx install 'markitdown[all]' >/dev/null 2>&1 || true; }
+  command -v markitdown-mcp >/dev/null 2>&1 || { echo "[opus] installing MarkItDown MCP…"; pipx install markitdown-mcp >/dev/null 2>&1 || true; }
+fi
 
 # opus CLI (connector access) — refreshed each run
 ${opusCliB64 ? `printf '%s' '${opusCliB64}' | base64 -d > /root/bin/opus && chmod +x /root/bin/opus && cp /root/bin/opus /usr/local/bin/opus && chmod +x /usr/local/bin/opus` : 'true'}
@@ -315,6 +322,12 @@ printf '%s' '${envB64}' | base64 -d > /etc/profile.d/opus-workspace.sh && chmod 
 
 # git credential helper via gh, if gh + GH_TOKEN are present
 [ -z "$GH_TOKEN" ] || { command -v gh >/dev/null 2>&1 && GH_TOKEN="$GH_TOKEN" gh auth setup-git 2>/dev/null; } || true
+
+# MCP servers for agent-assisted browser testing and document conversion
+command -v claude >/dev/null 2>&1 && command -v playwright-mcp >/dev/null 2>&1 && { claude mcp get playwright >/dev/null 2>&1 || claude mcp add -s user playwright -- playwright-mcp >/dev/null 2>&1; } || true
+command -v claude >/dev/null 2>&1 && command -v markitdown-mcp >/dev/null 2>&1 && { claude mcp get markitdown >/dev/null 2>&1 || claude mcp add -s user markitdown -- markitdown-mcp >/dev/null 2>&1; } || true
+command -v codex >/dev/null 2>&1 && command -v playwright-mcp >/dev/null 2>&1 && { codex mcp get playwright >/dev/null 2>&1 || codex mcp add playwright -- playwright-mcp >/dev/null 2>&1; } || true
+command -v codex >/dev/null 2>&1 && command -v markitdown-mcp >/dev/null 2>&1 && { codex mcp get markitdown >/dev/null 2>&1 || codex mcp add markitdown -- markitdown-mcp >/dev/null 2>&1; } || true
 
 echo "[opus] provisioning complete."
 `
