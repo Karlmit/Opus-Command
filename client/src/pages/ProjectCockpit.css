@@ -892,6 +892,49 @@
 .ws-danger { color: var(--color-error) !important; }
 .ws-danger:hover { border-color: var(--color-error) !important; }
 
+/* Workspace volumes */
+.vol-warn {
+  display: flex; flex-direction: column; gap: var(--spacing-xs);
+  background: color-mix(in srgb, var(--color-warning, #d6a01a) 12%, transparent);
+  border: 1px solid var(--color-warning, #d6a01a);
+  border-radius: var(--radius-sm, 6px);
+  padding: var(--spacing-sm); margin: var(--spacing-xs) 0;
+  font-size: var(--font-size-sm);
+}
+.vol-warn .btn { align-self: flex-start; }
+
+.vol-row {
+  display: flex; justify-content: space-between; align-items: flex-start; gap: var(--spacing-sm);
+  padding: var(--spacing-sm) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+.vol-row-main { min-width: 0; flex: 1; }
+.vol-paths { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: var(--font-size-sm); }
+.vol-paths code { font-family: var(--font-mono); word-break: break-all; }
+.vol-arrow { color: var(--color-text-dim); }
+.vol-mode {
+  font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 1px 5px; border-radius: 4px;
+}
+.vol-mode.ro { background: color-mix(in srgb, var(--color-text-dim) 25%, transparent); color: var(--color-text-secondary); }
+.vol-mode.rw { background: color-mix(in srgb, var(--color-error) 22%, transparent); color: var(--color-error); }
+.vol-desc { font-size: var(--font-size-xs); color: var(--color-text-secondary); margin-top: 2px; }
+.vol-sensitive { font-size: var(--font-size-xs); color: var(--color-warning, #d6a01a); margin-top: 4px; }
+.vol-row-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.vol-row-actions .btn { font-size: var(--font-size-xs); }
+
+.vol-form {
+  display: flex; flex-direction: column; gap: var(--spacing-sm);
+  padding: var(--spacing-sm); margin-top: var(--spacing-sm);
+  border: 1px solid var(--color-border); border-radius: var(--radius-sm, 6px);
+  background: var(--color-bg-elevated, rgba(255,255,255,0.02));
+}
+.vol-field { display: flex; flex-direction: column; gap: 4px; }
+.vol-field > span { font-size: var(--font-size-xs); color: var(--color-text-secondary); }
+.vol-field .input { width: 100%; font-family: var(--font-mono); }
+.vol-checkbox { display: flex; align-items: center; gap: 6px; font-size: var(--font-size-sm); }
+.vol-form-actions { display: flex; gap: var(--spacing-xs); }
+
 /* Git */
 .git-file-list { display: flex; flex-direction: column; gap: 2px; }
 .git-list-label { font-size: 10px; font-weight: 600; letter-spacing: 0.06em; color: var(--color-text-dim); text-transform: uppercase; padding: 4px 0 2px; }

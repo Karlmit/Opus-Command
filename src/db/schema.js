@@ -19,6 +19,10 @@ const projects = sqliteTable('projects', {
   template: text('template').notNull(),
   containerId: text('container_id'),
   homeVolume: text('home_volume'),
+  // Backend-neutral list of extra volume mounts, stored as a JSON array of
+  // { hostPath, containerPath, readOnly, description }. Docker translates these
+  // to bind strings; a future LXC backend can translate to lxc.mount.entry lines.
+  volumes: text('volumes').default('[]'),
   status: text('status').default('stopped'),
   avatar: text('avatar').default(''),
   sortOrder: integer('sort_order').default(0),

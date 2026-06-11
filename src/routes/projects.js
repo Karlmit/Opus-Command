@@ -25,6 +25,58 @@ function clearClaudeAzureEnvSettings() {
   setSetting('workspace_env_vars', JSON.stringify(filtered));
 }
 
+// Container paths the workspace owns — user volumes may not target these.
+const RESERVED_CONTAINER_PATHS = new Set(['/workspace', '/root', '/']);
+
+// Host path prefixes considered sensitive. Mounting these is allowed (it is a
+// trusted, authenticated admin UI) but the API flags them so the UI can warn.
+const SENSITIVE_HOST_PREFIXES = [
+  '/root', '/etc', '/var/run', '/run/secrets', '/proc', '/sys',
+  '/boot', '/var/run/docker.sock', '/home',
+];
+
+function isSensitiveHostPath(hostPath) {
+  const p = String(hostPath || '');
+  return SENSITIVE_HOST_PREFIXES.some(prefix => p === prefix || p.startsWith(prefix + '/'));
+}
+
+// Validate + normalize the user-supplied volume list. Returns
+// { volumes } on success or { error } describing the first problem found.
+function normalizeVolumes(input) {
+  if (!Array.isArray(input)) return { error: 'volumes must be an array.' };
+  const seen = new Set();
+  const volumes = [];
+  for (const raw of input) {
+    if (!raw || typeof raw !== 'object') return { error: 'Each volume must be an object.' };
+    const hostPath = String(raw.hostPath || '').trim();
+    const containerPath = String(raw.containerPath || '').trim();
+    const description = String(raw.description || '').trim().slice(0, 200);
+    const readOnly = raw.readOnly !== false; // default read-only
+
+    if (!hostPath) return { error: 'Host path is required.' };
+    if (!containerPath) return { error: 'Container path is required.' };
+    if (!hostPath.startsWith('/')) return { error: `Host path must be absolute: ${hostPath}` };
+    if (!containerPath.startsWith('/')) return { error: `Container path must be absolute: ${containerPath}` };
+    if (RESERVED_CONTAINER_PATHS.has(containerPath.replace(/\/+$/, '') || '/')) {
+      return { error: `Container path ${containerPath} is reserved by the workspace.` };
+    }
+    if (seen.has(containerPath)) return { error: `Duplicate container path: ${containerPath}` };
+    seen.add(containerPath);
+
+    volumes.push({ hostPath, containerPath, readOnly, description });
+  }
+  return { volumes };
+}
+
+function parseStoredVolumes(value) {
+  try {
+    const parsed = JSON.parse(value || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 // GET /api/projects/templates — list workspace templates
 router.get('/templates', requireAuth, (req, res) => {
   res.json({
@@ -236,6 +288,74 @@ router.patch('/:id', requireAuth, (req, res) => {
   }
 });
 
+// GET /api/projects/:id/volumes — list extra volume mounts for a workspace
+router.get('/:id/volumes', requireAuth, async (req, res) => {
+  const projectId = parseInt(req.params.id);
+  try {
+    const db = getDB();
+    const rows = db.select().from(projects).where(eq(projects.id, projectId)).all();
+    if (!rows.length) return res.status(404).json({ error: 'Project not found.' });
+
+    const volumes = parseStoredVolumes(rows[0].volumes).map(v => ({
+      ...v,
+      sensitive: isSensitiveHostPath(v.hostPath),
+    }));
+    const status = await docker.getContainerStatus(projectId).catch(() => 'stopped');
+
+    // Tell the UI whether the live container already reflects the saved config.
+    const desired = docker.buildExtraBinds(parseStoredVolumes(rows[0].volumes));
+    const current = (await docker.getContainerBinds(projectId))
+      .filter(b => !b.endsWith(':/workspace') && !b.endsWith(':/root'));
+    const applied = JSON.stringify([...desired].sort()) === JSON.stringify([...current].sort());
+
+    res.json({ volumes, status, applied });
+  } catch (err) {
+    console.error('[projects] Volumes list error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch volumes.' });
+  }
+});
+
+// PUT /api/projects/:id/volumes — replace the extra volume mounts for a workspace.
+// Persists the backend-neutral config. Volumes only take effect when the
+// container is (re)created, so the response reports whether a restart is needed.
+router.put('/:id/volumes', requireAuth, async (req, res) => {
+  const projectId = parseInt(req.params.id);
+  try {
+    const db = getDB();
+    const rows = db.select().from(projects).where(eq(projects.id, projectId)).all();
+    if (!rows.length) return res.status(404).json({ error: 'Project not found.' });
+
+    const result = normalizeVolumes(req.body.volumes);
+    if (result.error) return res.status(400).json({ error: result.error });
+
+    db.update(projects).set({ volumes: JSON.stringify(result.volumes) })
+      .where(eq(projects.id, projectId)).run();
+
+    const status = await docker.getContainerStatus(projectId).catch(() => 'stopped');
+    const restartRequired = status === 'running';
+
+    db.insert(activityLog).values({
+      projectId,
+      type: 'volumes_updated',
+      message: `Workspace volumes updated (${result.volumes.length} mount${result.volumes.length === 1 ? '' : 's'}).`,
+      createdAt: Date.now(),
+    }).run();
+
+    res.json({
+      success: true,
+      volumes: result.volumes.map(v => ({ ...v, sensitive: isSensitiveHostPath(v.hostPath) })),
+      status,
+      restartRequired,
+      message: restartRequired
+        ? 'Changing volumes requires recreating/restarting the workspace.'
+        : 'Volumes saved. They will be applied the next time the workspace starts.',
+    });
+  } catch (err) {
+    console.error('[projects] Volumes update error:', err.message);
+    res.status(500).json({ error: 'Failed to update volumes.' });
+  }
+});
+
 // POST /api/projects/:id/lifecycle — workspace lifecycle actions
 router.post('/:id/lifecycle', requireAuth, async (req, res) => {
   const projectId = parseInt(req.params.id);
@@ -247,6 +367,7 @@ router.post('/:id/lifecycle', requireAuth, async (req, res) => {
     if (!rows.length) return res.status(404).json({ error: 'Project not found.' });
 
     const project = rows[0];
+    const volumes = parseStoredVolumes(project.volumes);
     const io = req.app.get('io');
 
     function emitStatus(status) {
@@ -255,11 +376,24 @@ router.post('/:id/lifecycle', requireAuth, async (req, res) => {
     }
 
     switch (action) {
-      case 'start':
+      case 'start': {
         emitStatus('starting');
-        await docker.startContainer(projectId);
+        // A stopped container keeps its original binds, so if the saved volume
+        // config no longer matches the existing container we recreate it to
+        // apply the change ("apply on next start").
+        const desired = docker.buildExtraBinds(volumes);
+        const current = (await docker.getContainerBinds(projectId))
+          .filter(b => !b.endsWith(':/workspace') && !b.endsWith(':/root'));
+        const matches = JSON.stringify([...desired].sort()) === JSON.stringify([...current].sort());
+        if (matches) {
+          await docker.startContainer(projectId);
+        } else {
+          const { containerId: startedId } = await docker.recreateContainer(projectId, project.folderPath, project.template, volumes);
+          db.update(projects).set({ containerId: startedId }).where(eq(projects.id, projectId)).run();
+        }
         emitStatus('running');
         break;
+      }
 
       case 'stop':
         await docker.stopContainer(projectId);
@@ -274,21 +408,21 @@ router.post('/:id/lifecycle', requireAuth, async (req, res) => {
 
       case 'recreate': {
         emitStatus('starting');
-        const { containerId: newId } = await docker.recreateContainer(projectId, project.folderPath, project.template);
+        const { containerId: newId } = await docker.recreateContainer(projectId, project.folderPath, project.template, volumes);
         db.update(projects).set({ containerId: newId }).where(eq(projects.id, projectId)).run();
         emitStatus('running');
         break;
       }
       case 'rebuild': {
         emitStatus('starting');
-        const { containerId: rebuiltId } = await docker.rebuildContainer(projectId, project.folderPath, project.template);
+        const { containerId: rebuiltId } = await docker.rebuildContainer(projectId, project.folderPath, project.template, volumes);
         db.update(projects).set({ containerId: rebuiltId }).where(eq(projects.id, projectId)).run();
         emitStatus('running');
         break;
       }
       case 'reset': {
         emitStatus('starting');
-        const { containerId: resetId } = await docker.resetEnvironment(projectId, project.folderPath, project.template);
+        const { containerId: resetId } = await docker.resetEnvironment(projectId, project.folderPath, project.template, volumes);
         db.update(projects).set({ containerId: resetId }).where(eq(projects.id, projectId)).run();
         emitStatus('running');
         break;

@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS projects (
   template TEXT NOT NULL,
   container_id TEXT,
   home_volume TEXT,
+  volumes TEXT DEFAULT '[]',
   status TEXT DEFAULT 'stopped',
   avatar TEXT DEFAULT '',
   sort_order INTEGER DEFAULT 0,
@@ -150,6 +151,7 @@ function initDB() {
     // Backfill existing rows so their order is stable (oldest first).
     sqlite.exec("UPDATE projects SET sort_order = id WHERE sort_order = 0");
   } catch (_) {}
+  try { sqlite.exec("ALTER TABLE projects ADD COLUMN volumes TEXT DEFAULT '[]'"); } catch (_) {}
   try { sqlite.exec("ALTER TABLE connectors ADD COLUMN labels TEXT DEFAULT '[]'"); } catch (_) {}
   try { sqlite.exec("ALTER TABLE connectors ADD COLUMN capabilities TEXT DEFAULT '{}'"); } catch (_) {}
   runMigrations(sqlite);

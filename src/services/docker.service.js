@@ -46,6 +46,41 @@ function normalizeTemplate(template) {
   return WORKSPACE_TEMPLATES[template] ? template : 'claude-code';
 }
 
+// Container paths that the workspace owns and that user volumes must never
+// override. Keeps /workspace and the home volume mount intact.
+const PROTECTED_CONTAINER_PATHS = new Set(['/workspace', '/root', '/']);
+
+/**
+ * Translate the backend-neutral volume list (as stored in projects.volumes)
+ * into Docker bind strings: "hostPath:containerPath:ro|rw".
+ *
+ * Invalid or unsafe entries are skipped:
+ *  - missing host/container path
+ *  - relative paths (must be absolute on both sides)
+ *  - container paths that collide with required mounts (/workspace, /root, /)
+ *
+ * Returns an array of Docker bind strings.
+ */
+function buildExtraBinds(volumes) {
+  if (!Array.isArray(volumes)) return [];
+  const seen = new Set();
+  const binds = [];
+  for (const v of volumes) {
+    if (!v || typeof v !== 'object') continue;
+    const hostPath = String(v.hostPath || '').trim();
+    const containerPath = String(v.containerPath || '').trim();
+    if (!hostPath || !containerPath) continue;
+    if (!path.isAbsolute(hostPath) || !path.isAbsolute(containerPath)) continue;
+    const normContainer = path.posix.normalize(containerPath);
+    if (PROTECTED_CONTAINER_PATHS.has(normContainer)) continue;
+    if (seen.has(normContainer)) continue; // first definition wins
+    seen.add(normContainer);
+    const mode = v.readOnly === false ? 'rw' : 'ro';
+    binds.push(`${hostPath}:${normContainer}:${mode}`);
+  }
+  return binds;
+}
+
 function getWorkspaceTemplate(template) {
   return WORKSPACE_TEMPLATES[normalizeTemplate(template)];
 }
@@ -226,12 +261,13 @@ async function _connectToInternalNetwork(containerId) {
 
 // ────────────────────────────────────────────────────────────────────────────
 
-async function createWorkspaceContainer(projectId, folderPath, template = 'claude-code') {
+async function createWorkspaceContainer(projectId, folderPath, template = 'claude-code', volumes = []) {
   const templateId = normalizeTemplate(template);
   const image = await getWorkspaceImage(templateId);
   const name = containerName(projectId);
   const homeVol = homeVolumeName(projectId);
   const projectHostPath = path.join(HOST_PROJECTS_DIR, folderPath);
+  const extraBinds = buildExtraBinds(volumes);
 
   const { getWorkspaceEnvVars, getWorkspaceAccessToken } = require('./auth.service');
   const userEnv = [
@@ -258,7 +294,7 @@ async function createWorkspaceContainer(projectId, folderPath, template = 'claud
     Cmd: buildWorkspaceCmd(image, templateId),
     Env: userEnv,
     HostConfig: {
-      Binds: [`${projectHostPath}:/workspace`, `${homeVol}:/root`],
+      Binds: [`${projectHostPath}:/workspace`, `${homeVol}:/root`, ...extraBinds],
       RestartPolicy: { Name: 'unless-stopped' },
     },
     WorkingDir: '/workspace',
@@ -288,12 +324,13 @@ async function restartContainer(projectId) {
   return getContainerStatus(projectId);
 }
 
-async function recreateContainer(projectId, folderPath, template = 'claude-code') {
+async function recreateContainer(projectId, folderPath, template = 'claude-code', volumes = []) {
   const templateId = normalizeTemplate(template);
   const homeVol = homeVolumeName(projectId);
   const image = await getWorkspaceImage(templateId);
   const name = containerName(projectId);
   const projectHostPath = path.join(HOST_PROJECTS_DIR, folderPath);
+  const extraBinds = buildExtraBinds(volumes);
 
   const { getWorkspaceEnvVars, getWorkspaceAccessToken } = require('./auth.service');
   const userEnv = [
@@ -314,7 +351,7 @@ async function recreateContainer(projectId, folderPath, template = 'claude-code'
     Cmd: buildWorkspaceCmd(image, templateId),
     Env: userEnv,
     HostConfig: {
-      Binds: [`${projectHostPath}:/workspace`, `${homeVol}:/root`],
+      Binds: [`${projectHostPath}:/workspace`, `${homeVol}:/root`, ...extraBinds],
       RestartPolicy: { Name: 'unless-stopped' },
     },
     WorkingDir: '/workspace',
@@ -325,7 +362,7 @@ async function recreateContainer(projectId, folderPath, template = 'claude-code'
   return { containerId: container.id };
 }
 
-async function rebuildContainer(projectId, folderPath, template = 'claude-code') {
+async function rebuildContainer(projectId, folderPath, template = 'claude-code', volumes = []) {
   const workspaceTemplate = getWorkspaceTemplate(template);
   // Pull latest workspace image
   await new Promise((resolve) => {
@@ -335,10 +372,10 @@ async function rebuildContainer(projectId, folderPath, template = 'claude-code')
     });
   }).catch(() => {});
 
-  return recreateContainer(projectId, folderPath, workspaceTemplate.id);
+  return recreateContainer(projectId, folderPath, workspaceTemplate.id, volumes);
 }
 
-async function resetEnvironment(projectId, folderPath, template = 'claude-code') {
+async function resetEnvironment(projectId, folderPath, template = 'claude-code', volumes = []) {
   const homeVol = homeVolumeName(projectId);
 
   try {
@@ -351,7 +388,7 @@ async function resetEnvironment(projectId, folderPath, template = 'claude-code')
     await docker.getVolume(homeVol).remove();
   } catch (_) {}
 
-  return recreateContainer(projectId, folderPath, template);
+  return recreateContainer(projectId, folderPath, template, volumes);
 }
 
 async function removeWorkspace(projectId) {
@@ -367,6 +404,18 @@ async function removeWorkspace(projectId) {
   try {
     await docker.getVolume(homeVol).remove();
   } catch (_) {}
+}
+
+// Return the Binds currently configured on the workspace container (as Docker
+// bind strings), or [] if the container does not exist. Used to detect when a
+// stopped workspace needs recreating to pick up changed volume config.
+async function getContainerBinds(projectId) {
+  try {
+    const info = await docker.getContainer(containerName(projectId)).inspect();
+    return info.HostConfig?.Binds || [];
+  } catch {
+    return [];
+  }
 }
 
 async function getContainerStatus(projectId) {
@@ -550,10 +599,12 @@ module.exports = {
   resetEnvironment,
   removeWorkspace,
   getContainerStatus,
+  getContainerBinds,
   getContainerLogs,
   streamContainerLogs,
   containerName,
   homeVolumeName,
   WORKSPACE_TEMPLATES,
   normalizeTemplate,
+  buildExtraBinds,
 };

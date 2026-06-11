@@ -624,6 +624,174 @@ function TerminalInstance({
   );
 }
 
+/* ── Workspace volumes section ─────────────────── */
+const SENSITIVE_HOST_PREFIXES = ['/root', '/etc', '/var/run', '/run/secrets', '/proc', '/sys', '/boot', '/home'];
+function hostPathLooksSensitive(p) {
+  const s = String(p || '');
+  return SENSITIVE_HOST_PREFIXES.some(prefix => s === prefix || s.startsWith(prefix + '/'));
+}
+
+const BLANK_VOLUME = { hostPath: '', containerPath: '', readOnly: true, description: '' };
+
+function VolumesSection({ projectId, project, csrfToken, addToast }) {
+  const [volumes, setVolumes] = useState([]);
+  const [applied, setApplied] = useState(true);
+  const [form, setForm] = useState(null);     // draft being added/edited, or null
+  const [editIndex, setEditIndex] = useState(null); // index being edited, null = adding new
+  const [busy, setBusy] = useState(false);
+  const [restarting, setRestarting] = useState(false);
+
+  const running = project?.status === 'running';
+
+  async function load() {
+    try {
+      const r = await fetch(`/api/projects/${projectId}/volumes`);
+      const d = await r.json();
+      setVolumes(d.volumes || []);
+      setApplied(d.applied !== false);
+    } catch (_) {}
+  }
+  useEffect(() => { load(); }, [projectId]);
+
+  async function persist(next) {
+    setBusy(true);
+    try {
+      const r = await fetch(`/api/projects/${projectId}/volumes`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ volumes: next }),
+      });
+      const d = await r.json();
+      if (!d.success) { addToast(d.error || 'Failed to save volumes.', 'error'); return false; }
+      setVolumes(d.volumes || []);
+      setApplied(!d.restartRequired);
+      addToast(d.message || 'Volumes saved.');
+      return true;
+    } catch (e) {
+      addToast(e.message || 'Failed to save volumes.', 'error');
+      return false;
+    } finally { setBusy(false); }
+  }
+
+  function startAdd() { setForm({ ...BLANK_VOLUME }); setEditIndex(null); }
+  function startEdit(i) { setForm({ ...volumes[i] }); setEditIndex(i); }
+  function cancelForm() { setForm(null); setEditIndex(null); }
+
+  async function submitForm(e) {
+    e.preventDefault();
+    const hostPath = form.hostPath.trim();
+    const containerPath = form.containerPath.trim();
+    if (!hostPath || !containerPath) { addToast('Host path and container path are required.', 'error'); return; }
+    const entry = { hostPath, containerPath, readOnly: !!form.readOnly, description: form.description.trim() };
+    const next = volumes.map(v => ({ hostPath: v.hostPath, containerPath: v.containerPath, readOnly: v.readOnly, description: v.description || '' }));
+    if (editIndex === null) next.push(entry);
+    else next[editIndex] = entry;
+    if (await persist(next)) cancelForm();
+  }
+
+  async function removeVolume(i) {
+    if (!confirm(`Remove mount ${volumes[i].containerPath}?`)) return;
+    const next = volumes.filter((_, idx) => idx !== i)
+      .map(v => ({ hostPath: v.hostPath, containerPath: v.containerPath, readOnly: v.readOnly, description: v.description || '' }));
+    await persist(next);
+  }
+
+  async function restartWithVolumes() {
+    setRestarting(true);
+    try {
+      const r = await fetch(`/api/projects/${projectId}/lifecycle`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ action: 'recreate' }),
+      });
+      const d = await r.json();
+      if (!d.success) addToast(d.error || 'Restart failed.', 'error');
+      else { addToast('Workspace recreated with new volumes.'); setApplied(true); }
+    } catch (e) { addToast(e.message, 'error'); }
+    finally { setRestarting(false); load(); }
+  }
+
+  const formSensitive = form && hostPathLooksSensitive(form.hostPath);
+
+  return (
+    <div className="panel-section">
+      <div className="panel-section-header">
+        <div className="panel-section-title">WORKSPACE VOLUMES</div>
+        {!form && <button className="btn btn-ghost" onClick={startAdd} disabled={busy}>Add Volume</button>}
+      </div>
+      <p className="panel-hint">
+        Mount extra host paths into this workspace. Mounts default to read-only and
+        apply when the workspace is recreated.
+      </p>
+
+      {running && !applied && (
+        <div className="vol-warn">
+          <div>Changing volumes requires recreating/restarting the workspace.</div>
+          <button className="btn btn-primary" onClick={restartWithVolumes} disabled={restarting}>
+            {restarting ? 'Restarting…' : 'Restart workspace with new volumes'}
+          </button>
+        </div>
+      )}
+
+      {volumes.length === 0 && !form && <p className="panel-hint">No extra volumes mounted.</p>}
+
+      {volumes.map((v, i) => (
+        <div key={i} className="vol-row">
+          <div className="vol-row-main">
+            <div className="vol-paths">
+              <code>{v.hostPath}</code>
+              <span className="vol-arrow">→</span>
+              <code>{v.containerPath}</code>
+              <span className={`vol-mode ${v.readOnly ? 'ro' : 'rw'}`}>{v.readOnly ? 'ro' : 'rw'}</span>
+            </div>
+            {v.description && <div className="vol-desc">{v.description}</div>}
+            {(v.sensitive || hostPathLooksSensitive(v.hostPath)) && (
+              <div className="vol-sensitive">⚠ Sensitive host path — mounted contents are exposed inside the workspace.</div>
+            )}
+          </div>
+          <div className="vol-row-actions">
+            <button className="btn btn-ghost" onClick={() => startEdit(i)} disabled={busy}>Edit</button>
+            <button className="btn btn-ghost ws-danger" onClick={() => removeVolume(i)} disabled={busy}>Remove</button>
+          </div>
+        </div>
+      ))}
+
+      {form && (
+        <form className="vol-form" onSubmit={submitForm}>
+          <label className="vol-field">
+            <span>Host path</span>
+            <input className="input" value={form.hostPath} placeholder="/root/opus-unraid-nopass"
+              onChange={e => setForm(f => ({ ...f, hostPath: e.target.value }))} autoFocus />
+          </label>
+          <label className="vol-field">
+            <span>Container path</span>
+            <input className="input" value={form.containerPath} placeholder="/run/secrets/opus-unraid-ssh-key"
+              onChange={e => setForm(f => ({ ...f, containerPath: e.target.value }))} />
+          </label>
+          <label className="vol-field">
+            <span>Description (optional)</span>
+            <input className="input" value={form.description} placeholder="Unraid SSH key for LXC testing"
+              onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
+          </label>
+          <label className="vol-checkbox">
+            <input type="checkbox" checked={form.readOnly}
+              onChange={e => setForm(f => ({ ...f, readOnly: e.target.checked }))} />
+            <span>Read-only</span>
+          </label>
+          {formSensitive && (
+            <div className="vol-sensitive">⚠ This is a sensitive host path. Keep it read-only unless you are certain.</div>
+          )}
+          <div className="vol-form-actions">
+            <button className="btn btn-primary" type="submit" disabled={busy}>
+              {busy ? 'Saving…' : (editIndex === null ? 'Add' : 'Save')}
+            </button>
+            <button className="btn btn-ghost" type="button" onClick={cancelForm} disabled={busy}>Cancel</button>
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
+
 /* ── Workspace settings panel ──────────────────── */
 function WorkspacePanel({ projectId, project, csrfToken, addToast, onDelete, onProjectUpdated }) {
   const [logs, setLogs] = useState('');
@@ -738,6 +906,13 @@ function WorkspacePanel({ projectId, project, csrfToken, addToast, onDelete, onP
           ))}
         </div>
       </div>
+
+      <VolumesSection
+        projectId={projectId}
+        project={project}
+        csrfToken={csrfToken}
+        addToast={addToast}
+      />
 
       <div className="panel-section">
         <div className="panel-section-header">
