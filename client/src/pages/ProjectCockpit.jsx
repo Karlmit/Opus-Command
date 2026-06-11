@@ -975,13 +975,193 @@ function WorkspacePanel({ projectId, project, csrfToken, addToast, onDelete, onP
   );
 }
 
-function TasksPanel({ tasks, taskDraft, completedOpen, onDraftChange, onAddTask, onToggleTask, onDeleteTask, onToggleCompleted }) {
-  const activeTasks = tasks.filter(t => !t.completed);
+const DEFAULT_TASK_SECTION_ID = 'open';
+
+function makeTaskSectionId() {
+  return typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `section-${Date.now()}-${Math.random()}`;
+}
+
+function collectPlanningMarkdownFiles(nodes, files = []) {
+  for (const node of nodes || []) {
+    if (node.type === 'dir') collectPlanningMarkdownFiles(node.children || [], files);
+    else if (/\.(md|mdx)$/i.test(node.name)) files.push(node);
+  }
+  return files;
+}
+
+function normalizeTaskSections(savedSections) {
+  const sections = Array.isArray(savedSections) ? savedSections : [];
+  const cleanSections = sections
+    .filter(section => section?.id && section?.title)
+    .map(section => ({ id: section.id, title: section.title }));
+  if (!cleanSections.some(section => section.id === DEFAULT_TASK_SECTION_ID)) {
+    cleanSections.unshift({ id: DEFAULT_TASK_SECTION_ID, title: 'Open' });
+  }
+  return cleanSections;
+}
+
+function normalizeTasks(savedTasks, sections) {
+  const sectionIds = new Set(sections.map(section => section.id));
+  return (Array.isArray(savedTasks) ? savedTasks : []).map(task => {
+    const sectionId = sectionIds.has(task.sectionId) ? task.sectionId : DEFAULT_TASK_SECTION_ID;
+    return {
+      ...task,
+      sectionId,
+      description: task.description || '',
+      planningPath: task.planningPath || '',
+    };
+  });
+}
+
+function TaskEditModal({ task, planningFiles, onClose, onSave }) {
+  const [title, setTitle] = useState(task?.title || '');
+  const [description, setDescription] = useState(task?.description || '');
+  const [planningPath, setPlanningPath] = useState(task?.planningPath || '');
+
+  useEffect(() => {
+    setTitle(task?.title || '');
+    setDescription(task?.description || '');
+    setPlanningPath(task?.planningPath || '');
+  }, [task?.id]);
+
+  if (!task) return null;
+
+  function submit(e) {
+    e.preventDefault();
+    const nextTitle = title.trim();
+    if (!nextTitle) return;
+    onSave(task.id, {
+      title: nextTitle,
+      description: description.trim(),
+      planningPath,
+    });
+  }
+
+  return (
+    <div className="modal-backdrop task-modal-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
+      <form className="modal task-edit-modal" role="dialog" aria-modal="true" aria-labelledby="task-edit-title" onSubmit={submit}>
+        <div className="modal-header">
+          <h2 id="task-edit-title" className="modal-title">Edit task</h2>
+        </div>
+        <div className="modal-body task-edit-body">
+          <label className="task-field-label">
+            <span>Title</span>
+            <input
+              className="task-modal-input"
+              value={title}
+              onChange={e => setTitle(e.target.value)}
+              autoFocus
+            />
+          </label>
+          <label className="task-field-label">
+            <span>Description</span>
+            <textarea
+              className="task-modal-textarea"
+              value={description}
+              onChange={e => setDescription(e.target.value)}
+              rows={5}
+            />
+          </label>
+          <label className="task-field-label">
+            <span>Planning file</span>
+            <select className="task-modal-input" value={planningPath} onChange={e => setPlanningPath(e.target.value)}>
+              <option value="">No linked file</option>
+              {planningFiles.map(file => (
+                <option key={file.path} value={file.path}>{file.path.replace(/^\.planning\/?/, '')}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="modal-footer">
+          <button className="btn btn-ghost" type="button" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" type="submit" disabled={!title.trim()}>Save</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function TaskRow({ task, onToggleTask, onDeleteTask, onEditTask, onDragStart, onOpenLinkedPlanningFile }) {
+  return (
+    <div
+      className={`task-row${task.completed ? ' completed' : ''}`}
+      draggable={!task.completed}
+      onDragStart={e => onDragStart(e, task.id)}
+    >
+      <input
+        type="checkbox"
+        checked={task.completed}
+        onChange={() => onToggleTask(task.id)}
+        aria-label={task.completed ? `Mark ${task.title} open` : `Mark ${task.title} done`}
+      />
+      <button type="button" className="task-main-btn" onClick={() => onEditTask(task.id)}>
+        <span className="task-title">{task.title}</span>
+        {(task.description || task.planningPath) && (
+          <span className="task-meta">
+            {task.description && <span>Description</span>}
+            {task.planningPath && <span>{task.planningPath.replace(/^\.planning\/?/, '')}</span>}
+          </span>
+        )}
+      </button>
+      {task.planningPath && (
+        <button
+          type="button"
+          className="task-link-btn"
+          title="Open linked planning file"
+          aria-label="Open linked planning file"
+          onClick={() => onOpenLinkedPlanningFile(task.planningPath)}
+        >
+          ↗
+        </button>
+      )}
+      <button type="button" className="task-delete-btn" aria-label={`Delete ${task.title}`} onClick={() => onDeleteTask(task.id)}>×</button>
+    </div>
+  );
+}
+
+function TasksPanel({
+  tasks,
+  taskSections,
+  taskDraft,
+  taskSectionDraft,
+  completedOpen,
+  planningTree,
+  onDraftChange,
+  onSectionDraftChange,
+  onAddTask,
+  onAddSection,
+  onToggleTask,
+  onDeleteTask,
+  onEditTask,
+  editingTaskId,
+  onCloseTaskEditor,
+  onSaveTask,
+  onMoveTask,
+  onToggleCompleted,
+  onOpenLinkedPlanningFile,
+}) {
+  const planningFiles = collectPlanningMarkdownFiles(planningTree);
   const completedTasks = tasks.filter(t => t.completed);
 
   function submitTask(e) {
     e.preventDefault();
     onAddTask();
+  }
+
+  function submitSection(e) {
+    e.preventDefault();
+    onAddSection();
+  }
+
+  function handleDragStart(e, taskId) {
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', taskId);
+  }
+
+  function handleDrop(e, sectionId) {
+    e.preventDefault();
+    const taskId = e.dataTransfer.getData('text/plain');
+    if (taskId) onMoveTask(taskId, sectionId);
   }
 
   return (
@@ -996,19 +1176,47 @@ function TasksPanel({ tasks, taskDraft, completedOpen, onDraftChange, onAddTask,
         <button className="btn btn-primary" type="submit">Add</button>
       </form>
 
-      <div className="task-list">
-        {activeTasks.length === 0 && <p className="panel-hint">No open tasks.</p>}
-        {activeTasks.map(task => (
-          <label key={task.id} className="task-row">
-            <input
-              type="checkbox"
-              checked={task.completed}
-              onChange={() => onToggleTask(task.id)}
-            />
-            <span className="task-title">{task.title}</span>
-            <button type="button" className="task-delete-btn" onClick={e => { e.preventDefault(); onDeleteTask(task.id); }}>×</button>
-          </label>
-        ))}
+      <form className="task-add-row" onSubmit={submitSection}>
+        <input
+          className="task-input"
+          value={taskSectionDraft}
+          onChange={e => onSectionDraftChange(e.target.value)}
+          placeholder="Add section"
+        />
+        <button className="btn btn-ghost" type="submit">Section</button>
+      </form>
+
+      <div className="task-sections">
+        {taskSections.map(section => {
+          const sectionTasks = tasks.filter(t => !t.completed && (t.sectionId || DEFAULT_TASK_SECTION_ID) === section.id);
+          return (
+            <section
+              key={section.id}
+              className="task-section"
+              onDragOver={e => e.preventDefault()}
+              onDrop={e => handleDrop(e, section.id)}
+            >
+              <div className="task-section-header">
+                <span>{section.title}</span>
+                <span className="task-count">{sectionTasks.length}</span>
+              </div>
+              <div className="task-list">
+                {sectionTasks.length === 0 && <p className="panel-hint">Drop tasks here.</p>}
+                {sectionTasks.map(task => (
+                  <TaskRow
+                    key={task.id}
+                    task={task}
+                    onToggleTask={onToggleTask}
+                    onDeleteTask={onDeleteTask}
+                    onEditTask={onEditTask}
+                    onDragStart={handleDragStart}
+                    onOpenLinkedPlanningFile={onOpenLinkedPlanningFile}
+                  />
+                ))}
+              </div>
+            </section>
+          );
+        })}
       </div>
 
       <div className="task-completed-section">
@@ -1021,19 +1229,26 @@ function TasksPanel({ tasks, taskDraft, completedOpen, onDraftChange, onAddTask,
           <div className="task-list completed">
             {completedTasks.length === 0 && <p className="panel-hint">No completed tasks.</p>}
             {completedTasks.map(task => (
-              <label key={task.id} className="task-row completed">
-                <input
-                  type="checkbox"
-                  checked={task.completed}
-                  onChange={() => onToggleTask(task.id)}
-                />
-                <span className="task-title">{task.title}</span>
-                <button type="button" className="task-delete-btn" onClick={e => { e.preventDefault(); onDeleteTask(task.id); }}>×</button>
-              </label>
+              <TaskRow
+                key={task.id}
+                task={task}
+                onToggleTask={onToggleTask}
+                onDeleteTask={onDeleteTask}
+                onEditTask={onEditTask}
+                onDragStart={handleDragStart}
+                onOpenLinkedPlanningFile={onOpenLinkedPlanningFile}
+              />
             ))}
           </div>
         )}
       </div>
+
+      <TaskEditModal
+        task={tasks.find(task => task.id === editingTaskId)}
+        planningFiles={planningFiles}
+        onClose={onCloseTaskEditor}
+        onSave={onSaveTask}
+      />
     </div>
   );
 }
@@ -1175,7 +1390,10 @@ export default function ProjectCockpit() {
   const [activeTab, setActiveTab] = useState(null); // 'term-{id}' | 'file-{path}' | 'settings' | 'git'
   const [lastActiveTermId, setLastActiveTermId] = useState(null);
   const [tasks, setTasks] = useState([]);
+  const [taskSections, setTaskSections] = useState([{ id: DEFAULT_TASK_SECTION_ID, title: 'Open' }]);
   const [taskDraft, setTaskDraft] = useState('');
+  const [taskSectionDraft, setTaskSectionDraft] = useState('');
+  const [editingTaskId, setEditingTaskId] = useState(null);
   const [completedTasksOpen, setCompletedTasksOpen] = useState(false);
   const [tasksOpen, setTasksOpen] = useState(false);
   const [reconnecting, setRecon]  = useState(false);
@@ -1256,13 +1474,23 @@ export default function ProjectCockpit() {
   }, [filePanelWidth]);
 
   useEffect(() => {
+    let savedTasks = [];
+    let savedSections = [];
     try {
-      const saved = JSON.parse(localStorage.getItem(`opus:tasks:${projectId}`) || '[]');
-      setTasks(Array.isArray(saved) ? saved : []);
-    } catch {
-      setTasks([]);
-    }
+      savedTasks = JSON.parse(localStorage.getItem(`opus:tasks:${projectId}`) || '[]');
+    } catch (_) {}
+    try {
+      savedSections = JSON.parse(localStorage.getItem(`opus:task-sections:${projectId}`) || '[]');
+    } catch (_) {}
+    const nextSections = normalizeTaskSections(savedSections);
+    const nextTasks = normalizeTasks(savedTasks, nextSections);
+    setTaskSections(nextSections);
+    setTasks(nextTasks);
+    localStorage.setItem(`opus:task-sections:${projectId}`, JSON.stringify(nextSections));
+    localStorage.setItem(`opus:tasks:${projectId}`, JSON.stringify(nextTasks));
     setTaskDraft('');
+    setTaskSectionDraft('');
+    setEditingTaskId(null);
     setCompletedTasksOpen(false);
   }, [projectId]);
 
@@ -1329,6 +1557,8 @@ export default function ProjectCockpit() {
     setDirty({});
     setPlanningTree([]);
     setTaskDraft('');
+    setTaskSectionDraft('');
+    setEditingTaskId(null);
     setTasksOpen(false);
     setMarkedNode(null);
     loadProject(); loadTree(); loadSessions();
@@ -1460,10 +1690,22 @@ export default function ProjectCockpit() {
     localStorage.setItem(`opus:tasks:${projectId}`, JSON.stringify(nextTasks));
   }
 
+  function persistTaskSections(nextSections) {
+    localStorage.setItem(`opus:task-sections:${projectId}`, JSON.stringify(nextSections));
+  }
+
   function updateTasks(updater) {
     setTasks(prev => {
       const next = updater(prev);
       persistTasks(next);
+      return next;
+    });
+  }
+
+  function updateTaskSections(updater) {
+    setTaskSections(prev => {
+      const next = normalizeTaskSections(updater(prev));
+      persistTaskSections(next);
       return next;
     });
   }
@@ -1476,12 +1718,22 @@ export default function ProjectCockpit() {
       {
         id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
         title,
+        sectionId: DEFAULT_TASK_SECTION_ID,
+        description: '',
+        planningPath: '',
         completed: false,
         createdAt: Date.now(),
         completedAt: null,
       },
     ]);
     setTaskDraft('');
+  }
+
+  function addTaskSection() {
+    const title = taskSectionDraft.trim();
+    if (!title) return;
+    updateTaskSections(prev => [...prev, { id: makeTaskSectionId(), title }]);
+    setTaskSectionDraft('');
   }
 
   function toggleTask(id) {
@@ -1494,6 +1746,25 @@ export default function ProjectCockpit() {
 
   function deleteTask(id) {
     updateTasks(prev => prev.filter(task => task.id !== id));
+    if (editingTaskId === id) setEditingTaskId(null);
+  }
+
+  function moveTask(taskId, sectionId) {
+    updateTasks(prev => prev.map(task => (
+      task.id === taskId ? { ...task, sectionId, completed: false, completedAt: null } : task
+    )));
+  }
+
+  function saveTask(id, updates) {
+    updateTasks(prev => prev.map(task => (
+      task.id === id ? { ...task, ...updates } : task
+    )));
+    setEditingTaskId(null);
+  }
+
+  function openLinkedPlanningFile(path) {
+    const name = path.split('/').pop() || path;
+    openFile({ path, name, type: 'file' });
   }
 
   function toggleTasksPanel() {
@@ -2301,13 +2572,24 @@ export default function ProjectCockpit() {
               <div className="side-panel-header">TASKS</div>
               <TasksPanel
                 tasks={tasks}
+                taskSections={taskSections}
                 taskDraft={taskDraft}
+                taskSectionDraft={taskSectionDraft}
                 completedOpen={completedTasksOpen}
+                planningTree={planningTree}
                 onDraftChange={setTaskDraft}
+                onSectionDraftChange={setTaskSectionDraft}
                 onAddTask={addTask}
+                onAddSection={addTaskSection}
                 onToggleTask={toggleTask}
                 onDeleteTask={deleteTask}
+                onEditTask={setEditingTaskId}
+                editingTaskId={editingTaskId}
+                onCloseTaskEditor={() => setEditingTaskId(null)}
+                onSaveTask={saveTask}
+                onMoveTask={moveTask}
                 onToggleCompleted={() => setCompletedTasksOpen(open => !open)}
+                onOpenLinkedPlanningFile={openLinkedPlanningFile}
               />
             </div>
           )}
