@@ -74,8 +74,9 @@ function SidebarPopover({ onClose, children, width = 280 }) {
 
 /* ── New project form (inline in popover) ───────── */
 function NewProjectForm({ csrfToken, onClose, onCreated }) {
-  const [form, setForm] = useState({ name: '', folder: '', template: 'claude-code' });
+  const [form, setForm] = useState({ name: '', folder: '', template: 'claude-code', backend: 'docker' });
   const [templates, setTemplates] = useState([]);
+  const [backends, setBackends] = useState([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const firstRef = useRef(null);
@@ -87,7 +88,15 @@ function NewProjectForm({ csrfToken, onClose, onCreated }) {
       .then(r => r.json())
       .then(data => setTemplates(data.templates || []))
       .catch(() => {});
+    fetch('/api/projects/backends')
+      .then(r => r.json())
+      .then(data => setBackends(data.backends || []))
+      .catch(() => {});
   }, []);
+
+  const lxcBackend = backends.find(b => b.id === 'unraid_lxc');
+  const lxcAvailable = !!lxcBackend?.available;
+  const isLxc = form.backend === 'unraid_lxc';
 
   function handleNameChange(name) {
     const folder = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -125,10 +134,30 @@ function NewProjectForm({ csrfToken, onClose, onCreated }) {
       </div>
 
       <div className="form-group">
+        <label className="form-label">Workspace Backend</label>
+        <select className="input" value={form.backend}
+          onChange={e => setForm(f => ({ ...f, backend: e.target.value }))}>
+          <option value="docker">Docker (default)</option>
+          <option value="unraid_lxc" disabled={!lxcAvailable}>
+            Unraid LXC{lxcAvailable ? '' : ` — ${lxcBackend?.reason || 'unavailable'}`}
+          </option>
+        </select>
+        <p className="form-hint">
+          {isLxc
+            ? 'Runs as an LXC container on your Unraid server over SSH.'
+            : 'Portable Docker workspace.'}
+        </p>
+      </div>
+
+      <div className="form-group">
         <label className="form-label">Project Folder</label>
         <input className="input" value={form.folder}
           onChange={e => setForm(f => ({ ...f, folder: e.target.value }))} placeholder="my-project" />
-        <p className="form-hint">Subdirectory within <code>/projects</code></p>
+        <p className="form-hint">
+          {isLxc
+            ? <>Folder under the Unraid workspace share, mounted as <code>/workspace</code>.</>
+            : <>Subdirectory within <code>/projects</code></>}
+        </p>
       </div>
 
       <div className="form-group">

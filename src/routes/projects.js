@@ -8,8 +8,12 @@ const { projects, terminalSessions, activityLog } = require('../db/schema');
 const { eq, asc } = require('drizzle-orm');
 const { PROJECTS_DIR } = require('../config');
 const docker = require('../services/docker.service');
+const workspace = require('../services/workspace.service');
+const lxcConfig = require('../services/unraid-lxc.config');
 const terminal = require('../services/terminal.service');
 const { getSetting, setSetting } = require('../services/auth.service');
+
+const WORKSPACE_BACKENDS = new Set(['docker', 'unraid_lxc']);
 
 const CLAUDE_AZURE_ENV_KEYS = new Set([
   'CLAUDE_CODE_USE_FOUNDRY',
@@ -88,6 +92,23 @@ router.get('/templates', requireAuth, (req, res) => {
   });
 });
 
+// GET /api/projects/backends — available workspace backends
+router.get('/backends', requireAuth, (req, res) => {
+  const cfg = lxcConfig.getPublicConfig();
+  res.json({
+    backends: [
+      { id: 'docker', label: 'Docker', description: 'Portable Docker workspace (default).', available: true },
+      {
+        id: 'unraid_lxc',
+        label: 'Unraid LXC',
+        description: 'LXC container on your Unraid server over SSH.',
+        available: !!(cfg.enabled && cfg.hasKey),
+        reason: cfg.enabled ? (cfg.hasKey ? null : 'No SSH key configured.') : 'Disabled in Settings.',
+      },
+    ],
+  });
+});
+
 // GET /api/projects — list all projects with live status
 router.get('/', requireAuth, async (req, res) => {
   try {
@@ -95,13 +116,14 @@ router.get('/', requireAuth, async (req, res) => {
     const rows = db.select().from(projects).orderBy(asc(projects.sortOrder), asc(projects.id)).all();
 
     const projectsWithStatus = await Promise.all(rows.map(async p => {
-      const status = await docker.getContainerStatus(p.id).catch(() => 'stopped');
+      const status = await workspace.getStatus(p).catch(() => 'stopped');
       const aiSummary = terminal.getProjectAISummary(p.id);
       return {
         id: p.id,
         name: p.name,
         folderPath: p.folderPath,
         template: p.template,
+        backend: workspace.backendOf(p),
         avatar: p.avatar || '',
         status,
         terminalCount: aiSummary.terminalCount,
@@ -128,15 +150,26 @@ router.post('/', requireAuth, async (req, res) => {
     if (!name || !name.trim()) return res.status(400).json({ error: 'Project name is required.' });
     if (!folder || !folder.trim()) return res.status(400).json({ error: 'Project folder is required.' });
 
-    // Validate folder path is within /projects
-    const folderPath = folder.trim().replace(/^\//, '');
-    const resolved = path.resolve(PROJECTS_DIR, folderPath);
-    if (!resolved.startsWith(PROJECTS_DIR)) {
-      return res.status(403).json({ error: 'Access denied. The path is outside the project folder.' });
+    const backend = req.body.backend || 'docker';
+    if (!WORKSPACE_BACKENDS.has(backend)) return res.status(400).json({ error: 'Invalid workspace backend.' });
+    if (backend === 'unraid_lxc') {
+      const cfg = lxcConfig.getPublicConfig();
+      if (!cfg.enabled) return res.status(400).json({ error: 'Unraid LXC backend is disabled. Enable it in Settings → Workspace Backends.' });
+      if (!cfg.hasKey) return res.status(400).json({ error: 'No SSH key configured for the Unraid LXC backend.' });
     }
 
-    // Create folder if it doesn't exist
-    fs.mkdirSync(resolved, { recursive: true });
+    const folderPath = folder.trim().replace(/^\//, '');
+
+    // Docker workspaces bind a folder under PROJECTS_DIR — validate + create it.
+    // LXC workspaces live on the Unraid share; the helper creates that folder
+    // remotely, so no local folder is created here.
+    if (backend === 'docker') {
+      const resolved = path.resolve(PROJECTS_DIR, folderPath);
+      if (!resolved.startsWith(PROJECTS_DIR)) {
+        return res.status(403).json({ error: 'Access denied. The path is outside the project folder.' });
+      }
+      fs.mkdirSync(resolved, { recursive: true });
+    }
 
     const db = getDB();
     const now = Date.now();
@@ -147,42 +180,57 @@ router.post('/', requireAuth, async (req, res) => {
       name: name.trim(),
       folderPath,
       template,
+      workspaceBackend: backend,
+      lxcTemplate: backend === 'unraid_lxc' ? template : null,
       status: 'starting',
       sortOrder: maxOrder + 1,
       createdAt: now,
     }).returning().all();
 
     const project = inserted[0];
+    const io = req.app.get('io');
 
-    // Provision workspace container asynchronously
-    docker.createWorkspaceContainer(project.id, folderPath, template)
-      .then(async ({ containerId, homeVolume }) => {
+    // Provision the workspace asynchronously via the backend dispatcher.
+    workspace.create(project)
+      .then(async (fields) => {
+        db.update(projects).set({ ...fields, status: 'starting' }).where(eq(projects.id, project.id)).run();
+
+        const merged = { ...project, ...fields };
+        const status = await workspace.start(merged);
+
         db.update(projects).set({
-          containerId,
-          homeVolume,
-          status: 'starting',
+          status,
+          lxcStatus: backend === 'unraid_lxc' ? status : null,
+          lastStartedAt: Date.now(),
         }).where(eq(projects.id, project.id)).run();
+        if (io) io.emit('project:status', { id: project.id, status });
 
-        await docker.startContainer(project.id);
-
-        db.update(projects).set({ status: 'running' }).where(eq(projects.id, project.id)).run();
-
-        // Emit status update via Socket.io
-        const io = req.app.get('io');
-        if (io) io.emit('project:status', { id: project.id, status: 'running' });
-
-        // Log activity
         db.insert(activityLog).values({
           projectId: project.id,
           type: 'workspace_started',
-          message: 'Workspace container started.',
+          message: backend === 'unraid_lxc' ? 'LXC workspace started.' : 'Workspace container started.',
           createdAt: Date.now(),
         }).run();
+
+        // LXC: provision tools (node, Claude Code, …) in the background so the
+        // workspace is usable immediately while the install runs.
+        if (backend === 'unraid_lxc') {
+          workspace.update(merged)
+            .then(() => {
+              db.update(projects).set({ lastUpdatedAt: Date.now() }).where(eq(projects.id, project.id)).run();
+              db.insert(activityLog).values({
+                projectId: project.id,
+                type: 'workspace_updated',
+                message: 'LXC workspace provisioned (tools installed).',
+                createdAt: Date.now(),
+              }).run();
+            })
+            .catch(err => console.warn('[projects] LXC background provision warning:', err.message));
+        }
       })
       .catch(err => {
-        console.error('[projects] Container provisioning error:', err.message);
+        console.error('[projects] Workspace provisioning error:', err.message);
         db.update(projects).set({ status: 'error' }).where(eq(projects.id, project.id)).run();
-        const io = req.app.get('io');
         if (io) io.emit('project:status', { id: project.id, status: 'error' });
       });
 
@@ -191,6 +239,7 @@ router.post('/', requireAuth, async (req, res) => {
       name: project.name,
       folderPath: project.folderPath,
       template: project.template,
+      backend,
       status: 'starting',
       terminalCount: 0,
       aiWaiting: 0,
@@ -230,7 +279,7 @@ router.get('/:id', requireAuth, async (req, res) => {
     if (!rows.length) return res.status(404).json({ error: 'Project not found.' });
 
     const p = rows[0];
-    const status = await docker.getContainerStatus(p.id).catch(() => 'stopped');
+    const status = await workspace.getStatus(p).catch(() => 'stopped');
 
     // Get recent activity
     const activity = db.select().from(activityLog)
@@ -246,6 +295,12 @@ router.get('/:id', requireAuth, async (req, res) => {
       name: p.name,
       folderPath: p.folderPath,
       template: p.template,
+      backend: workspace.backendOf(p),
+      lxcContainerName: p.lxcContainerName || null,
+      lxcProjectPath: p.lxcProjectPath || null,
+      lastStartedAt: p.lastStartedAt || null,
+      lastStoppedAt: p.lastStoppedAt || null,
+      lastUpdatedAt: p.lastUpdatedAt || null,
       status,
       terminalCount: aiSummary.terminalCount,
       aiCount: aiSummary.aiBusy,
@@ -300,6 +355,14 @@ router.get('/:id/volumes', requireAuth, async (req, res) => {
       ...v,
       sensitive: isSensitiveHostPath(v.hostPath),
     }));
+
+    // Extra volume mounts are a Docker-only feature in V1. For LXC, report the
+    // stored config as-is (the only mount is /workspace, handled by the helper).
+    if (workspace.isLxc(rows[0])) {
+      const status = await workspace.getStatus(rows[0]).catch(() => 'stopped');
+      return res.json({ volumes, status, applied: true, backend: 'unraid_lxc' });
+    }
+
     const status = await docker.getContainerStatus(projectId).catch(() => 'stopped');
 
     // Tell the UI whether the live container already reflects the saved config.
@@ -375,6 +438,62 @@ router.post('/:id/lifecycle', requireAuth, async (req, res) => {
       if (io) io.emit('project:status', { id: projectId, status });
     }
 
+    // ── Unraid LXC backend — start/stop/restart/update/status over SSH ──────────
+    if (workspace.isLxc(project)) {
+      let status;
+      switch (action) {
+        case 'start':
+          emitStatus('starting');
+          status = await workspace.start(project);
+          db.update(projects).set({ lastStartedAt: Date.now() }).where(eq(projects.id, projectId)).run();
+          emitStatus(status);
+          break;
+        case 'stop':
+          status = await workspace.stop(project);
+          db.update(projects).set({ lastStoppedAt: Date.now() }).where(eq(projects.id, projectId)).run();
+          emitStatus(status);
+          break;
+        case 'restart':
+          emitStatus('starting');
+          status = await workspace.restart(project);
+          db.update(projects).set({ lastStartedAt: Date.now() }).where(eq(projects.id, projectId)).run();
+          emitStatus(status);
+          break;
+        case 'update': {
+          const before = await workspace.getStatus(project).catch(() => 'stopped');
+          if (before !== 'running') {
+            emitStatus('starting');
+            await workspace.start(project);
+          }
+          const result = await workspace.update(project);
+          db.update(projects).set({ lastUpdatedAt: Date.now() }).where(eq(projects.id, projectId)).run();
+          status = await workspace.getStatus(project).catch(() => 'running');
+          emitStatus(status);
+          db.insert(activityLog).values({
+            projectId,
+            type: 'lifecycle_update',
+            message: 'LXC workspace update completed.',
+            createdAt: Date.now(),
+          }).run();
+          return res.json({ success: true, status, log: result?.log || '' });
+        }
+        case 'status':
+          status = await workspace.getStatus(project);
+          db.update(projects).set({ lxcStatus: status }).where(eq(projects.id, projectId)).run();
+          return res.json({ success: true, status });
+        default:
+          return res.status(400).json({ error: `Action "${action}" is not supported for Unraid LXC workspaces.` });
+      }
+      db.update(projects).set({ lxcStatus: status }).where(eq(projects.id, projectId)).run();
+      db.insert(activityLog).values({
+        projectId,
+        type: `lifecycle_${action}`,
+        message: `LXC workspace ${action} completed.`,
+        createdAt: Date.now(),
+      }).run();
+      return res.json({ success: true, status });
+    }
+
     switch (action) {
       case 'start': {
         emitStatus('starting');
@@ -427,6 +546,14 @@ router.post('/:id/lifecycle', requireAuth, async (req, res) => {
         emitStatus('running');
         break;
       }
+      case 'update': {
+        // Docker "update" = pull the latest image and recreate the container.
+        emitStatus('starting');
+        const { containerId: updatedId } = await docker.rebuildContainer(projectId, project.folderPath, project.template, volumes);
+        db.update(projects).set({ containerId: updatedId, lastUpdatedAt: Date.now() }).where(eq(projects.id, projectId)).run();
+        emitStatus('running');
+        break;
+      }
 
       default:
         return res.status(400).json({ error: 'Invalid lifecycle action.' });
@@ -450,7 +577,10 @@ router.post('/:id/lifecycle', requireAuth, async (req, res) => {
 router.get('/:id/logs', requireAuth, async (req, res) => {
   const projectId = parseInt(req.params.id);
   try {
-    const logs = await docker.getContainerLogs(projectId, parseInt(req.query.tail || 200));
+    const db = getDB();
+    const project = db.select().from(projects).where(eq(projects.id, projectId)).all()[0];
+    if (!project) return res.status(404).json({ error: 'Project not found.' });
+    const logs = await workspace.getLogs(project, parseInt(req.query.tail || 200));
     res.json({ logs });
   } catch (err) {
     res.status(500).json({ error: `Failed to fetch logs: ${err.message}` });
@@ -465,9 +595,10 @@ router.delete('/:id', requireAuth, async (req, res) => {
     const rows = db.select().from(projects).where(eq(projects.id, projectId)).all();
     if (!rows.length) return res.status(404).json({ error: 'Project not found.' });
 
-    // Remove Docker resources (container + home volume)
-    await docker.removeWorkspace(projectId).catch(err => {
-      console.warn('[projects] Docker cleanup warning:', err.message);
+    // Remove backend resources (Docker container + volume, or LXC container).
+    // Project files are kept on disk / the Unraid share in both cases.
+    await workspace.remove(rows[0]).catch(err => {
+      console.warn('[projects] Workspace cleanup warning:', err.message);
     });
 
     // Remove from DB (cascade deletes terminal sessions + activity)

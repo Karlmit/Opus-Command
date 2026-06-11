@@ -32,6 +32,14 @@ CREATE TABLE IF NOT EXISTS projects (
   status TEXT DEFAULT 'stopped',
   avatar TEXT DEFAULT '',
   sort_order INTEGER DEFAULT 0,
+  workspace_backend TEXT DEFAULT 'docker',
+  lxc_container_name TEXT,
+  lxc_template TEXT,
+  lxc_project_path TEXT,
+  lxc_status TEXT,
+  last_started_at INTEGER,
+  last_stopped_at INTEGER,
+  last_updated_at INTEGER,
   created_at INTEGER NOT NULL
 );
 
@@ -152,6 +160,16 @@ function initDB() {
     sqlite.exec("UPDATE projects SET sort_order = id WHERE sort_order = 0");
   } catch (_) {}
   try { sqlite.exec("ALTER TABLE projects ADD COLUMN volumes TEXT DEFAULT '[]'"); } catch (_) {}
+  // Unraid LXC workspace backend support — additive columns, existing Docker
+  // projects keep workspace_backend = 'docker'.
+  try { sqlite.exec("ALTER TABLE projects ADD COLUMN workspace_backend TEXT DEFAULT 'docker'"); } catch (_) {}
+  try { sqlite.exec("ALTER TABLE projects ADD COLUMN lxc_container_name TEXT"); } catch (_) {}
+  try { sqlite.exec("ALTER TABLE projects ADD COLUMN lxc_template TEXT"); } catch (_) {}
+  try { sqlite.exec("ALTER TABLE projects ADD COLUMN lxc_project_path TEXT"); } catch (_) {}
+  try { sqlite.exec("ALTER TABLE projects ADD COLUMN lxc_status TEXT"); } catch (_) {}
+  try { sqlite.exec("ALTER TABLE projects ADD COLUMN last_started_at INTEGER"); } catch (_) {}
+  try { sqlite.exec("ALTER TABLE projects ADD COLUMN last_stopped_at INTEGER"); } catch (_) {}
+  try { sqlite.exec("ALTER TABLE projects ADD COLUMN last_updated_at INTEGER"); } catch (_) {}
   try { sqlite.exec("ALTER TABLE connectors ADD COLUMN labels TEXT DEFAULT '[]'"); } catch (_) {}
   try { sqlite.exec("ALTER TABLE connectors ADD COLUMN capabilities TEXT DEFAULT '{}'"); } catch (_) {}
   runMigrations(sqlite);

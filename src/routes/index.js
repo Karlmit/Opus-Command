@@ -7,10 +7,12 @@ const filesRouter = require('./files');
 const foldersRouter = require('./folders');
 const gitRouter = require('./git');
 const connectorsRouter = require('./connectors');
+const unraidRouter = require('./unraid');
 
 function registerRoutes(app) {
   app.use('/api/setup', setupRouter);
   app.use('/api/auth', authRouter);
+  app.use('/api/settings/unraid', unraidRouter);
   app.use('/api/settings', settingsRouter);
   app.use('/api/projects', projectsRouter);
   app.use('/api/folders', foldersRouter);

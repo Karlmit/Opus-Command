@@ -807,6 +807,8 @@ function WorkspacePanel({ projectId, project, csrfToken, addToast, onDelete, onP
       .catch(() => {});
   }, []);
 
+  const isLxc = project?.backend === 'unraid_lxc';
+
   async function runAction(action) {
     setBusy(action);
     try {
@@ -816,7 +818,11 @@ function WorkspacePanel({ projectId, project, csrfToken, addToast, onDelete, onP
       });
       const d = await r.json();
       if (!d.success) addToast(d.error || 'Action failed.', 'error');
-      else addToast(`${action.charAt(0).toUpperCase() + action.slice(1)} complete.`);
+      else {
+        if (action === 'status') addToast(`Workspace status: ${d.status}.`);
+        else addToast(`${action.charAt(0).toUpperCase() + action.slice(1)} complete.`);
+        if (d.status) onProjectUpdated?.({ status: d.status });
+      }
     } catch (e) { addToast(e.message, 'error'); }
     finally { setBusy(null); }
   }
@@ -852,14 +858,29 @@ function WorkspacePanel({ projectId, project, csrfToken, addToast, onDelete, onP
     }
   }
 
-  const ACTIONS = [
+  const ACTIONS = isLxc ? [
+    { id: 'start',    label: 'Start',   danger: false },
+    { id: 'stop',     label: 'Stop',    danger: false },
+    { id: 'restart',  label: 'Restart', danger: false },
+    { id: 'update',   label: 'Update',  danger: false },
+    { id: 'status',   label: 'Status',  danger: false },
+  ] : [
     { id: 'start',    label: 'Start',             danger: false },
     { id: 'stop',     label: 'Stop',              danger: false },
     { id: 'restart',  label: 'Restart',           danger: false },
+    { id: 'update',   label: 'Update',            danger: false },
     { id: 'recreate', label: 'Recreate',          danger: true },
     { id: 'rebuild',  label: 'Rebuild',           danger: true },
     { id: 'reset',    label: 'Reset Environment', danger: true },
   ];
+
+  // Some LXC actions (update) can take a while; reflect that in the button label.
+  const busyLabel = (a) => {
+    if (busy !== a.id) return a.label;
+    if (a.id === 'update') return 'Updating…';
+    if (a.id === 'status') return 'Checking…';
+    return `${a.label}ing…`;
+  };
 
   return (
     <div className="panel-content">
@@ -868,8 +889,18 @@ function WorkspacePanel({ projectId, project, csrfToken, addToast, onDelete, onP
         <div className={`ws-status-row status-${project?.status}`}>
           <span className="ws-status-dot" />
           <span className="ws-status-text">{project?.status || 'unknown'}</span>
+          <span className="panel-hint" style={{ marginLeft: 8 }}>
+            {isLxc ? 'Unraid LXC' : 'Docker'}
+          </span>
         </div>
-        <div className="panel-hint">Folder: <code>/projects/{project?.folderPath}</code></div>
+        {isLxc ? (
+          <>
+            <div className="panel-hint">Container: <code>{project?.lxcContainerName || '—'}</code></div>
+            <div className="panel-hint">Path: <code>{project?.lxcProjectPath || '—'}</code> → <code>/workspace</code></div>
+          </>
+        ) : (
+          <div className="panel-hint">Folder: <code>/projects/{project?.folderPath}</code></div>
+        )}
       </div>
 
       <div className="panel-section">
@@ -888,7 +919,9 @@ function WorkspacePanel({ projectId, project, csrfToken, addToast, onDelete, onP
           ))}
         </select>
         <div className="panel-hint">
-          Rebuild applies the selected template. Private removes Claude Azure AI Foundry settings.
+          {isLxc
+            ? 'Update applies the selected template inside the LXC (installs/updates tools). It does not recreate the container.'
+            : 'Rebuild applies the selected template. Private removes Claude Azure AI Foundry settings.'}
         </div>
       </div>
 
@@ -901,28 +934,32 @@ function WorkspacePanel({ projectId, project, csrfToken, addToast, onDelete, onP
               onClick={() => runAction(a.id)}
               disabled={!!busy}
             >
-              {busy === a.id ? `${a.label}ing…` : a.label}
+              {busyLabel(a)}
             </button>
           ))}
         </div>
       </div>
 
-      <VolumesSection
-        projectId={projectId}
-        project={project}
-        csrfToken={csrfToken}
-        addToast={addToast}
-      />
+      {!isLxc && (
+        <VolumesSection
+          projectId={projectId}
+          project={project}
+          csrfToken={csrfToken}
+          addToast={addToast}
+        />
+      )}
 
-      <div className="panel-section">
-        <div className="panel-section-header">
-          <div className="panel-section-title">CONTAINER LOGS</div>
-          <button className="btn btn-ghost" onClick={() => { setShowLogs(s => !s); if (!showLogs) loadLogs(); }}>
-            {showLogs ? 'Hide' : 'Show'}
-          </button>
+      {!isLxc && (
+        <div className="panel-section">
+          <div className="panel-section-header">
+            <div className="panel-section-title">CONTAINER LOGS</div>
+            <button className="btn btn-ghost" onClick={() => { setShowLogs(s => !s); if (!showLogs) loadLogs(); }}>
+              {showLogs ? 'Hide' : 'Show'}
+            </button>
+          </div>
+          {showLogs && <div className="panel-logs"><pre>{logs}</pre></div>}
         </div>
-        {showLogs && <div className="panel-logs"><pre>{logs}</pre></div>}
-      </div>
+      )}
 
       <div className="panel-section">
         <div className="panel-section-title">DANGER ZONE</div>
@@ -1695,6 +1732,43 @@ export default function ProjectCockpit() {
     } catch (e) { addToast(e.message, 'error'); }
   }
 
+  const [startingWs, setStartingWs] = useState(false);
+  async function startWorkspace() {
+    setStartingWs(true);
+    try {
+      const r = await fetch(`/api/projects/${projectId}/lifecycle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ action: 'start' }),
+      });
+      const d = await r.json();
+      if (d.success) { addToast('Workspace started.'); await loadProject(); }
+      else addToast(d.error || 'Start failed.', 'error');
+    } catch (e) { addToast(e.message, 'error'); }
+    finally { setStartingWs(false); }
+  }
+
+  // Terminal can only attach to a running workspace.
+  const wsStopped = project && project.status && project.status !== 'running' && project.status !== 'starting';
+
+  function renderEmptyTerminal() {
+    if (wsStopped) {
+      return (
+        <div className="cockpit-empty">
+          <p className="panel-hint" style={{ marginBottom: 12 }}>Workspace is stopped.</p>
+          <button className="btn btn-primary" onClick={startWorkspace} disabled={startingWs}>
+            {startingWs ? 'Starting…' : 'Start Workspace'}
+          </button>
+        </div>
+      );
+    }
+    return (
+      <div className="cockpit-empty">
+        <button className="btn btn-primary" onClick={() => createTerminal()}>Open Terminal</button>
+      </div>
+    );
+  }
+
   async function openFile(node) {
     const ext = node.name.split('.').pop()?.toLowerCase();
     const images = ['png','jpg','jpeg','gif','svg','webp'];
@@ -2085,9 +2159,7 @@ export default function ProjectCockpit() {
               activeTermId ? (
                 <MobileTerminalView key={activeTermId} sessionId={activeTermId} />
               ) : (
-                <div className="cockpit-empty">
-                  <button className="btn btn-primary" onClick={() => createTerminal()}>Open Terminal</button>
-                </div>
+                renderEmptyTerminal()
               )
             ) : (
               /* Desktop: full interactive xterm — owns PTY resize */
@@ -2107,11 +2179,7 @@ export default function ProjectCockpit() {
                     lastInputRef={lastInputRef}
                   />
                 ))}
-                {termTabs.length === 0 && !showOverlay && (
-                  <div className="cockpit-empty">
-                    <button className="btn btn-primary" onClick={() => createTerminal()}>Open Terminal</button>
-                  </div>
-                )}
+                {termTabs.length === 0 && !showOverlay && renderEmptyTerminal()}
               </>
             )}
             {reconnecting && (

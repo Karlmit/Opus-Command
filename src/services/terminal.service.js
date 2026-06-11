@@ -17,9 +17,23 @@ const WebSocket = require('ws');
 const { Terminal: HeadlessTerminal } = require('@xterm/headless');
 const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../db');
-const { terminalSessions } = require('../db/schema');
+const { terminalSessions, projects } = require('../db/schema');
 const { eq } = require('drizzle-orm');
 const { containerName } = require('./docker.service');
+const lxc = require('./unraid-lxc.service');
+
+// Look up a project row by id (used to pick the terminal backend).
+function _getProject(projectId) {
+  try {
+    return getDB().select().from(projects).where(eq(projects.id, projectId)).all()[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+function _isLxcProject(project) {
+  return project?.workspaceBackend === 'unraid_lxc';
+}
 
 const AGENT_PORT   = parseInt(process.env.TERMINAL_AGENT_PORT || '7681', 10);
 const MAX_BUFFER   = 500_000; // bytes
@@ -85,6 +99,11 @@ function agentWs(projectId, sessionId) {
 async function createSession(projectId, io) {
   if (!_io) _io = io;
 
+  const project = _getProject(projectId);
+  if (_isLxcProject(project)) {
+    return _createLxcSession(projectId, io, project);
+  }
+
   const db = getDB();
   const sessionId = uuidv4();
   const sessionCount = db.select().from(terminalSessions)
@@ -139,6 +158,108 @@ async function createSession(projectId, io) {
   _connectProxy(projectId, sessionId, io);
 
   return { sessionId, name };
+}
+
+// ── Shared output handling ────────────────────────────────────────────────────
+// Used by both the Docker agent WebSocket proxy and the LXC SSH PTY proxy so
+// scrollback, mobile snapshots, and AI-state detection behave identically.
+function _ingestOutput(sessionId, entry, data, ioRef) {
+  entry.lastOutputTime = Date.now();
+  entry.buffer += data;
+  if (entry.buffer.length > MAX_BUFFER) {
+    entry.buffer = entry.buffer.slice(entry.buffer.length - MAX_BUFFER / 2);
+  }
+  _persistScrollback(sessionId, entry);
+  ioRef?.to(`session:${sessionId}`).emit('terminal:data', { sessionId, data });
+  if (entry.headless) {
+    try { entry.headless.write(data); } catch (_) {}
+    _scheduleSnapshot(sessionId);
+  }
+  _detectAIState(sessionId, data, ioRef);
+}
+
+// ── LXC SSH PTY sessions ──────────────────────────────────────────────────────
+// LXC workspaces have no terminal-agent; instead we open an interactive PTY over
+// SSH (lxc-attach into /workspace) and feed it through the same proxy machinery.
+// These sessions do NOT survive an Opus Command restart (the SSH PTY lives in
+// this process), which matches the "PTY dies if the host process restarts" model.
+
+async function _createLxcSession(projectId, io, project) {
+  if (!_io && io) _io = io;
+  const db = getDB();
+  const sessionId = uuidv4();
+  const sessionCount = db.select().from(terminalSessions)
+    .where(eq(terminalSessions.projectId, projectId)).all().length;
+  const name = `Terminal ${sessionCount + 1}`;
+
+  const entry = {
+    ws: null,
+    lxcShell: null,
+    projectId,
+    buffer: '',
+    name,
+    aiState: 'none',
+    aiAgent: null,
+    inputBuffer: '',
+    alive: false,
+    lastOutputTime: Date.now(),
+    headless: null,
+    cols: 80,
+    rows: 24,
+    snapTimer: null,
+    lastSnapTime: 0,
+  };
+  activeProxies.set(sessionId, entry);
+
+  let shell;
+  try {
+    shell = await lxc.openTerminal(project, { cols: 80, rows: 24 }, {
+      onData: (data) => {
+        const e = activeProxies.get(sessionId);
+        if (e) _ingestOutput(sessionId, e, data, _io);
+      },
+      onClose: () => _lxcSessionExit(sessionId),
+      onError: (err) => console.error(`[terminal] lxc shell error ${sessionId.slice(0, 8)}:`, err.message),
+    });
+  } catch (err) {
+    activeProxies.delete(sessionId);
+    throw new Error(
+      `Cannot open LXC terminal: ${err.message}. ` +
+      `Make sure the workspace is running (Start Workspace) and the Unraid backend is reachable.`
+    );
+  }
+
+  entry.lxcShell = shell;
+  entry.alive = true;
+
+  db.insert(terminalSessions).values({
+    id: sessionId,
+    projectId,
+    name,
+    scrollback: '',
+    aiState: 'none',
+    createdAt: Date.now(),
+  }).run();
+
+  console.log(`[terminal] LXC session ${sessionId.slice(0, 8)} opened for project ${projectId}`);
+  _io?.to(`session:${sessionId}`).emit('terminal:session-attached', { sessionId });
+  return { sessionId, name };
+}
+
+function _lxcSessionExit(sessionId) {
+  const ioRef = _io;
+  const entry = activeProxies.get(sessionId);
+  console.log(`[terminal] LXC session ${sessionId.slice(0, 8)} closed`);
+  _setAIState(sessionId, 'none', ioRef, { force: true });
+  if (entry) {
+    entry.alive = false;
+    _persistScrollback(sessionId, entry, true);
+    _disposeHeadless(entry);
+  }
+  activeProxies.delete(sessionId);
+  sessionClients.delete(sessionId);
+  viewerClients.delete(sessionId);
+  ioRef?.to(`session:${sessionId}`).emit('terminal:exit', { sessionId });
 }
 
 // ── Proxy WebSocket management ───────────────────────────────────────────────
@@ -199,24 +320,7 @@ function _connectProxy(projectId, sessionId, io) {
       ioRef?.to(`session:${sessionId}`).emit('terminal:session-attached', { sessionId });
 
     } else if (msg.type === 'output') {
-      const { data } = msg;
-      entry.lastOutputTime = Date.now();
-
-      entry.buffer += data;
-      if (entry.buffer.length > MAX_BUFFER) {
-        entry.buffer = entry.buffer.slice(entry.buffer.length - MAX_BUFFER / 2);
-      }
-      _persistScrollback(sessionId, entry);
-
-      ioRef?.to(`session:${sessionId}`).emit('terminal:data', { sessionId, data });
-
-      // Feed the mobile viewer emulator (only created while viewers are attached)
-      if (entry.headless) {
-        try { entry.headless.write(data); } catch (_) {}
-        _scheduleSnapshot(sessionId);
-      }
-
-      _detectAIState(sessionId, data, ioRef);
+      _ingestOutput(sessionId, entry, msg.data, ioRef);
 
     } else if (msg.type === 'exit') {
       console.log(`[terminal] session ${sessionId.slice(0, 8)} exited`);
@@ -282,6 +386,14 @@ async function reconnectOnStartup(io) {
 
 async function _tryReconnect(session, io) {
   const projId = session.projectId;
+
+  // LXC sessions are SSH PTYs owned by this process — they cannot survive an
+  // Opus Command restart, so don't probe a (non-existent) agent for them.
+  if (_isLxcProject(_getProject(projId))) {
+    console.log(`[terminal] session ${session.id.slice(0, 8)} is LXC — dead after restart`);
+    return;
+  }
+
   const deadline = Date.now() + 25_000;
   let attempt = 0;
 
@@ -329,7 +441,10 @@ function _sleep(ms) {
 
 function _doWrite(sessionId, data) {
   const proxy = activeProxies.get(sessionId);
-  if (proxy?.ws?.readyState === WebSocket.OPEN) {
+  if (proxy?.lxcShell) {
+    _detectAICommandInput(sessionId, data, _io);
+    proxy.lxcShell.write(data);
+  } else if (proxy?.ws?.readyState === WebSocket.OPEN) {
     _detectAICommandInput(sessionId, data, _io);
     proxy.ws.send(JSON.stringify({ type: 'input', data }));
   } else {
@@ -339,15 +454,25 @@ function _doWrite(sessionId, data) {
 
 function _doResize(sessionId, cols, rows) {
   const proxy = activeProxies.get(sessionId);
-  if (proxy?.ws?.readyState === WebSocket.OPEN) {
-    // PTY size is desktop-driven; mirror it into the viewer emulator so mobile
-    // renders the same layout the PTY produced.
+  if (!proxy) {
+    console.warn(`[terminal] RESIZE DROPPED — no active proxy for session ${sessionId.slice(0, 8)}`);
+    return;
+  }
+  // PTY size is desktop-driven; mirror it into the viewer emulator so mobile
+  // renders the same layout the PTY produced.
+  const applyToViewer = () => {
     proxy.cols = cols;
     proxy.rows = rows;
     if (proxy.headless) {
       try { proxy.headless.resize(cols, rows); } catch (_) {}
       _scheduleSnapshot(sessionId);
     }
+  };
+  if (proxy.lxcShell) {
+    applyToViewer();
+    proxy.lxcShell.resize(cols, rows);
+  } else if (proxy.ws?.readyState === WebSocket.OPEN) {
+    applyToViewer();
     proxy.ws.send(JSON.stringify({ type: 'resize', cols, rows }));
   } else {
     console.warn(`[terminal] RESIZE DROPPED — no active proxy for session ${sessionId.slice(0, 8)}`);
@@ -375,16 +500,22 @@ function resizeSession(sessionId, cols, rows) {
 
 function isSessionAlive(sessionId) {
   const proxy = activeProxies.get(sessionId);
-  return proxy?.alive === true && proxy?.ws?.readyState === WebSocket.OPEN;
+  if (!proxy) return false;
+  if (proxy.lxcShell) return proxy.alive === true;
+  return proxy.alive === true && proxy.ws?.readyState === WebSocket.OPEN;
 }
 
 function killSession(sessionId) {
   const proxy = activeProxies.get(sessionId);
   const projectId = proxy?.projectId || _getSessionProjectId(sessionId);
   if (proxy) {
-    fetch(`${agentHttp(proxy.projectId)}/sessions/${sessionId}`, {
-      method: 'DELETE',
-    }).catch(() => {});
+    if (proxy.lxcShell) {
+      try { proxy.lxcShell.close(); } catch (_) {}
+    } else {
+      fetch(`${agentHttp(proxy.projectId)}/sessions/${sessionId}`, {
+        method: 'DELETE',
+      }).catch(() => {});
+    }
     proxy.ws?.close();
     activeProxies.delete(sessionId);
   }

@@ -26,6 +26,17 @@ const projects = sqliteTable('projects', {
   status: text('status').default('stopped'),
   avatar: text('avatar').default(''),
   sortOrder: integer('sort_order').default(0),
+  // Workspace backend — 'docker' (default) or 'unraid_lxc'. Docker workspaces
+  // remain the portable default; unraid_lxc is the optional SSH-managed backend.
+  workspaceBackend: text('workspace_backend').default('docker'),
+  // LXC-specific fields (null for docker workspaces).
+  lxcContainerName: text('lxc_container_name'),
+  lxcTemplate: text('lxc_template'),
+  lxcProjectPath: text('lxc_project_path'),
+  lxcStatus: text('lxc_status'),
+  lastStartedAt: integer('last_started_at'),
+  lastStoppedAt: integer('last_stopped_at'),
+  lastUpdatedAt: integer('last_updated_at'),
   createdAt: integer('created_at').notNull(),
 });
 

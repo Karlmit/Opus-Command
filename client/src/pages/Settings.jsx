@@ -782,9 +782,190 @@ function DeviceSection() {
   );
 }
 
+// ── Settings → Workspace Backends → Unraid LXC ─────────────────────────────────
+
+const LXC_TEXT_FIELDS = [
+  { key: 'host',       label: 'Unraid host / IP',          placeholder: '192.168.1.66' },
+  { key: 'sshPort',    label: 'SSH port',                  placeholder: '22', type: 'number' },
+  { key: 'sshUser',    label: 'SSH username',              placeholder: 'root' },
+  { key: 'sshKeyPath', label: 'SSH private key path',      placeholder: '/app/data/ssh/opus-unraid-nopass' },
+  { key: 'basePath',   label: 'LXC base path',             placeholder: '/mnt/system_nvme/linux' },
+  { key: 'sharePath',  label: 'Workspace share path',      placeholder: '/mnt/user/opus-workspaces' },
+  { key: 'dist',       label: 'Default LXC distro',        placeholder: 'ubuntu' },
+  { key: 'release',    label: 'Default LXC release',       placeholder: 'noble' },
+  { key: 'arch',       label: 'Default LXC architecture',  placeholder: 'amd64' },
+];
+
+function UnraidLxcSection({ csrfToken, addToast }) {
+  const [config, setConfig] = useState(null);
+  const [keyInput, setKeyInput] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [busy, setBusy] = useState('');           // 'test' | 'preflight' | 'install'
+  const [result, setResult] = useState(null);     // { kind, ok, message, checks? }
+
+  useEffect(() => {
+    fetch('/api/settings/unraid')
+      .then(r => r.json())
+      .then(d => setConfig(d.config))
+      .catch(() => setConfig(null));
+  }, []);
+
+  function setField(key, value) {
+    setConfig(c => ({ ...c, [key]: value }));
+  }
+
+  async function save() {
+    setSaving(true);
+    setResult(null);
+    try {
+      const body = { ...config };
+      delete body.hasKey;
+      delete body.envOverridden;
+      if (keyInput.trim()) body.privateKey = keyInput;
+      const res = await fetch('/api/settings/unraid', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setConfig(data.config);
+        setKeyInput('');
+        addToast(data.keyWritten ? 'Settings saved and SSH key stored.' : 'Settings saved.');
+      } else {
+        addToast(data.error || 'Save failed.', 'error');
+      }
+    } catch {
+      addToast('Save failed.', 'error');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function runAction(kind) {
+    setBusy(kind);
+    setResult(null);
+    try {
+      const res = await fetch(`/api/settings/unraid/${kind}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      });
+      const data = await res.json();
+      if (kind === 'test') {
+        setResult({ kind, ok: !!data.ok, message: data.ok ? `Connected to ${data.hostname}` : (data.error || 'Connection failed') });
+      } else if (kind === 'preflight') {
+        setResult({ kind, ok: !!data.ok, message: data.error || (data.ok ? `All checks passed${data.hostname ? ` on ${data.hostname}` : ''}.` : 'Some checks failed.'), checks: data.checks || {} });
+      } else if (kind === 'install') {
+        setResult({ kind, ok: !!data.ok, message: data.ok ? `Helper installed at ${data.path}` : (data.error || 'Install failed') });
+      }
+    } catch (err) {
+      setResult({ kind, ok: false, message: 'Request failed.' });
+    } finally {
+      setBusy('');
+    }
+  }
+
+  if (!config) {
+    return (
+      <div className="settings-section">
+        <h2 className="settings-section-title">WORKSPACE BACKENDS — UNRAID LXC</h2>
+        <p className="panel-hint">Loading…</p>
+      </div>
+    );
+  }
+
+  const envLocked = new Set(config.envOverridden || []);
+
+  return (
+    <div className="settings-section">
+      <h2 className="settings-section-title">WORKSPACE BACKENDS — UNRAID LXC</h2>
+      <p className="claude-section-desc">
+        Optional advanced backend. Runs project workspaces as LXC containers on your
+        Unraid server over SSH. Docker workspaces remain the default. Secrets (the SSH
+        private key) are stored on disk, never in git.
+      </p>
+
+      <label className="settings-toggle" style={{ marginBottom: 16 }}>
+        <input
+          type="checkbox"
+          checked={!!config.enabled}
+          disabled={envLocked.has('enabled')}
+          onChange={e => setField('enabled', e.target.checked)}
+        />
+        <span>Enable Unraid LXC backend</span>
+      </label>
+
+      <div className="settings-form">
+        {LXC_TEXT_FIELDS.map(f => (
+          <div className="form-group" key={f.key}>
+            <label className="form-label">
+              {f.label}
+              {envLocked.has(f.key) && <span className="panel-hint"> (set by environment)</span>}
+            </label>
+            <input
+              type={f.type || 'text'}
+              className="input"
+              value={config[f.key] ?? ''}
+              placeholder={f.placeholder}
+              disabled={envLocked.has(f.key)}
+              onChange={e => setField(f.key, f.type === 'number' ? e.target.value : e.target.value)}
+            />
+          </div>
+        ))}
+
+        <div className="form-group">
+          <label className="form-label">
+            SSH private key {config.hasKey ? <span className="panel-hint">(a key is stored — paste to replace)</span> : <span className="panel-hint">(none stored)</span>}
+          </label>
+          <textarea
+            className="input"
+            rows={4}
+            spellCheck={false}
+            style={{ fontFamily: 'monospace', resize: 'vertical' }}
+            placeholder={'-----BEGIN OPENSSH PRIVATE KEY-----\n…\n-----END OPENSSH PRIVATE KEY-----'}
+            value={keyInput}
+            onChange={e => setKeyInput(e.target.value)}
+          />
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button type="button" className="btn btn-primary" onClick={save} disabled={saving}>
+            {saving ? 'Saving…' : 'Save Settings'}
+          </button>
+          <button type="button" className="btn" onClick={() => runAction('test')} disabled={!!busy}>
+            {busy === 'test' ? 'Testing…' : 'Test SSH Connection'}
+          </button>
+          <button type="button" className="btn" onClick={() => runAction('preflight')} disabled={!!busy}>
+            {busy === 'preflight' ? 'Running…' : 'Run LXC Preflight'}
+          </button>
+          <button type="button" className="btn" onClick={() => runAction('install')} disabled={!!busy}>
+            {busy === 'install' ? 'Installing…' : 'Install Helper'}
+          </button>
+        </div>
+
+        {result && (
+          <div className={`settings-info-row ${result.ok ? 'status-ok' : 'status-error'}`} style={{ marginTop: 12, flexDirection: 'column', alignItems: 'flex-start', gap: 6 }}>
+            <span style={{ color: result.ok ? 'var(--color-success, #4caf50)' : 'var(--color-danger, #e57373)' }}>
+              {result.ok ? '✓ ' : '✗ '}{result.message}
+            </span>
+            {result.checks && (
+              <ul style={{ margin: 0, paddingLeft: 18, fontSize: 'var(--font-size-xs)', color: 'var(--color-text-dim)' }}>
+                {Object.entries(result.checks).map(([k, v]) => (
+                  <li key={k}>{v ? '✓' : '✗'} {k}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 const SETTINGS_TABS = [
   { id: 'general',      label: 'General' },
   { id: 'integrations', label: 'Integrations' },
+  { id: 'workspace',    label: 'Workspace' },
   { id: 'account',      label: 'Account' },
   { id: 'updates',      label: 'Updates' },
 ];
@@ -831,6 +1012,9 @@ export default function Settings() {
             <ClaudeSection csrfToken={csrfToken} addToast={addToast} />
             <ConnectorsSection csrfToken={csrfToken} addToast={addToast} />
           </>
+        )}
+        {tab === 'workspace' && (
+          <UnraidLxcSection csrfToken={csrfToken} addToast={addToast} />
         )}
         {tab === 'account' && (
           <AccountSection csrfToken={csrfToken} addToast={addToast} />
