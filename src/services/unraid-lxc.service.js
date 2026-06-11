@@ -95,6 +95,24 @@ async function installHelper() {
   return HELPER_REMOTE_PATH;
 }
 
+// Best-effort helper refresh for app startup: only when the LXC backend is
+// enabled and an SSH key is present. Keeps the host helper in sync with the
+// running app version (e.g. the `status` IP line the terminal proxy relies on)
+// so terminal reconnect after an Opus Command update works without waiting for
+// the user to open Settings. Never throws.
+async function ensureHelperInstalled() {
+  const cfg = lxcConfig.getConfig();
+  if (!cfg.enabled || !lxcConfig.hasKey(cfg)) return false;
+  try {
+    await installHelper();
+    console.log('[unraid-lxc] startup: helper refreshed');
+    return true;
+  } catch (err) {
+    console.warn('[unraid-lxc] startup: helper refresh skipped:', err.message);
+    return false;
+  }
+}
+
 // ── preflight ─────────────────────────────────────────────────────────────────
 
 async function preflight() {
@@ -421,6 +439,11 @@ echo "[opus] provisioning complete."
 
 async function updateWorkspace(project) {
   const name = containerNameFor(project);
+  // Refresh the host helper too: provisioning installs the terminal-agent, and
+  // reaching it afterwards needs the helper's `status` to report the container
+  // IP (added alongside the agent). Without this, a freshly-updated workspace
+  // could install the agent yet still be unreachable until the next preflight.
+  await installHelper();
   const ready = await waitUntilAttachable(project);
   if (!ready) throw new Error('container is not running/attachable — start it before updating');
   const script = buildProvisionScript(project);
@@ -494,6 +517,7 @@ module.exports = {
   projectPathFor,
   lxcTemplateFor,
   installHelper,
+  ensureHelperInstalled,
   preflight,
   getStatus,
   createWorkspace,

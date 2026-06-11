@@ -262,6 +262,14 @@ async function main() {
       } catch (err) {
         console.warn('[startup] ensureInternalNetwork warning:', err.message);
       }
+      // Refresh the Unraid host helper (no-op unless the LXC backend is enabled)
+      // before reconnecting, so LXC terminal sessions can resolve their agent's
+      // container IP via the up-to-date `status` command.
+      try {
+        await require('./services/unraid-lxc.service').ensureHelperInstalled();
+      } catch (err) {
+        console.warn('[startup] LXC helper refresh warning:', err.message);
+      }
       await terminal.reconnectOnStartup(io);
     })().catch(err => {
       console.error('[startup] Startup sequence error:', err.message);
