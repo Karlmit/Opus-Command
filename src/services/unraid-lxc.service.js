@@ -183,11 +183,151 @@ async function restartWorkspace(project) {
   return mapState(values.STATE);
 }
 
+// ── provisioning (template parity with the Docker backend) ────────────────────
+
+const OPUS_CLI_PATH = path.join(__dirname, '..', 'workspace', 'opus-cli.js');
+const CONNECTORS_SKILL_PATH = path.join(__dirname, '..', 'workspace', 'connectors.md');
+
+function b64(str) {
+  return Buffer.from(str, 'utf8').toString('base64');
+}
+function b64File(p) {
+  try { return Buffer.from(fs.readFileSync(p)).toString('base64'); } catch { return ''; }
+}
+function shSingleQuote(v) {
+  return `'${String(v == null ? '' : v).replace(/'/g, `'\\''`)}'`;
+}
+
+// Managed agent-instruction content (LXC-appropriate — the container is
+// persistent, unlike a Docker workspace whose system dirs are wiped on recreate).
+const SKILL_POINTER = '\n## Opus Managed Skills\n\nAlso read:\n- .opus/skills/connectors.md\n';
+
+function lxcInstructionsDoc(kind) {
+  return (
+`# Opus Command — Unraid LXC Workspace${kind === 'agents' ? ' (agents)' : ''}
+
+This workspace runs inside a persistent Unraid LXC container managed by Opus Command.
+
+- Project files live in \`/workspace\` (bind-mounted from the Unraid project share).
+- The container is persistent: tools you install (apt, \`npm -g\`, \`pip\`) survive
+  stop/start and are not wiped — install normally.
+- Files written under \`/workspace\` appear on the Unraid project share and persist.
+${SKILL_POINTER}`
+  );
+}
+
+/**
+ * Build the in-container provisioning script for a project. Mirrors the Docker
+ * backend's init (auth env, opus CLI, managed skills, CLAUDE.md/AGENTS.md,
+ * ~/.claude/settings.json) so LXC workspaces behave like Docker ones. Run inside
+ * the container via `lxc-attach -- bash -s`.
+ */
+function buildProvisionScript(project, { envVars } = {}) {
+  const { getWorkspaceEnvVars } = require('./auth.service');
+  const vars = Array.isArray(envVars) ? envVars : getWorkspaceEnvVars();
+  const template = lxcTemplateFor(project);
+  const isAzure = template !== 'private';
+
+  const opusCliB64 = b64File(OPUS_CLI_PATH);
+  const connectorsB64 = b64File(CONNECTORS_SKILL_PATH);
+  const claudeB64 = b64(lxcInstructionsDoc('claude'));
+  const agentsB64 = b64(lxcInstructionsDoc('agents'));
+
+  const settings = isAzure
+    ? JSON.stringify({
+        model: 'sonnet',
+        enabledPlugins: { 'azure@azure-skills': true },
+        extraKnownMarketplaces: {
+          'azure-skills': { source: { source: 'github', repo: 'microsoft/azure-skills' } },
+        },
+      })
+    : JSON.stringify({ model: 'sonnet' });
+  const settingsB64 = b64(settings);
+
+  // Managed environment (sourced by all login shells, which the LXC terminal uses).
+  const envMap = {};
+  const envLines = [
+    '# Opus Command — managed workspace environment (regenerated on update; do not edit)',
+    'export PATH="$HOME/bin:$HOME/.local/bin:$PATH"',
+    'export IS_SANDBOX=1',
+  ];
+  for (const { key, value } of vars) {
+    if (!key) continue;
+    envMap[key] = value;
+    envLines.push(`export ${key}=${shSingleQuote(value)}`);
+  }
+  if (isAzure && envMap.ANTHROPIC_FOUNDRY_RESOURCE) {
+    envLines.push('export CLAUDE_CODE_USE_FOUNDRY=1');
+  }
+  const envB64 = b64(envLines.join('\n') + '\n');
+
+  const codexInstall = template === 'private'
+    ? 'command -v codex >/dev/null 2>&1 || { echo "[opus] installing Codex CLI…"; npm install -g @openai/codex >/dev/null 2>&1 || true; }'
+    : 'true';
+
+  // settings.json: create if missing; for the work template also (re)write when an
+  // older settings file lacks the azure marketplace, matching the Docker backend.
+  const settingsStep = isAzure
+    ? `[ -f /root/.claude/settings.json ] || printf '%s' '${settingsB64}' | base64 -d > /root/.claude/settings.json
+grep -q "azure-skills" /root/.claude/settings.json 2>/dev/null || printf '%s' '${settingsB64}' | base64 -d > /root/.claude/settings.json`
+    : `[ -f /root/.claude/settings.json ] || printf '%s' '${settingsB64}' | base64 -d > /root/.claude/settings.json`;
+
+  return (
+`export DEBIAN_FRONTEND=noninteractive
+mkdir -p /root/.claude /root/bin /workspace/.opus/skills
+
+echo "[opus] apt update + base packages…"
+apt-get update -y || true
+apt-get install -y --no-install-recommends git curl wget ca-certificates gnupg >/dev/null 2>&1 || true
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "[opus] installing Node.js 20…"
+  curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >/dev/null 2>&1 || true
+  apt-get install -y nodejs >/dev/null 2>&1 || true
+fi
+echo "[opus] node=$(node -v 2>/dev/null || echo missing) npm=$(npm -v 2>/dev/null || echo missing)"
+
+command -v claude >/dev/null 2>&1 || { echo "[opus] installing Claude Code…"; npm install -g @anthropic-ai/claude-code >/dev/null 2>&1 || true; }
+${codexInstall}
+
+# opus CLI (connector access) — refreshed each run
+${opusCliB64 ? `printf '%s' '${opusCliB64}' | base64 -d > /root/bin/opus && chmod +x /root/bin/opus && cp /root/bin/opus /usr/local/bin/opus && chmod +x /usr/local/bin/opus` : 'true'}
+
+# managed Opus skill — refreshed each run
+${connectorsB64 ? `printf '%s' '${connectorsB64}' | base64 -d > /workspace/.opus/skills/connectors.md` : 'true'}
+
+# agent instruction files — created only if missing (user-owned thereafter)
+[ -f /workspace/CLAUDE.md ] || printf '%s' '${claudeB64}' | base64 -d > /workspace/CLAUDE.md
+[ -f /workspace/AGENTS.md ] || printf '%s' '${agentsB64}' | base64 -d > /workspace/AGENTS.md
+[ -f /root/.claude/CLAUDE.md ] || printf '%s' '${claudeB64}' | base64 -d > /root/.claude/CLAUDE.md
+for f in /root/.claude/CLAUDE.md /workspace/CLAUDE.md /workspace/AGENTS.md; do
+  grep -q ".opus/skills/connectors.md" "$f" 2>/dev/null || printf '${SKILL_POINTER.replace(/\n/g, '\\n')}' >> "$f"
+done
+
+# Claude settings (model + Azure marketplace for the work template)
+${settingsStep}
+
+# managed environment / auth (foundry, GH_TOKEN, PATH, IS_SANDBOX) for all shells
+printf '%s' '${envB64}' | base64 -d > /etc/profile.d/opus-workspace.sh && chmod 0644 /etc/profile.d/opus-workspace.sh
+
+# git credential helper via gh, if gh + GH_TOKEN are present
+[ -z "$GH_TOKEN" ] || { command -v gh >/dev/null 2>&1 && GH_TOKEN="$GH_TOKEN" gh auth setup-git 2>/dev/null; } || true
+
+echo "[opus] provisioning complete."
+`
+  );
+}
+
 async function updateWorkspace(project) {
-  const { stdout, stderr } = await runHelper('update', [
-    '--name', containerNameFor(project),
-    '--template', lxcTemplateFor(project),
-  ], { timeoutMs: 600_000 });
+  const name = containerNameFor(project);
+  const ready = await waitUntilAttachable(project);
+  if (!ready) throw new Error('container is not running/attachable — start it before updating');
+  const script = buildProvisionScript(project);
+  const cmd = `lxc-attach -n ${shq(name)} -- bash -s`;
+  const { code, stdout, stderr } = await ssh.execWithInput(cmd, script, { timeoutMs: 600_000 });
+  if (code !== 0) {
+    throw new Error(`LXC provisioning failed (exit ${code}): ${(stderr || stdout || '').trim().slice(-400)}`);
+  }
   return { log: `${stderr || ''}${stdout || ''}`.trim() };
 }
 
@@ -253,6 +393,7 @@ module.exports = {
   restartWorkspace,
   updateWorkspace,
   removeWorkspace,
+  buildProvisionScript,
   terminalCommand,
   waitUntilAttachable,
   openTerminal,

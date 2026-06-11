@@ -139,6 +139,42 @@ function execScript(scriptContents, args = [], opts = {}) {
   });
 }
 
+/**
+ * Run a remote command and feed `input` to its stdin. Used to pipe a generated
+ * provisioning script into `lxc-attach -- bash -s` so the script runs *inside*
+ * the container. Resolves with { code, stdout, stderr }.
+ */
+function execWithInput(command, input, opts = {}) {
+  return new Promise(async (resolve, reject) => {
+    let conn;
+    try {
+      conn = await connect(opts.override);
+    } catch (err) {
+      return reject(err);
+    }
+    let settled = false;
+    const timeoutMs = opts.timeoutMs || EXEC_TIMEOUT_MS;
+    const finish = (fn, arg) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { conn.end(); } catch (_) {}
+      fn(arg);
+    };
+    const timer = setTimeout(() => finish(reject, new Error(`SSH command timed out after ${timeoutMs}ms`)), timeoutMs);
+    conn.exec(command, (err, stream) => {
+      if (err) return finish(reject, err);
+      let stdout = '';
+      let stderr = '';
+      stream
+        .on('close', (code) => finish(resolve, { code: code == null ? null : code, stdout, stderr }))
+        .on('data', (d) => { stdout += d.toString('utf8'); })
+        .stderr.on('data', (d) => { stderr += d.toString('utf8'); });
+      stream.end(input);
+    });
+  });
+}
+
 /** Write a file on the remote host via SFTP with the given mode. */
 function uploadFile(remotePath, contents, mode = 0o644) {
   return new Promise(async (resolve, reject) => {
@@ -208,6 +244,7 @@ function openShell({ command, cols = 80, rows = 24 }, handlers = {}) {
 module.exports = {
   exec,
   execScript,
+  execWithInput,
   uploadFile,
   testConnection,
   openShell,
