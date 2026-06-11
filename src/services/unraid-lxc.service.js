@@ -208,9 +208,34 @@ function terminalCommand(project) {
   return `lxc-attach -n ${shq(name)} -- bash -lc 'cd /workspace 2>/dev/null; exec bash -l'`;
 }
 
+// Wait until the container's init is up enough for lxc-attach to work. Right
+// after `lxc-start` the monitor reports RUNNING before init has a pid, so the
+// first attach can fail with "Failed to get init pid / Connection refused".
+// The retry loop runs on the host to avoid many SSH round-trips; it returns
+// almost instantly once the container is ready (the common case).
+async function waitUntilAttachable(project, { attempts = 25, delayMs = 400 } = {}) {
+  const name = containerNameFor(project);
+  const sleepS = (delayMs / 1000).toFixed(2);
+  const cmd =
+    `for i in $(seq 1 ${attempts}); do ` +
+    `lxc-attach -n ${shq(name)} -- true >/dev/null 2>&1 && { echo OPUS_READY; exit 0; }; ` +
+    `sleep ${sleepS}; done; exit 7`;
+  try {
+    const { stdout } = await ssh.exec(cmd, { timeoutMs: attempts * delayMs + 15_000 });
+    return stdout.includes('OPUS_READY');
+  } catch {
+    return false;
+  }
+}
+
 // Open an interactive PTY (over SSH) attached to the container's /workspace.
-// Returns the ssh.openShell handle ({ write, resize, close }).
-function openTerminal(project, { cols = 80, rows = 24 } = {}, handlers = {}) {
+// Waits for the container to be attachable first so the first terminal after a
+// start doesn't fail with the init-pid race. Returns the ssh.openShell handle.
+async function openTerminal(project, { cols = 80, rows = 24 } = {}, handlers = {}) {
+  const ready = await waitUntilAttachable(project);
+  if (!ready) {
+    throw new Error('the container is not ready to attach (it may be stopped or still starting)');
+  }
   return ssh.openShell({ command: terminalCommand(project), cols, rows }, handlers);
 }
 
@@ -229,5 +254,6 @@ module.exports = {
   updateWorkspace,
   removeWorkspace,
   terminalCommand,
+  waitUntilAttachable,
   openTerminal,
 };

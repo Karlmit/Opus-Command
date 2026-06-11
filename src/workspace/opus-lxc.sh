@@ -146,6 +146,13 @@ cmd_start() {
     [ "$(container_state)" = "RUNNING" ] && break
     sleep 0.5
   done
+  # RUNNING is reported before init is fully up, so lxc-attach can fail with
+  # "Failed to get init pid". Wait until the container is actually attachable
+  # so the first terminal/update after a start doesn't hit that race.
+  for _ in $(seq 1 30); do
+    lxc-attach -n "$ARG_NAME" -- true >/dev/null 2>&1 && break
+    sleep 0.5
+  done
   echo "STATE=$(container_state)"
 }
 
