@@ -1,7 +1,14 @@
 name: Build and Push
 
+# Build on main AND on tags. The main build publishes nothing (push is gated to
+# tags below) — its sole purpose is to populate the GitHub Actions (gha) layer
+# cache on the default branch. GHA cache is ref-scoped: a run can only restore
+# caches from its own ref or the default branch, so tag builds can only inherit
+# warm layers if main has produced them. Versioned images are still published
+# only on tag pushes, keeping APP_VERSION clean.
 on:
   push:
+    branches: ['main']
     tags: ['v*']
 
 env:
@@ -44,7 +51,8 @@ jobs:
         with:
           context: .
           platforms: linux/amd64
-          push: true
+          # Publish only on tag pushes; main builds run solely to seed the gha cache.
+          push: ${{ startsWith(github.ref, 'refs/tags/') }}
           tags: ${{ env.APP_IMAGE }}
           build-args: |
             APP_VERSION=${{ steps.version.outputs.version }}
@@ -56,7 +64,8 @@ jobs:
         with:
           context: ./workspace-images/claude-code
           platforms: linux/amd64
-          push: true
+          # Publish only on tag pushes; main builds run solely to seed the gha cache.
+          push: ${{ startsWith(github.ref, 'refs/tags/') }}
           tags: ${{ env.WS_WORK_IMAGE }}
           cache-from: type=gha,scope=workspace-work
           cache-to: type=gha,scope=workspace-work,mode=max
@@ -66,7 +75,8 @@ jobs:
         with:
           context: ./workspace-images/private
           platforms: linux/amd64
-          push: true
+          # Publish only on tag pushes; main builds run solely to seed the gha cache.
+          push: ${{ startsWith(github.ref, 'refs/tags/') }}
           tags: ${{ env.WS_PRIVATE_IMAGE }}
           cache-from: type=gha,scope=workspace-private
           cache-to: type=gha,scope=workspace-private,mode=max
