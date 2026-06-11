@@ -297,7 +297,6 @@ function buildProvisionScript(project, { envVars } = {}) {
   const envLines = [
     '# Opus Command — managed workspace environment (regenerated on update; do not edit)',
     'export PATH="$HOME/bin:$HOME/.local/bin:$PATH"',
-    'export NPM_CONFIG_PREFIX="$HOME/.npm-global"',
     'export IS_SANDBOX=1',
   ];
   for (const { key, value } of vars) {
@@ -320,7 +319,6 @@ grep -q "azure-skills" /root/.claude/settings.json 2>/dev/null || printf '%s' '$
   return (
 `export DEBIAN_FRONTEND=noninteractive
 mkdir -p /root/.claude /root/bin /workspace/.opus/skills
-mkdir -p /root/.npm-global
 mkdir -p /workspace/.planning
 touch /workspace/.gitignore
 grep -qxF ".planning/" /workspace/.gitignore 2>/dev/null || printf ".planning/\\n" >> /workspace/.gitignore
