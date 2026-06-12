@@ -15,6 +15,15 @@ const {
   ensurePlanningArea,
 } = require('../services/project-files.service');
 
+const DEFAULT_UPLOAD_LIMIT_MB = 512;
+const uploadLimitMb = Number.parseInt(process.env.OPUS_UPLOAD_FILE_LIMIT_MB || `${DEFAULT_UPLOAD_LIMIT_MB}`, 10);
+const MAX_UPLOAD_FILE_SIZE_BYTES = (Number.isFinite(uploadLimitMb) && uploadLimitMb > 0 ? uploadLimitMb : DEFAULT_UPLOAD_LIMIT_MB) * 1024 * 1024;
+
+function formatBytes(bytes) {
+  const mib = bytes / (1024 * 1024);
+  return `${Math.round(mib)} MiB`;
+}
+
 function getProjectRoot(projectId) {
   const db = getDB();
   const rows = db.select().from(projects).where(eq(projects.id, parseInt(projectId))).all();
@@ -364,11 +373,23 @@ const storage = multer.diskStorage({
   },
   filename: (req, file, cb) => cb(null, file.originalname),
 });
-const upload = multer({ storage, limits: { fileSize: 100 * 1024 * 1024 } });
+const upload = multer({ storage, limits: { fileSize: MAX_UPLOAD_FILE_SIZE_BYTES } });
 
-router.post('/upload', requireAuth, upload.array('files', 50), (req, res) => {
-  res.json({
-    uploaded: req.files.map(f => ({ name: f.originalname, size: f.size })),
+router.post('/upload', requireAuth, (req, res) => {
+  upload.array('files', 50)(req, res, (err) => {
+    if (err) {
+      if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({ error: `Upload failed. Files must be ${formatBytes(MAX_UPLOAD_FILE_SIZE_BYTES)} or smaller.` });
+      }
+      if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_COUNT') {
+        return res.status(413).json({ error: 'Upload failed. You can upload up to 50 files at a time.' });
+      }
+      return res.status(400).json({ error: err.message || 'Upload failed.' });
+    }
+
+    res.json({
+      uploaded: req.files.map(f => ({ name: f.originalname, size: f.size })),
+    });
   });
 });
 

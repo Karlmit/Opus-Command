@@ -2397,13 +2397,13 @@ export default function ProjectCockpit() {
         `/api/projects/${projectId}/files/upload?targetPath=${encodeURIComponent(target)}`,
         { method: 'POST', headers: { 'X-CSRF-Token': csrfToken }, body: fd },
       );
-      if (!r.ok) throw new Error('upload failed');
-      const d = await r.json();
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || 'Upload failed.');
       const n = d.uploaded?.length ?? files.length;
       addToast(`Uploaded ${n} file${n === 1 ? '' : 's'} to ${uploadLabelRef.current}.`);
       loadTree();
-    } catch {
-      addToast('Upload failed.', 'error');
+    } catch (err) {
+      addToast(err.message || 'Upload failed.', 'error');
     }
   }
 
