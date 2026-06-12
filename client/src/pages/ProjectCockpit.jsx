@@ -13,6 +13,7 @@ import { getSocket } from '../lib/socket';
 import { TERMINAL_ANSI } from '../lib/themes';
 import MobileTerminalView from '../components/MobileTerminalView';
 import SyntaxHighlightedEditor from '../components/SyntaxHighlightedEditor';
+import { FilePlainIcon, FileDocIcon, FileImageIcon, FolderIcon, FolderOpenIcon } from '../components/FileTreeIcons';
 import GitPage from './Git';
 import '@xterm/xterm/css/xterm.css';
 import './ProjectCockpit.css';
@@ -67,32 +68,23 @@ function ContextMenuPortal({ x, y, className, children, ...rest }) {
   );
 }
 
+// Image extensions get the "picture" icon; everything else gets a file icon
+// tinted by FILE_COLORS (known type → lined document icon, unknown → plain file).
+const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico', 'bmp', 'avif']);
+
 function FileIcon({ name, isDir, open }) {
   if (isDir) {
-    return (
-      <svg className="fi-icon fi-dir" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-        {/* back tab (deeper shade) */}
-        <path d="M1.4 4.1A1.5 1.5 0 0 1 2.9 2.6h2.7c.4 0 .78.16 1.06.44l1.06 1.06H13a1.5 1.5 0 0 1 1.5 1.5v.7H1.4V4.1Z" fill="currentColor" opacity="0.55"/>
-        {/* front body */}
-        <path d="M1.4 5.9h13.2v5A1.5 1.5 0 0 1 13.1 12.4H2.9A1.5 1.5 0 0 1 1.4 10.9V5.9Z" fill="currentColor"/>
-        {/* glossy top edge */}
-        <path d="M1.4 5.9h13.2v1.0H1.4z" fill="#ffffff" opacity="0.26"/>
-        {open && <path d="M3 12.4l1.3-3.0a1 1 0 0 1 .92-.6H15l-1.25 2.9a1.5 1.5 0 0 1-1.38.9H3Z" fill="currentColor" opacity="0.85"/>}
-      </svg>
-    );
+    // Folders keep the icon set's own amber palette; .fi-dir drives the hover glow.
+    const Folder = open ? FolderOpenIcon : FolderIcon;
+    return <Folder className="fi-icon fi-dir" />;
   }
   const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
   const color = FILE_COLORS[ext] || '#9aa0aa';
-  return (
-    <svg className="fi-icon fi-file" viewBox="0 0 16 16" style={{ color }} fill="none" aria-hidden="true">
-      {/* body */}
-      <path d="M3.4 1.4h5.5L13 5.5V13a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 3 13V2.9A1.5 1.5 0 0 1 3.4 1.4Z" fill="currentColor"/>
-      {/* folded corner highlight */}
-      <path d="M8.9 1.4 13 5.5H9.7a.8.8 0 0 1-.8-.8V1.4Z" fill="#ffffff" opacity="0.42"/>
-      {/* top gloss */}
-      <path d="M4.5 1.4h4.4v0.9H4.5z" fill="#ffffff" opacity="0.16"/>
-    </svg>
-  );
+  let Icon = FilePlainIcon;
+  if (IMAGE_EXTS.has(ext)) Icon = FileImageIcon;
+  else if (FILE_COLORS[ext]) Icon = FileDocIcon;
+  // currentColor (set via `color`) tints the file frame and feeds the hover glow.
+  return <Icon className="fi-icon fi-file" style={{ color }} />;
 }
 
 function NewFileIcon() {
