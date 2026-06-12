@@ -1,16 +1,28 @@
 /**
  * unraid-lxc.service.js — Unraid LXC workspace backend.
  *
- * Mirrors the slice of docker.service that the routes use, but operates over
- * SSH against the `opus-lxc` helper script installed on the Unraid host. All
- * host interaction is funneled through ssh.service so a future V2 can replace
- * SSH/root with a local host agent without touching this file's callers.
+ * Mirrors the slice of docker.service that the routes use, but operates
+ * against the Unraid host through one of two transports, chosen in Settings:
+ *
+ *   - 'agent' (recommended): the Opus Connect Unraid plugin. Named, validated
+ *     RPC actions over TLS with an API key — no SSH key in the app, no host
+ *     shell construction here. The plugin owns the opus-lxc helper.
+ *   - 'ssh' (legacy): root SSH plus the `opus-lxc` helper script this app
+ *     uploads to the host.
+ *
+ * Every host interaction is funneled through runHelper/execWorkspace/etc. so
+ * both transports stay behaviorally identical to callers.
  */
 
 const fs = require('fs');
 const path = require('path');
 const ssh = require('./ssh.service');
+const agent = require('./unraid-agent.service');
 const lxcConfig = require('./unraid-lxc.config');
+
+function isAgentMode(cfg = lxcConfig.getConfig()) {
+  return cfg.connectionMode === 'agent';
+}
 
 const HELPER_REMOTE_PATH = '/usr/local/bin/opus-lxc';
 const HELPER_LOCAL_PATH = path.join(__dirname, '..', 'workspace', 'opus-lxc.sh');
@@ -69,11 +81,29 @@ function parseKeyValues(stdout) {
   return out;
 }
 
+// Translate helper-style flag args into the agent's named params.
+function paramsFromHelperArgs(args) {
+  const map = { '--name': 'name', '--project-path': 'projectPath', '--template': 'template' };
+  const out = {};
+  for (let i = 0; i + 1 < args.length; i += 2) {
+    const key = map[args[i]];
+    if (key) out[key] = args[i + 1];
+  }
+  return out;
+}
+
 async function runHelper(subcmd, args = [], { timeoutMs } = {}) {
   const cfg = lxcConfig.getConfig();
-  const argStr = args.map(shq).join(' ');
-  const command = `${helperEnvPrefix(cfg)} ${HELPER_REMOTE_PATH} ${subcmd} ${argStr}`.trim();
-  const { code, stdout, stderr } = await ssh.exec(command, { timeoutMs });
+  let code; let stdout; let stderr;
+  if (isAgentMode(cfg)) {
+    // Same helper, executed by the Opus Connect plugin. Paths and distro
+    // defaults are the plugin's own config — they are not sent from here.
+    ({ code, stdout = '', stderr = '' } = await agent.rpc(`lxc.${subcmd}`, paramsFromHelperArgs(args), { timeoutMs }));
+  } else {
+    const argStr = args.map(shq).join(' ');
+    const command = `${helperEnvPrefix(cfg)} ${HELPER_REMOTE_PATH} ${subcmd} ${argStr}`.trim();
+    ({ code, stdout, stderr } = await ssh.exec(command, { timeoutMs }));
+  }
   if (code !== 0) {
     const msg = (stderr || stdout || '').trim() || `exit code ${code}`;
     const err = new Error(`opus-lxc ${subcmd} failed: ${msg}`);
@@ -88,6 +118,9 @@ async function runHelper(subcmd, args = [], { timeoutMs } = {}) {
 // ── helper installation ───────────────────────────────────────────────────────
 
 async function installHelper() {
+  // In agent mode the Opus Connect plugin ships and versions the helper —
+  // there is nothing to upload (and no SFTP channel to upload it over).
+  if (isAgentMode()) return 'managed by the Opus Connect plugin';
   const script = fs.readFileSync(HELPER_LOCAL_PATH);
   await ssh.uploadFile(HELPER_REMOTE_PATH, script, 0o755);
   // SFTP mode is advisory on some setups — make the exec bit explicit.
@@ -102,6 +135,7 @@ async function installHelper() {
 // the user to open Settings. Never throws.
 async function ensureHelperInstalled() {
   const cfg = lxcConfig.getConfig();
+  if (isAgentMode(cfg)) return false; // plugin-owned helper; nothing to refresh
   if (!cfg.enabled || !lxcConfig.hasKey(cfg)) return false;
   try {
     await installHelper();
@@ -117,27 +151,32 @@ async function ensureHelperInstalled() {
 
 async function preflight() {
   const checks = {};
-  // 1. SSH connectivity
-  const conn = await ssh.testConnection();
-  checks.ssh = conn.ok;
+  const agentMode = isAgentMode();
+
+  // 1. Transport connectivity (agent ping or SSH hostname probe).
+  const conn = agentMode ? await agent.testConnection() : await ssh.testConnection();
+  checks[agentMode ? 'agent' : 'ssh'] = conn.ok;
   if (!conn.ok) {
     return { ok: false, hostname: null, checks, raw: '', error: conn.error };
   }
 
-  // 2. Ensure the helper is installed (install/refresh on every preflight).
-  let helperInstalled = false;
-  try {
-    await installHelper();
-    helperInstalled = true;
-  } catch (err) {
-    checks.helper_install = false;
-    return { ok: false, hostname: conn.hostname, checks, raw: '', error: `Helper install failed: ${err.message}` };
+  // 2. Ensure the helper is installed. In agent mode the plugin ships its own
+  //    copy, so there is nothing to install.
+  if (!agentMode) {
+    let helperInstalled = false;
+    try {
+      await installHelper();
+      helperInstalled = true;
+    } catch (err) {
+      checks.helper_install = false;
+      return { ok: false, hostname: conn.hostname, checks, raw: '', error: `Helper install failed: ${err.message}` };
+    }
+    checks.helper_install = helperInstalled;
   }
-  checks.helper_install = helperInstalled;
 
   // 3. Run the helper's own preflight.
   try {
-    const { values, stdout } = await runHelper('preflight', [], { timeoutMs: 30_000 });
+    const { values, stdout } = await runHelper('preflight', [], { timeoutMs: 60_000 });
     for (const [k, v] of Object.entries(values)) {
       if (v === 'OK' || v === 'FAIL') checks[k] = v === 'OK';
     }
@@ -463,16 +502,24 @@ echo "[opus] provisioning complete."
 
 async function updateWorkspace(project) {
   const name = containerNameFor(project);
-  // Refresh the host helper too: provisioning installs the terminal-agent, and
-  // reaching it afterwards needs the helper's `status` to report the container
-  // IP (added alongside the agent). Without this, a freshly-updated workspace
-  // could install the agent yet still be unreachable until the next preflight.
+  // Refresh the host helper too (SSH mode only — the plugin owns it in agent
+  // mode): provisioning installs the terminal-agent, and reaching it afterwards
+  // needs the helper's `status` to report the container IP (added alongside
+  // the agent). Without this, a freshly-updated workspace could install the
+  // agent yet still be unreachable until the next preflight.
   await installHelper();
   const ready = await waitUntilAttachable(project);
   if (!ready) throw new Error('container is not running/attachable — start it before updating');
   const script = buildProvisionScript(project);
-  const cmd = `lxc-attach -n ${shq(name)} -- bash -s`;
-  const { code, stdout, stderr } = await ssh.execWithInput(cmd, script, { timeoutMs: 600_000 });
+  let code; let stdout; let stderr;
+  if (isAgentMode()) {
+    // Script travels inside the TLS payload and is delivered over stdin into
+    // `lxc-attach -- bash -s` by the plugin — secrets never appear in argv.
+    ({ code, stdout = '', stderr = '' } = await agent.rpc('lxc.provision', { name, script, timeoutSec: 600 }, { timeoutMs: 620_000 }));
+  } else {
+    const cmd = `lxc-attach -n ${shq(name)} -- bash -s`;
+    ({ code, stdout, stderr } = await ssh.execWithInput(cmd, script, { timeoutMs: 600_000 }));
+  }
   if (code !== 0) {
     throw new Error(`LXC provisioning failed (exit ${code}): ${(stderr || stdout || '').trim().slice(-400)}`);
   }
@@ -483,9 +530,14 @@ async function execWorkspace(project, command, { cwd = '/workspace', timeoutMs =
   const name = containerNameFor(project);
   const ready = await waitUntilAttachable(project);
   if (!ready) throw new Error('container is not running/attachable');
-  const inner = `cd ${shq(cwd)} 2>/dev/null; HOME=/root GIT_TERMINAL_PROMPT=0 ${command}`;
-  const cmd = `lxc-attach -n ${shq(name)} -- bash -lc ${shq(inner)}`;
-  const { code, stdout, stderr } = await ssh.exec(cmd, { timeoutMs });
+  let code; let stdout; let stderr;
+  if (isAgentMode()) {
+    ({ code, stdout = '', stderr = '' } = await agent.rpc('workspace.exec', { name, command, cwd, timeoutMs }, { timeoutMs: timeoutMs + 15_000 }));
+  } else {
+    const inner = `cd ${shq(cwd)} 2>/dev/null; HOME=/root GIT_TERMINAL_PROMPT=0 ${command}`;
+    const cmd = `lxc-attach -n ${shq(name)} -- bash -lc ${shq(inner)}`;
+    ({ code, stdout, stderr } = await ssh.exec(cmd, { timeoutMs }));
+  }
   return { code, stdout: String(stdout || '').trim(), stderr: String(stderr || '').trim() };
 }
 
@@ -522,6 +574,14 @@ async function getContainerIp(project) {
 // almost instantly once the container is ready (the common case).
 async function waitUntilAttachable(project, { attempts = 25, delayMs = 400 } = {}) {
   const name = containerNameFor(project);
+  if (isAgentMode()) {
+    try {
+      const data = await agent.rpc('lxc.waitAttachable', { name, attempts, delayMs }, { timeoutMs: attempts * (delayMs + 8_000) + 15_000 });
+      return !!data.ready;
+    } catch {
+      return false;
+    }
+  }
   const sleepS = (delayMs / 1000).toFixed(2);
   const cmd =
     `for i in $(seq 1 ${attempts}); do ` +
@@ -580,16 +640,25 @@ async function repairTerminalAgent(project) {
 
   // 4. Probe over the LAN from the host — the exact path the terminal proxy uses,
   //    so a green result means terminals will actually connect.
-  const ip = await getContainerIp(project);
+  let ip = null;
   let healthy = false;
-  if (ip) {
+  if (isAgentMode()) {
     try {
-      const probe = await ssh.exec(
-        `curl -fsS -m 4 http://${ip}:${TERMINAL_AGENT_PORT}/health 2>/dev/null || true`,
-        { timeoutMs: 12_000 },
-      );
-      healthy = /"status"\s*:\s*"ok"/.test(probe.stdout || '');
+      const probe = await agent.rpc('terminal.probeAgent', { name: containerNameFor(project), port: TERMINAL_AGENT_PORT }, { timeoutMs: 40_000 });
+      ip = probe.ip || null;
+      healthy = !!probe.healthy;
     } catch { /* healthy stays false; the caller surfaces it */ }
+  } else {
+    ip = await getContainerIp(project);
+    if (ip) {
+      try {
+        const probe = await ssh.exec(
+          `curl -fsS -m 4 http://${ip}:${TERMINAL_AGENT_PORT}/health 2>/dev/null || true`,
+          { timeoutMs: 12_000 },
+        );
+        healthy = /"status"\s*:\s*"ok"/.test(probe.stdout || '');
+      } catch { /* healthy stays false; the caller surfaces it */ }
+    }
   }
 
   return { ip, healthy, reprovisioned, agentState };

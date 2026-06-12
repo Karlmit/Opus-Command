@@ -1,0 +1,83 @@
+<?xml version='1.0' standalone='yes'?>
+
+<!DOCTYPE PLUGIN [
+<!ENTITY name      "opus-connect">
+<!ENTITY author    "Karlmit">
+<!ENTITY version   "2026.06.12">
+<!ENTITY launch    "Settings/OpusConnect">
+<!ENTITY gitURL    "https://raw.githubusercontent.com/Karlmit/Opus-Command/main/unraid-plugin">
+<!ENTITY pluginURL "&gitURL;/opus-connect.plg">
+<!ENTITY pkgFile   "opus-connect-&version;-x86_64-1.txz">
+<!ENTITY pkgMD5    "908e48e7c05f2838fc885c5af4510478">
+<!ENTITY plgPATH   "/boot/config/plugins/&name;">
+]>
+
+<PLUGIN name="&name;" author="&author;" version="&version;" launch="&launch;" pluginURL="&pluginURL;" min="6.10.0" support="https://github.com/Karlmit/Opus-Command/issues">
+
+<CHANGES>
+###2026.06.12
+- Initial release: secure host agent replacing Opus Command's root SSH access.
+- Named, validated RPC actions only (LXC lifecycle, in-container exec, terminal-agent probe).
+- TLS with fingerprint pinning, API-key auth, optional source-IP allowlist.
+</CHANGES>
+
+<!--
+Opus Connect runs a small dependency-free PHP daemon on this server. It exposes
+only the pre-approved actions Opus Command needs to manage opus-workspace LXC
+containers; it never executes caller-supplied commands on the host itself.
+Requires the LXC plugin (lxc tools) for workspace management actions.
+-->
+
+<!-- The package (also re-installed from flash at every boot) -->
+<FILE Name="&plgPATH;/&pkgFile;" Run="upgradepkg --install-new">
+<URL>&gitURL;/archive/&pkgFile;</URL>
+<MD5>&pkgMD5;</MD5>
+</FILE>
+
+<!-- post-install: persist config + secrets on flash, start the agent -->
+<FILE Run="/bin/bash">
+<INLINE>
+CFG_DIR=&plgPATH;
+mkdir -p "$CFG_DIR"
+
+# Seed the config from defaults on first install
+if [ ! -f "$CFG_DIR/opus-connect.cfg" ]; then
+  cp /usr/local/emhttp/plugins/&name;/default.cfg "$CFG_DIR/opus-connect.cfg"
+fi
+
+# Generate the API key + TLS certificate if missing (persist on flash)
+bash /usr/local/opus-connect/ensure-secrets.sh
+
+# Keep only the current package on flash
+for f in "$CFG_DIR"/&name;-*.txz; do
+  [ -e "$f" ] || continue
+  [ "$(basename "$f")" = "&pkgFile;" ] || rm -f "$f"
+done
+
+# Start (or restart, on upgrade) the agent — respects SERVICE=disable
+/etc/rc.d/rc.opus-connect restart
+
+echo ""
+echo "----------------------------------------------------"
+echo " opus-connect &version; installed."
+echo " Open Settings → Opus Connect for the agent URL,"
+echo " API key, and certificate fingerprint, then paste"
+echo " them into Opus Command → Settings → Workspace."
+echo "----------------------------------------------------"
+echo ""
+</INLINE>
+</FILE>
+
+<!-- remove -->
+<FILE Run="/bin/bash" Method="remove">
+<INLINE>
+/etc/rc.d/rc.opus-connect stop 2>/dev/null
+removepkg &name; 2>/dev/null
+rm -rf /usr/local/opus-connect /usr/local/emhttp/plugins/&name;
+rm -rf &plgPATH;
+rm -rf /var/log/opus-connect /var/run/opus-connect
+echo "opus-connect removed (config, API key, and certificate deleted)"
+</INLINE>
+</FILE>
+
+</PLUGIN>

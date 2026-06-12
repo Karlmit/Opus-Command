@@ -95,16 +95,19 @@ router.get('/templates', requireAuth, (req, res) => {
 
 // GET /api/projects/backends — available workspace backends
 router.get('/backends', requireAuth, (req, res) => {
-  const cfg = lxcConfig.getPublicConfig();
+  const cfg = lxcConfig.getConfig();
+  const { ready, reason } = lxcConfig.readiness(cfg);
   res.json({
     backends: [
       { id: 'docker', label: 'Docker', description: 'Portable Docker workspace (default).', available: true },
       {
         id: 'unraid_lxc',
         label: 'Unraid LXC',
-        description: 'LXC container on your Unraid server over SSH.',
-        available: !!(cfg.enabled && cfg.hasKey),
-        reason: cfg.enabled ? (cfg.hasKey ? null : 'No SSH key configured.') : 'Disabled in Settings.',
+        description: cfg.connectionMode === 'agent'
+          ? 'LXC container on your Unraid server via the Opus Connect agent.'
+          : 'LXC container on your Unraid server over SSH.',
+        available: ready,
+        reason,
       },
     ],
   });
@@ -154,9 +157,8 @@ router.post('/', requireAuth, async (req, res) => {
     const backend = req.body.backend || 'docker';
     if (!WORKSPACE_BACKENDS.has(backend)) return res.status(400).json({ error: 'Invalid workspace backend.' });
     if (backend === 'unraid_lxc') {
-      const cfg = lxcConfig.getPublicConfig();
-      if (!cfg.enabled) return res.status(400).json({ error: 'Unraid LXC backend is disabled. Enable it in Settings → Workspace Backends.' });
-      if (!cfg.hasKey) return res.status(400).json({ error: 'No SSH key configured for the Unraid LXC backend.' });
+      const { ready, reason } = lxcConfig.readiness();
+      if (!ready) return res.status(400).json({ error: `Unraid LXC backend is not ready: ${reason} See Settings → Workspace Backends.` });
     }
 
     const folderPath = folder.trim().replace(/^\//, '');

@@ -784,7 +784,8 @@ function DeviceSection() {
 
 // ── Settings → Workspace Backends → Unraid LXC ─────────────────────────────────
 
-const LXC_TEXT_FIELDS = [
+// Fields for the legacy direct-SSH transport.
+const LXC_SSH_FIELDS = [
   { key: 'host',       label: 'Unraid host / IP',          placeholder: '192.168.1.66' },
   { key: 'sshPort',    label: 'SSH port',                  placeholder: '22', type: 'number' },
   { key: 'sshUser',    label: 'SSH username',              placeholder: 'root' },
@@ -798,9 +799,10 @@ const LXC_TEXT_FIELDS = [
 
 function UnraidLxcSection({ csrfToken, addToast }) {
   const [config, setConfig] = useState(null);
-  const [keyInput, setKeyInput] = useState('');
+  const [keyInput, setKeyInput] = useState('');         // SSH private key (write-only)
+  const [agentKeyInput, setAgentKeyInput] = useState(''); // agent API key (write-only)
   const [saving, setSaving] = useState(false);
-  const [busy, setBusy] = useState('');           // 'test' | 'preflight' | 'install'
+  const [busy, setBusy] = useState('');           // 'test' | 'preflight' | 'install' | 'reset-fingerprint'
   const [result, setResult] = useState(null);     // { kind, ok, message, checks? }
 
   useEffect(() => {
@@ -820,8 +822,11 @@ function UnraidLxcSection({ csrfToken, addToast }) {
     try {
       const body = { ...config };
       delete body.hasKey;
+      delete body.hasAgentKey;
       delete body.envOverridden;
       if (keyInput.trim()) body.privateKey = keyInput;
+      if (agentKeyInput.trim()) body.agentApiKey = agentKeyInput.trim();
+      else delete body.agentApiKey;
       const res = await fetch('/api/settings/unraid', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
@@ -831,6 +836,7 @@ function UnraidLxcSection({ csrfToken, addToast }) {
       if (res.ok) {
         setConfig(data.config);
         setKeyInput('');
+        setAgentKeyInput('');
         addToast(data.keyWritten ? 'Settings saved and SSH key stored.' : 'Settings saved.');
       } else {
         addToast(data.error || 'Save failed.', 'error');
@@ -852,11 +858,21 @@ function UnraidLxcSection({ csrfToken, addToast }) {
       });
       const data = await res.json();
       if (kind === 'test') {
-        setResult({ kind, ok: !!data.ok, message: data.ok ? `Connected to ${data.hostname}` : (data.error || 'Connection failed') });
+        const agentNote = data.agentVersion ? ` (Opus Connect ${data.agentVersion})` : '';
+        const pinNote = data.pinnedNow ? ' Certificate fingerprint pinned.' : '';
+        setResult({ kind, ok: !!data.ok, message: data.ok ? `Connected to ${data.hostname}${agentNote}.${pinNote}` : (data.error || 'Connection failed') });
+        if (data.pinnedNow) {
+          const r = await fetch('/api/settings/unraid');
+          const d = await r.json().catch(() => null);
+          if (d?.config) setConfig(d.config);
+        }
       } else if (kind === 'preflight') {
         setResult({ kind, ok: !!data.ok, message: data.error || (data.ok ? `All checks passed${data.hostname ? ` on ${data.hostname}` : ''}.` : 'Some checks failed.'), checks: data.checks || {} });
       } else if (kind === 'install') {
         setResult({ kind, ok: !!data.ok, message: data.ok ? `Helper installed at ${data.path}` : (data.error || 'Install failed') });
+      } else if (kind === 'reset-fingerprint') {
+        if (data.config) setConfig(data.config);
+        setResult({ kind, ok: true, message: 'Pinned certificate cleared — run Test Connection to pin the new one.' });
       }
     } catch (err) {
       setResult({ kind, ok: false, message: 'Request failed.' });
@@ -875,14 +891,16 @@ function UnraidLxcSection({ csrfToken, addToast }) {
   }
 
   const envLocked = new Set(config.envOverridden || []);
+  const agentMode = config.connectionMode === 'agent';
 
   return (
     <div className="settings-section">
       <h2 className="settings-section-title">WORKSPACE BACKENDS — UNRAID LXC</h2>
       <p className="claude-section-desc">
         Optional advanced backend. Runs project workspaces as LXC containers on your
-        Unraid server over SSH. Docker workspaces remain the default. Secrets (the SSH
-        private key) are stored on disk, never in git.
+        Unraid server. Docker workspaces remain the default. Recommended connection:
+        the Opus Connect agent — Opus Command then holds an API key for a small set of
+        pre-approved actions instead of a root SSH key.
       </p>
 
       <label className="settings-toggle" style={{ marginBottom: 16 }}>
@@ -896,51 +914,145 @@ function UnraidLxcSection({ csrfToken, addToast }) {
       </label>
 
       <div className="settings-form">
-        {LXC_TEXT_FIELDS.map(f => (
-          <div className="form-group" key={f.key}>
-            <label className="form-label">
-              {f.label}
-              {envLocked.has(f.key) && <span className="panel-hint"> (set by environment)</span>}
-            </label>
-            <input
-              type={f.type || 'text'}
-              className="input"
-              value={config[f.key] ?? ''}
-              placeholder={f.placeholder}
-              disabled={envLocked.has(f.key)}
-              onChange={e => setField(f.key, f.type === 'number' ? e.target.value : e.target.value)}
-            />
-          </div>
-        ))}
-
         <div className="form-group">
           <label className="form-label">
-            SSH private key {config.hasKey ? <span className="panel-hint">(a key is stored — paste to replace)</span> : <span className="panel-hint">(none stored)</span>}
+            Connection
+            {envLocked.has('connectionMode') && <span className="panel-hint"> (set by environment)</span>}
           </label>
-          <textarea
-            className="input"
-            rows={4}
-            spellCheck={false}
-            style={{ fontFamily: 'monospace', resize: 'vertical' }}
-            placeholder={'-----BEGIN OPENSSH PRIVATE KEY-----\n…\n-----END OPENSSH PRIVATE KEY-----'}
-            value={keyInput}
-            onChange={e => setKeyInput(e.target.value)}
-          />
+          <label className="settings-toggle">
+            <input
+              type="radio"
+              name="unraid-connection-mode"
+              checked={agentMode}
+              disabled={envLocked.has('connectionMode')}
+              onChange={() => setField('connectionMode', 'agent')}
+            />
+            <span>Opus Connect agent <span className="panel-hint">(recommended — install the Opus Connect plugin on Unraid)</span></span>
+          </label>
+          <label className="settings-toggle">
+            <input
+              type="radio"
+              name="unraid-connection-mode"
+              checked={!agentMode}
+              disabled={envLocked.has('connectionMode')}
+              onChange={() => setField('connectionMode', 'ssh')}
+            />
+            <span>Direct SSH <span className="panel-hint">(legacy — requires a root SSH key)</span></span>
+          </label>
         </div>
+
+        {agentMode ? (
+          <>
+            <div className="form-group">
+              <label className="form-label">
+                Agent URL
+                {envLocked.has('agentUrl') && <span className="panel-hint"> (set by environment)</span>}
+              </label>
+              <input
+                type="text"
+                className="input"
+                value={config.agentUrl ?? ''}
+                placeholder="https://192.168.1.66:9123"
+                disabled={envLocked.has('agentUrl')}
+                onChange={e => setField('agentUrl', e.target.value)}
+              />
+            </div>
+            <div className="form-group">
+              <label className="form-label">
+                Agent API key {config.hasAgentKey
+                  ? <span className="panel-hint">(a key is stored — paste to replace)</span>
+                  : <span className="panel-hint">(none stored — copy it from Settings → Opus Connect on Unraid)</span>}
+              </label>
+              <input
+                type="password"
+                className="input"
+                autoComplete="off"
+                value={agentKeyInput}
+                placeholder="paste the API key from the Opus Connect settings page"
+                disabled={envLocked.has('agentApiKey')}
+                onChange={e => setAgentKeyInput(e.target.value)}
+              />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Pinned agent certificate (SHA-256)</label>
+              {config.agentFingerprint ? (
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <code style={{ fontSize: 'var(--font-size-xs)', wordBreak: 'break-all' }}>{config.agentFingerprint}</code>
+                  <button type="button" className="btn" onClick={() => runAction('reset-fingerprint')} disabled={!!busy}>
+                    {busy === 'reset-fingerprint' ? 'Resetting…' : 'Reset'}
+                  </button>
+                </div>
+              ) : (
+                <span className="panel-hint">Not pinned yet — pinned automatically on the first successful connection test.</span>
+              )}
+            </div>
+            <div className="form-group">
+              <label className="form-label">
+                Project share path (project files)
+                {envLocked.has('sharePath') && <span className="panel-hint"> (set by environment)</span>}
+              </label>
+              <input
+                type="text"
+                className="input"
+                value={config.sharePath ?? ''}
+                placeholder="/mnt/user/opus-projects"
+                disabled={envLocked.has('sharePath')}
+                onChange={e => setField('sharePath', e.target.value)}
+              />
+              <span className="panel-hint">Must match the “Project share root” in the Opus Connect plugin settings.</span>
+            </div>
+          </>
+        ) : (
+          <>
+            {LXC_SSH_FIELDS.map(f => (
+              <div className="form-group" key={f.key}>
+                <label className="form-label">
+                  {f.label}
+                  {envLocked.has(f.key) && <span className="panel-hint"> (set by environment)</span>}
+                </label>
+                <input
+                  type={f.type || 'text'}
+                  className="input"
+                  value={config[f.key] ?? ''}
+                  placeholder={f.placeholder}
+                  disabled={envLocked.has(f.key)}
+                  onChange={e => setField(f.key, e.target.value)}
+                />
+              </div>
+            ))}
+
+            <div className="form-group">
+              <label className="form-label">
+                SSH private key {config.hasKey ? <span className="panel-hint">(a key is stored — paste to replace)</span> : <span className="panel-hint">(none stored)</span>}
+              </label>
+              <textarea
+                className="input"
+                rows={4}
+                spellCheck={false}
+                style={{ fontFamily: 'monospace', resize: 'vertical' }}
+                placeholder={'-----BEGIN OPENSSH PRIVATE KEY-----\n…\n-----END OPENSSH PRIVATE KEY-----'}
+                value={keyInput}
+                onChange={e => setKeyInput(e.target.value)}
+              />
+            </div>
+          </>
+        )}
 
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button type="button" className="btn btn-primary" onClick={save} disabled={saving}>
             {saving ? 'Saving…' : 'Save Settings'}
           </button>
           <button type="button" className="btn" onClick={() => runAction('test')} disabled={!!busy}>
-            {busy === 'test' ? 'Testing…' : 'Test SSH Connection'}
+            {busy === 'test' ? 'Testing…' : 'Test Connection'}
           </button>
           <button type="button" className="btn" onClick={() => runAction('preflight')} disabled={!!busy}>
             {busy === 'preflight' ? 'Running…' : 'Run LXC Preflight'}
           </button>
-          <button type="button" className="btn" onClick={() => runAction('install')} disabled={!!busy}>
-            {busy === 'install' ? 'Installing…' : 'Install Helper'}
-          </button>
+          {!agentMode && (
+            <button type="button" className="btn" onClick={() => runAction('install')} disabled={!!busy}>
+              {busy === 'install' ? 'Installing…' : 'Install Helper'}
+            </button>
+          )}
         </div>
 
         {result && (

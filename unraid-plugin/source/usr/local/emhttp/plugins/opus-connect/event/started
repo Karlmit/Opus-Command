@@ -1,0 +1,4 @@
+#!/bin/bash
+# Unraid "started" event (array started) — make sure the agent is up. The plugin
+# installer also starts it at boot; this is an idempotent safety net.
+/etc/rc.d/rc.opus-connect start >/dev/null 2>&1 &

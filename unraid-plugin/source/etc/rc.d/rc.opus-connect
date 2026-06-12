@@ -1,0 +1,75 @@
+#!/bin/bash
+# rc.opus-connect — start/stop the Opus Connect agent daemon.
+#
+# The daemon is a single PHP CLI process (agentd.php). Unraid's root fs is
+# rebuilt from the plugin package at every boot; config, the API key, and the
+# TLS certificate persist on the flash under /boot/config/plugins/opus-connect.
+
+BASE=/usr/local/opus-connect
+CFG=/boot/config/plugins/opus-connect/opus-connect.cfg
+PID_FILE=/var/run/opus-connect/agentd.pid
+LOG_DIR=/var/log/opus-connect
+
+cfg_get() { # key default
+  local v
+  v=$(grep -m1 "^$1=" "$CFG" 2>/dev/null | cut -d= -f2- | tr -d '"')
+  echo "${v:-$2}"
+}
+
+is_running() {
+  [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE" 2>/dev/null)" 2>/dev/null
+}
+
+start() {
+  if [ "$(cfg_get SERVICE enable)" != "enable" ]; then
+    echo "opus-connect: service is disabled in settings"
+    return 0
+  fi
+  if is_running; then
+    echo "opus-connect: already running (pid $(cat "$PID_FILE"))"
+    return 0
+  fi
+  mkdir -p /var/run/opus-connect "$LOG_DIR"
+  bash "$BASE/ensure-secrets.sh"
+  # Stale pidfile from an unclean stop
+  rm -f "$PID_FILE"
+  setsid /usr/bin/php -q "$BASE/agentd.php" >> "$LOG_DIR/agentd.out" 2>&1 < /dev/null &
+  sleep 1
+  if is_running; then
+    echo "opus-connect: started on port $(cfg_get PORT 9123)"
+  else
+    echo "opus-connect: failed to start — see $LOG_DIR/agentd.out and $LOG_DIR/agent.log" >&2
+    return 1
+  fi
+}
+
+stop() {
+  if is_running; then
+    kill "$(cat "$PID_FILE")" 2>/dev/null
+    for _ in 1 2 3 4 5; do
+      is_running || break
+      sleep 0.4
+    done
+  fi
+  # Fallback for a daemon that lost its pidfile
+  pkill -f "$BASE/agentd.php" 2>/dev/null
+  rm -f "$PID_FILE"
+  echo "opus-connect: stopped"
+}
+
+status() {
+  if is_running; then
+    echo "running (pid $(cat "$PID_FILE"), port $(cfg_get PORT 9123))"
+    return 0
+  fi
+  echo "stopped"
+  return 1
+}
+
+case "$1" in
+  start)   start ;;
+  stop)    stop ;;
+  restart) stop; start ;;
+  status)  status ;;
+  *) echo "usage: $0 start|stop|restart|status" >&2; exit 1 ;;
+esac

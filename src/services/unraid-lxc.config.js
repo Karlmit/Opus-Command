@@ -20,6 +20,14 @@ const SETTINGS_KEY = 'unraid_lxc_config';
 
 const DEFAULTS = {
   enabled: false,
+  // How Opus Command reaches the Unraid host: 'agent' talks to the Opus
+  // Connect plugin (recommended — no SSH key in the app); 'ssh' is the legacy
+  // direct-root-SSH transport. Default stays 'ssh' so existing installs keep
+  // working after an upgrade; the Settings UI recommends switching.
+  connectionMode: 'ssh',
+  agentUrl: '',
+  agentApiKey: '',
+  agentFingerprint: '',
   host: '192.168.1.66',
   sshPort: 22,
   sshUser: 'root',
@@ -37,6 +45,10 @@ const DEFAULTS = {
 // Map of config field → environment variable override.
 const ENV_MAP = {
   enabled: 'UNRAID_LXC_ENABLED',
+  connectionMode: 'UNRAID_CONNECTION_MODE',
+  agentUrl: 'UNRAID_AGENT_URL',
+  agentApiKey: 'UNRAID_AGENT_API_KEY',
+  agentFingerprint: 'UNRAID_AGENT_FINGERPRINT',
   host: 'UNRAID_HOST',
   sshPort: 'UNRAID_SSH_PORT',
   sshUser: 'UNRAID_SSH_USER',
@@ -72,6 +84,9 @@ function coerce(field, value) {
     const n = parseInt(value, 10);
     return Number.isFinite(n) ? n : undefined;
   }
+  if (field === 'connectionMode') {
+    return value === 'agent' || value === 'ssh' ? value : undefined;
+  }
   return String(value);
 }
 
@@ -102,15 +117,34 @@ function hasKey(cfg = getConfig()) {
 
 /**
  * Config shape safe to send to the client. Never includes the private key
- * contents — only whether a key is present and which fields are env-locked.
+ * contents or the agent API key — only whether each is present and which
+ * fields are env-locked.
  */
 function getPublicConfig() {
   const cfg = getConfig();
-  return {
+  const pub = {
     ...cfg,
     hasKey: hasKey(cfg),
+    hasAgentKey: !!cfg.agentApiKey,
     envOverridden: envOverriddenFields(),
   };
+  delete pub.agentApiKey;
+  return pub;
+}
+
+/**
+ * Whether the LXC backend is usable with the current config, and why not.
+ * Used by the backend picker and project creation.
+ */
+function readiness(cfg = getConfig()) {
+  if (!cfg.enabled) return { ready: false, reason: 'Disabled in Settings.' };
+  if (cfg.connectionMode === 'agent') {
+    if (!cfg.agentUrl) return { ready: false, reason: 'Opus Connect agent URL is not configured.' };
+    if (!cfg.agentApiKey) return { ready: false, reason: 'Opus Connect API key is not configured.' };
+    return { ready: true, reason: null };
+  }
+  if (!hasKey(cfg)) return { ready: false, reason: 'No SSH key configured.' };
+  return { ready: true, reason: null };
 }
 
 /**
@@ -123,6 +157,9 @@ function saveConfig(patch = {}) {
   const next = { ...stored };
   for (const field of Object.keys(DEFAULTS)) {
     if (!(field in patch)) continue;
+    // The API key is write-only from the client: an empty value means "keep
+    // the stored key" (the UI never echoes it back), never "clear it".
+    if (field === 'agentApiKey' && String(patch[field] || '').trim() === '') continue;
     const v = coerce(field, patch[field]);
     if (v !== undefined) next[field] = v;
   }
@@ -156,5 +193,6 @@ module.exports = {
   getPublicConfig,
   saveConfig,
   hasKey,
+  readiness,
   writePrivateKey,
 };

@@ -1,0 +1,142 @@
+Menu="Utilities"
+Title="Opus Connect"
+Icon="fa-plug"
+Markdown="false"
+---
+<?php
+/* Opus Connect — settings page.
+ * Shows agent status, the API key + certificate fingerprint Opus Command needs,
+ * and the small set of host-side settings the agent enforces server-side. */
+
+$oc_cfg = parse_plugin_cfg('opus-connect');
+$oc_cfg_dir = '/boot/config/plugins/opus-connect';
+
+$oc_running = false;
+$oc_pid_file = '/var/run/opus-connect/agentd.pid';
+if (is_file($oc_pid_file)) {
+  $oc_pid = (int)trim((string)@file_get_contents($oc_pid_file));
+  $oc_running = $oc_pid > 0 && is_dir("/proc/$oc_pid");
+}
+
+$oc_key = trim((string)@file_get_contents("$oc_cfg_dir/api-key"));
+
+$oc_fp = '';
+if (is_file("$oc_cfg_dir/cert/agent.crt")) {
+  $oc_fp_raw = shell_exec("openssl x509 -in " . escapeshellarg("$oc_cfg_dir/cert/agent.crt") . " -noout -fingerprint -sha256 2>/dev/null");
+  if (is_string($oc_fp_raw) && strpos($oc_fp_raw, '=') !== false) {
+    $oc_fp = trim(substr($oc_fp_raw, strpos($oc_fp_raw, '=') + 1));
+  }
+}
+
+$oc_lan_ip = trim((string)shell_exec("ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \\([0-9.]*\\).*/\\1/p' | head -1"));
+if ($oc_lan_ip === '') $oc_lan_ip = $_SERVER['SERVER_ADDR'] ?? '';
+$oc_url = 'https://' . $oc_lan_ip . ':' . ($oc_cfg['PORT'] ?: '9123');
+
+$oc_log = '';
+if (is_file('/var/log/opus-connect/agent.log')) {
+  $oc_lines = @file('/var/log/opus-connect/agent.log');
+  if ($oc_lines) $oc_log = htmlspecialchars(implode('', array_slice($oc_lines, -12)));
+}
+?>
+
+<style>
+.oc-badge{display:inline-block;padding:2px 10px;border-radius:10px;font-weight:bold}
+.oc-up{background:#1c5c2e;color:#9fdfb2}
+.oc-down{background:#642424;color:#f0a8a8}
+.oc-secret{font-family:monospace;width:540px;max-width:90%}
+.oc-note{color:#888;font-style:italic}
+pre.oc-log{max-height:180px;overflow:auto;background:#111;color:#bbb;padding:8px;font-size:11px}
+</style>
+
+<div>
+  <h3>Agent status:
+    <?if ($oc_running):?><span class="oc-badge oc-up">RUNNING</span>
+    <?else:?><span class="oc-badge oc-down">STOPPED</span><?endif;?>
+  </h3>
+  <p>
+    Opus Connect lets Opus Command manage LXC workspaces on this server
+    <strong>without SSH access</strong>. It exposes only a fixed set of
+    pre-approved actions over TLS, authenticated with the API key below.
+    Container names must start with <code>opus-workspace-</code> and project
+    paths must stay under the configured share root — enforced here, on the
+    server, regardless of what the client asks for.
+  </p>
+
+  <dl>
+    <dt><strong>Agent URL (paste into Opus Command)</strong></dt>
+    <dd><input type="text" class="oc-secret" readonly onclick="this.select()" value="<?=htmlspecialchars($oc_url)?>"></dd>
+
+    <dt><strong>API key (paste into Opus Command)</strong></dt>
+    <dd><input type="text" class="oc-secret" readonly onclick="this.select()" value="<?=htmlspecialchars($oc_key ?: '— generated on first start —')?>"></dd>
+
+    <dt><strong>TLS certificate fingerprint (SHA-256)</strong></dt>
+    <dd>
+      <input type="text" class="oc-secret" readonly onclick="this.select()" value="<?=htmlspecialchars($oc_fp ?: '— generated on first start —')?>">
+      <br><span class="oc-note">Opus Command pins this automatically on its first successful connection test.</span>
+    </dd>
+  </dl>
+</div>
+
+<form method="POST" action="/update.php" target="progressFrame">
+<input type="hidden" name="#file" value="opus-connect/opus-connect.cfg">
+<input type="hidden" name="#command" value="/usr/local/opus-connect/apply.sh">
+
+<dl>
+  <dt>Enable agent:</dt>
+  <dd>
+    <select name="SERVICE" size="1">
+      <?=mk_option($oc_cfg['SERVICE'], 'enable', 'Yes')?>
+      <?=mk_option($oc_cfg['SERVICE'], 'disable', 'No')?>
+    </select>
+  </dd>
+
+  <dt>Listen port:</dt>
+  <dd><input type="number" name="PORT" min="1" max="65535" value="<?=htmlspecialchars($oc_cfg['PORT'])?>"></dd>
+
+  <dt>Allowed source IPs <span class="oc-note">(comma-separated; blank = any — the API key still applies)</span>:</dt>
+  <dd><input type="text" name="ALLOWED_IPS" class="oc-secret" placeholder="e.g. 192.168.1.176" value="<?=htmlspecialchars($oc_cfg['ALLOWED_IPS'])?>"></dd>
+
+  <dt>Project share root <span class="oc-note">(workspace project files must live under this path)</span>:</dt>
+  <dd><input type="text" name="SHARE_ROOT" class="oc-secret" value="<?=htmlspecialchars($oc_cfg['SHARE_ROOT'])?>"></dd>
+
+  <dt>LXC base path <span class="oc-note">(blank = auto-detect from lxc.lxcpath)</span>:</dt>
+  <dd><input type="text" name="LXC_BASE" class="oc-secret" placeholder="auto" value="<?=htmlspecialchars($oc_cfg['LXC_BASE'])?>"></dd>
+
+  <dt>New container defaults:</dt>
+  <dd>
+    distro <input type="text" name="LXC_DIST" size="10" value="<?=htmlspecialchars($oc_cfg['LXC_DIST'])?>">
+    release <input type="text" name="LXC_RELEASE" size="10" value="<?=htmlspecialchars($oc_cfg['LXC_RELEASE'])?>">
+    arch <input type="text" name="LXC_ARCH" size="8" value="<?=htmlspecialchars($oc_cfg['LXC_ARCH'])?>">
+  </dd>
+
+  <dt>&nbsp;</dt>
+  <dd>
+    <input type="submit" value="Apply">
+    <input type="button" value="Done" onclick="done()">
+  </dd>
+</dl>
+</form>
+
+<form method="POST" action="/update.php" target="progressFrame" onsubmit="return confirm('Regenerate the API key? Opus Command will need the new key.');">
+<input type="hidden" name="#command" value="/usr/local/opus-connect/regen-key.sh">
+<dl>
+  <dt>Regenerate API key <span class="oc-note">(applies immediately; the old key stops working)</span>:</dt>
+  <dd><input type="submit" value="Regenerate"></dd>
+</dl>
+</form>
+
+<form method="POST" action="/update.php" target="progressFrame">
+<input type="hidden" name="#command" value="/etc/rc.d/rc.opus-connect">
+<input type="hidden" name="#arg[1]" value="restart">
+<dl>
+  <dt>Restart agent:</dt>
+  <dd><input type="submit" value="Restart"></dd>
+</dl>
+</form>
+
+<?if ($oc_log):?>
+<div>
+  <h4>Recent agent activity</h4>
+  <pre class="oc-log"><?=$oc_log?></pre>
+</div>
+<?endif;?>
