@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useLayoutEffect } from 'react';
+import { useState, useEffect, useRef, useLayoutEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { Terminal as XTerm } from '@xterm/xterm';
@@ -113,21 +113,28 @@ function UploadIcon() {
 
 function FileNode({
   node, depth, onOpenFile, activeFilePath,
-  onOpenContextMenu, onOpenRenameDialog, markedPath, onMarkNode,
+  onOpenContextMenu, onOpenRenameDialog, selectedPaths, onSelectNode, onContextSelect,
   expandedPaths, onToggleFolder,
 }) {
   const isDir = node.type === 'dir';
   const isActive = activeFilePath === node.path;
-  const isMarked = markedPath === node.path;
+  const isMarked = selectedPaths.has(node.path);
   const open = isDir && expandedPaths.has(node.path);
 
-  function handleRowClick() {
-    if (isDir) {
-      if (isMarked) onToggleFolder(node.path);
-      else onMarkNode(node);
+  function handleRowClick(e) {
+    // Ctrl/Cmd toggles a single item; Shift extends a range from the anchor.
+    const ctrl = e.metaKey || e.ctrlKey;
+    if (ctrl || e.shiftKey) {
+      onSelectNode(node, { ctrl, shift: e.shiftKey });
       return;
     }
-    onMarkNode(node);
+    const wasSoleSelection = isMarked && selectedPaths.size === 1;
+    onSelectNode(node, {});
+    if (isDir) {
+      // A second plain click on an already-selected folder toggles it open/closed.
+      if (wasSoleSelection) onToggleFolder(node.path);
+      return;
+    }
     onOpenFile(node);
   }
 
@@ -141,7 +148,7 @@ function FileNode({
         onContextMenu={e => {
           e.preventDefault();
           e.stopPropagation();
-          onMarkNode(node);
+          onContextSelect(node);
           onOpenContextMenu(node, e.clientX, e.clientY);
         }}
         onKeyDown={e => {
@@ -182,8 +189,9 @@ function FileNode({
               activeFilePath={activeFilePath}
               onOpenContextMenu={onOpenContextMenu}
               onOpenRenameDialog={onOpenRenameDialog}
-              markedPath={markedPath}
-              onMarkNode={onMarkNode}
+              selectedPaths={selectedPaths}
+              onSelectNode={onSelectNode}
+              onContextSelect={onContextSelect}
               expandedPaths={expandedPaths}
               onToggleFolder={onToggleFolder}
             />
@@ -1647,7 +1655,9 @@ export default function ProjectCockpit() {
   const [treeCollapsed, setTreeCollapsed] = useState(false);
   const [fileContextMenu, setFileContextMenu] = useState(null); // { node, x, y }
   const [renameDialog, setRenameDialog] = useState(null); // { node, value }
-  const [markedNode, setMarkedNode] = useState(null);
+  const [footerHovered, setFooterHovered] = useState(false);
+  const [markedNode, setMarkedNode] = useState(null); // anchor for range/keyboard ops
+  const [selectedPaths, setSelectedPaths] = useState(() => new Set()); // multi-selection
   const [expandedPaths, setExpandedPaths] = useState(() => new Set());
   const [treeWidth, setTreeWidth] = useState(() => {
     const saved = Number(localStorage.getItem('opus:filetree-width'));
@@ -1805,6 +1815,7 @@ export default function ProjectCockpit() {
     setEditingTaskId(null);
     setTasksOpen(false);
     setMarkedNode(null);
+    setSelectedPaths(new Set());
     loadProject(); loadTree(); loadSessions();
     const t1 = setInterval(() => {
       if (!activeTabStateRef.current?.startsWith('term-')) loadProject();
@@ -2108,6 +2119,76 @@ export default function ProjectCockpit() {
     return `'${value.replace(/'/g, "'\\''")}'`;
   }
 
+  // Flatten the two visible trees (planning + project) into the order they appear
+  // on screen, honoring which folders are expanded. Drives Shift-range selection
+  // and resolves selected paths back to node objects for copy/cut/delete.
+  const { visibleOrder, nodeByPath } = useMemo(() => {
+    const order = [];
+    const map = new Map();
+    const walk = nodes => {
+      for (const n of nodes) {
+        order.push(n.path);
+        map.set(n.path, n);
+        if (n.type === 'dir' && expandedPaths.has(n.path) && n.children) walk(n.children);
+      }
+    };
+    walk(planningTree);
+    walk(tree);
+    return { visibleOrder: order, nodeByPath: map };
+  }, [planningTree, tree, expandedPaths]);
+
+  function clearSelection() {
+    setSelectedPaths(new Set());
+    setMarkedNode(null);
+  }
+
+  // Resolve the current multi-selection to node objects (dropping any that have
+  // disappeared from the tree since they were selected).
+  function selectedNodes() {
+    return Array.from(selectedPaths).map(p => nodeByPath.get(p)).filter(Boolean);
+  }
+
+  // The nodes an action should affect: the whole multi-selection when the acted-on
+  // node is part of it, otherwise just that single node.
+  function operationNodes(node) {
+    if (node && selectedPaths.has(node.path) && selectedPaths.size > 1) return selectedNodes();
+    if (node) return [node];
+    return selectedNodes();
+  }
+
+  // Click-selection with Ctrl (toggle one) / Shift (extend range) / plain (replace).
+  function selectNode(node, { ctrl, shift } = {}) {
+    if (shift && markedNode) {
+      const a = visibleOrder.indexOf(markedNode.path);
+      const b = visibleOrder.indexOf(node.path);
+      if (a !== -1 && b !== -1) {
+        const [lo, hi] = a < b ? [a, b] : [b, a];
+        setSelectedPaths(new Set(visibleOrder.slice(lo, hi + 1)));
+        return; // keep the existing anchor for further range extension
+      }
+    }
+    if (ctrl) {
+      setSelectedPaths(prev => {
+        const next = new Set(prev);
+        if (next.has(node.path)) next.delete(node.path);
+        else next.add(node.path);
+        return next;
+      });
+      setMarkedNode(node);
+      return;
+    }
+    setSelectedPaths(new Set([node.path]));
+    setMarkedNode(node);
+  }
+
+  // Right-click keeps an existing multi-selection (so the menu acts on all of it),
+  // but selects the node when it sits outside the current selection.
+  function contextSelectNode(node) {
+    if (selectedPaths.has(node.path)) { setMarkedNode(node); return; }
+    setSelectedPaths(new Set([node.path]));
+    setMarkedNode(node);
+  }
+
   function getClipboardPayload() {
     try {
       return JSON.parse(localStorage.getItem('opus:file-clipboard') || 'null');
@@ -2116,12 +2197,15 @@ export default function ProjectCockpit() {
     }
   }
 
-  function setClipboardPayload(mode, node) {
-    localStorage.setItem('opus:file-clipboard', JSON.stringify({
-      mode,
-      sources: [{ projectId, path: node.path, type: node.type, name: node.name }],
-    }));
-    addToast(mode === 'cut' ? 'Marked item cut.' : 'Marked item copied.');
+  function setClipboardPayload(mode, nodes) {
+    const sources = (Array.isArray(nodes) ? nodes : [nodes])
+      .filter(Boolean)
+      .map(n => ({ projectId, path: n.path, type: n.type, name: n.name }));
+    if (!sources.length) return;
+    localStorage.setItem('opus:file-clipboard', JSON.stringify({ mode, sources }));
+    const c = sources.length;
+    const noun = c === 1 ? 'item' : 'items';
+    addToast(mode === 'cut' ? `${c} ${noun} cut.` : `${c} ${noun} copied.`);
   }
 
   function pasteTargetPath() {
@@ -2162,25 +2246,41 @@ export default function ProjectCockpit() {
 
   useEffect(() => {
     function handleFileTreeShortcut(e) {
-      if (!(e.ctrlKey || e.metaKey)) return;
-      if (e.altKey || e.shiftKey) return;
-      const key = e.key.toLowerCase();
-      if (!['c', 'x', 'v'].includes(key)) return;
-
       const active = document.activeElement;
       const typing = active?.tagName === 'INPUT' || active?.tagName === 'TEXTAREA' || active?.isContentEditable;
       if (typing || !fileTreeRef.current?.contains(active)) return;
 
-      if ((key === 'c' || key === 'x') && !markedNode) return;
+      // Delete — remove the current selection (no modifier).
+      if (e.key === 'Delete' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+        const nodes = operationNodes(markedNode);
+        if (!nodes.length) return;
+        e.preventDefault();
+        removeFileNodes(nodes);
+        return;
+      }
+
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+      const key = e.key.toLowerCase();
+      if (!['c', 'x', 'v', 'a'].includes(key)) return;
+
+      // Ctrl/Cmd+A — select every visible item in the tree.
+      if (key === 'a') {
+        if (!visibleOrder.length) return;
+        e.preventDefault();
+        setSelectedPaths(new Set(visibleOrder));
+        return;
+      }
+
+      if ((key === 'c' || key === 'x') && !markedNode && selectedPaths.size === 0) return;
       e.preventDefault();
-      if (key === 'c') setClipboardPayload('copy', markedNode);
-      else if (key === 'x') setClipboardPayload('cut', markedNode);
+      if (key === 'c') setClipboardPayload('copy', operationNodes(markedNode));
+      else if (key === 'x') setClipboardPayload('cut', operationNodes(markedNode));
       else pasteClipboard();
     }
 
     window.addEventListener('keydown', handleFileTreeShortcut);
     return () => window.removeEventListener('keydown', handleFileTreeShortcut);
-  }, [projectId, markedNode, csrfToken]);
+  }, [projectId, markedNode, selectedPaths, visibleOrder, nodeByPath, csrfToken]);
 
   async function loadSessions() {
     const pid = projectId;
@@ -2422,21 +2522,33 @@ export default function ProjectCockpit() {
     }
   }
 
-  async function removeFileNode(node) {
-    if (!confirm(`Delete "${node.name}"?`)) return;
-    const r = await fetch(`/api/projects/${projectId}/files`, {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-      body: JSON.stringify({ path: node.path }),
-    });
-    if ((await r.json()).success) {
-      // Close any open tabs for the deleted file, or for files inside a deleted folder.
-      const prefix = `${node.path}/`;
-      const affected = fileTabs.filter(t => t.path === node.path || t.path.startsWith(prefix));
-      affected.forEach(t => closeFile(t.path));
-      loadTree();
+  async function removeFileNodes(nodes) {
+    const list = (Array.isArray(nodes) ? nodes : [nodes]).filter(Boolean);
+    if (!list.length) return;
+    const prompt = list.length === 1
+      ? `Delete "${list[0].name}"?`
+      : `Delete ${list.length} items?`;
+    if (!confirm(prompt)) return;
+
+    let failed = 0;
+    for (const node of list) {
+      const r = await fetch(`/api/projects/${projectId}/files`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ path: node.path }),
+      });
+      if ((await r.json().catch(() => ({}))).success) {
+        // Close any open tabs for the deleted file, or for files inside a deleted folder.
+        const prefix = `${node.path}/`;
+        const affected = fileTabs.filter(t => t.path === node.path || t.path.startsWith(prefix));
+        affected.forEach(t => closeFile(t.path));
+      } else {
+        failed += 1;
+      }
     }
-    else addToast('Delete failed.', 'error');
+    if (failed) addToast(failed === list.length ? 'Delete failed.' : `${failed} item${failed === 1 ? '' : 's'} could not be deleted.`, 'error');
+    clearSelection();
+    loadTree();
   }
 
   async function referenceFileNode(node) {
@@ -2476,13 +2588,13 @@ export default function ProjectCockpit() {
       try { await navigator.clipboard.writeText(workspacePath(node)); }
       catch { addToast('Could not copy path.', 'error'); }
     } else if (action === 'copy') {
-      setClipboardPayload('copy', node);
+      setClipboardPayload('copy', operationNodes(node));
     } else if (action === 'cut') {
-      setClipboardPayload('cut', node);
+      setClipboardPayload('cut', operationNodes(node));
     } else if (action === 'download') {
       window.open(`/api/projects/${projectId}/files/download?path=${encodeURIComponent(node.path)}`);
     } else if (action === 'delete') {
-      await removeFileNode(node);
+      await removeFileNodes(operationNodes(node));
     }
   }
 
@@ -2598,7 +2710,7 @@ export default function ProjectCockpit() {
             openFileContextMenu(null, e.clientX, e.clientY);
           }}
           onClick={e => {
-            if (e.target === e.currentTarget) setMarkedNode(null);
+            if (e.target === e.currentTarget) clearSelection();
           }}
         >
           <div
@@ -2627,8 +2739,9 @@ export default function ProjectCockpit() {
                 activeFilePath={activeFileTab?.path}
                 onOpenContextMenu={openFileContextMenu}
                 onOpenRenameDialog={openRenameDialog}
-                markedPath={markedNode?.path}
-                onMarkNode={setMarkedNode}
+                selectedPaths={selectedPaths}
+                onSelectNode={selectNode}
+                onContextSelect={contextSelectNode}
                 expandedPaths={expandedPaths}
                 onToggleFolder={toggleFolder}
               />
@@ -2660,8 +2773,9 @@ export default function ProjectCockpit() {
               activeFilePath={activeFileTab?.path}
               onOpenContextMenu={openFileContextMenu}
               onOpenRenameDialog={openRenameDialog}
-              markedPath={markedNode?.path}
-              onMarkNode={setMarkedNode}
+              selectedPaths={selectedPaths}
+              onSelectNode={selectNode}
+              onContextSelect={contextSelectNode}
               expandedPaths={expandedPaths}
               onToggleFolder={toggleFolder}
             />
@@ -2677,8 +2791,15 @@ export default function ProjectCockpit() {
             aria-label="Resize file tree"
           />
         )}
-        <div className="cockpit-project-footer">
-          {project && <ProjectAvatar project={project} size={22} />}
+        <div className="cockpit-project-footer"
+             onMouseEnter={() => setFooterHovered(true)}
+             onMouseLeave={() => setFooterHovered(false)}>
+          {project && (
+            <div className="cockpit-avatar-wrap">
+              <ProjectAvatar project={project} size={22} playing={footerHovered} />
+              <span className={`cockpit-status-dot status-${project.status}`} />
+            </div>
+          )}
           <span className="cockpit-project-name">{project?.name}</span>
         </div>
       </div>
@@ -2865,7 +2986,13 @@ export default function ProjectCockpit() {
         onChange={handleUploadInputChange}
       />
 
-      {fileContextMenu && (
+      {fileContextMenu && (() => {
+        // When the right-clicked node is part of a multi-selection, the menu's
+        // Copy/Cut/Delete act on the whole selection — reflect that in the labels.
+        const ctxCount = fileContextMenu.node && selectedPaths.has(fileContextMenu.node.path) && selectedPaths.size > 1
+          ? selectedPaths.size : 1;
+        const ctxSuffix = ctxCount > 1 ? ` ${ctxCount} items` : '';
+        return (
         <ContextMenuPortal
           x={fileContextMenu.x}
           y={fileContextMenu.y}
@@ -2892,13 +3019,14 @@ export default function ProjectCockpit() {
           {fileContextMenu.node && !isPlanningRootNode(fileContextMenu.node) && <button role="menuitem" onClick={() => handleFileContextAction('rename')}>Rename</button>}
           {fileContextMenu.node && <button role="menuitem" onClick={() => handleFileContextAction('reference')}>Reference</button>}
           {fileContextMenu.node && <button role="menuitem" onClick={() => handleFileContextAction('copy-path')}>Copy Path</button>}
-          {fileContextMenu.node && !isPlanningRootNode(fileContextMenu.node) && <button role="menuitem" onClick={() => handleFileContextAction('copy')}>Copy</button>}
-          {fileContextMenu.node && !isPlanningRootNode(fileContextMenu.node) && <button role="menuitem" onClick={() => handleFileContextAction('cut')}>Cut</button>}
-          {fileContextMenu.node?.type !== 'dir' && fileContextMenu.node && <button role="menuitem" onClick={() => handleFileContextAction('download')}>Download</button>}
+          {fileContextMenu.node && !isPlanningRootNode(fileContextMenu.node) && <button role="menuitem" onClick={() => handleFileContextAction('copy')}>{`Copy${ctxSuffix}`}</button>}
+          {fileContextMenu.node && !isPlanningRootNode(fileContextMenu.node) && <button role="menuitem" onClick={() => handleFileContextAction('cut')}>{`Cut${ctxSuffix}`}</button>}
+          {fileContextMenu.node?.type !== 'dir' && fileContextMenu.node && ctxCount === 1 && <button role="menuitem" onClick={() => handleFileContextAction('download')}>Download</button>}
           {fileContextMenu.node && !isPlanningRootNode(fileContextMenu.node) && <div className="context-separator" />}
-          {fileContextMenu.node && !isPlanningRootNode(fileContextMenu.node) && <button role="menuitem" className="context-danger" onClick={() => handleFileContextAction('delete')}>Delete</button>}
+          {fileContextMenu.node && !isPlanningRootNode(fileContextMenu.node) && <button role="menuitem" className="context-danger" onClick={() => handleFileContextAction('delete')}>{`Delete${ctxSuffix}`}</button>}
         </ContextMenuPortal>
-      )}
+        );
+      })()}
 
       {renameDialog && (
         <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && setRenameDialog(null)}>

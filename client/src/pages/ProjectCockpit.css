@@ -1418,7 +1418,30 @@
   padding: var(--spacing-sm);
   border-top: 1px solid var(--color-border);
   flex-shrink: 0;
+  transition: background var(--motion-hover);
 }
+.cockpit-project-footer:hover {
+  background: color-mix(in srgb, var(--color-surface) 35%, transparent);
+}
+
+.cockpit-avatar-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.cockpit-status-dot {
+  position: absolute;
+  bottom: -1px;
+  right: -1px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1.5px solid var(--color-background);
+}
+.cockpit-status-dot.status-running  { background: var(--color-success); }
+.cockpit-status-dot.status-starting { background: var(--color-warning); animation: pulse 2s infinite; }
+.cockpit-status-dot.status-stopped  { background: var(--color-text-dim); }
+.cockpit-status-dot.status-error    { background: var(--color-error); }
 
 /* ── Mobile — keyed off body.mobile-device (set by DeviceContext via pointer detection, not width) ── */
 body.mobile-device .cockpit-tabs { display: none; }

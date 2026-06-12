@@ -83,17 +83,18 @@ function AnimatedEmojiImage({ option, className = '', animated = false }) {
   );
 }
 
-export function ProjectAvatar({ project, size = 36 }) {
+export function ProjectAvatar({ project, size = 36, playing: externalPlaying }) {
   const { emoji, animated, color } = parseAvatar(project.avatar, project.id);
-  const [playing, setPlaying] = useState(false);
+  const [internalPlaying, setInternalPlaying] = useState(false);
+  const playing = externalPlaying !== undefined ? externalPlaying : internalPlaying;
   const initials = (project.name || '?').slice(0, 2).toUpperCase();
   return (
     <div className="project-avatar"
       style={{ width: size, height: size, minWidth: size, background: color,
                fontSize: emoji && !animated ? size * 0.5 : size * 0.35 }}
       title={project.name}
-      onMouseEnter={() => setPlaying(true)}
-      onMouseLeave={() => setPlaying(false)}
+      onMouseEnter={() => setInternalPlaying(true)}
+      onMouseLeave={() => setInternalPlaying(false)}
     >
       {animated ? <AnimatedEmojiImage option={animated} animated={playing} /> : (emoji || initials)}
     </div>
@@ -552,6 +553,8 @@ export default function ProjectsSidebar() {
     }
   }
 
+  const [hoveredId, setHoveredId] = useState(null);
+
   /* ── Render ──────────────────────────────────── */
   return (
     <nav className={`projects-sidebar${isCollapsed ? ' collapsed' : ''}`}
@@ -589,6 +592,8 @@ export default function ProjectsSidebar() {
               draggable
               className={`sidebar-project-item${isActive ? ' active' : ''}${aiActive ? ' ai-active' : ''}${aiWaiting ? ' ai-waiting' : ''}${dragId === project.id ? ' dragging' : ''}`}
               onClick={() => navigate(`/project/${project.id}`)}
+              onMouseEnter={() => setHoveredId(project.id)}
+              onMouseLeave={() => setHoveredId(null)}
               onContextMenu={e => handleContext(e, project)}
               onDragStart={e => handleDragStart(e, project.id)}
               onDragOver={e => handleDragOver(e, project.id)}
@@ -596,7 +601,7 @@ export default function ProjectsSidebar() {
               title={isCollapsed ? project.name : undefined}
             >
               <div className="sidebar-avatar-wrap">
-                <ProjectAvatar project={project} size={34} />
+                <ProjectAvatar project={project} size={34} playing={hoveredId === project.id} />
                 <span className={`sidebar-status-dot status-${project.status}`} />
                 {aiWaiting && <span className="sidebar-ai-dot" />}
               </div>
