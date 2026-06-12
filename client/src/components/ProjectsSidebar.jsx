@@ -14,36 +14,88 @@ const MAX_WIDTH       = 360;
 
 /* ── Avatar helpers ─────────────────────────────── */
 const COLORS = ['#6366f1','#8b5cf6','#ec4899','#ef4444','#f59e0b','#22c55e','#06b6d4','#3b82f6','#64748b','#92400e'];
-const EMOJIS = [
-  '🚀','💡','🔥','⚡','🎯','🛠️','🌊','🦋','🌙','⭐',
-  '💎','🎮','🧩','🔮','🐉','🌿','🎨','🤖','🦄','🐙',
-  '🦊','🦁','🐸','🦝','🌸','🍕','👾','💀','🎸','🎲',
-  '🛸','🌋','🌈','☄️','🌀','🦈','🦅','⚔️','🎭','🔑',
-];
+const animatedEmojiThumbs = import.meta.glob('../assets/animated-emojis/thumbs/*.webp', {
+  eager: true,
+  query: '?url',
+  import: 'default',
+});
+const animatedEmojiFulls = import.meta.glob('../assets/animated-emojis/full/*.webp', {
+  eager: true,
+  query: '?url',
+  import: 'default',
+});
+
+function fileName(path) {
+  return path.split('/').pop();
+}
+
+function emojiCodepoints(value) {
+  return Array.from(value)
+    .map(char => char.codePointAt(0).toString(16))
+    .join('_');
+}
+
+const ANIMATED_EMOJIS = Object.entries(animatedEmojiThumbs)
+  .map(([path, thumb]) => {
+    const file = fileName(path);
+    const stem = file.replace(/\.webp$/i, '');
+    const [rawName, ...codeParts] = stem.split('_');
+    return {
+      file,
+      code: codeParts.join('_'),
+      label: rawName.replace(/-/g, ' '),
+      thumb,
+      full: animatedEmojiFulls[`../assets/animated-emojis/full/${file}`],
+    };
+  })
+  .filter(option => option.full)
+  .sort((a, b) => a.label.localeCompare(b.label));
+const ANIMATED_EMOJI_BY_FILE = new Map(ANIMATED_EMOJIS.map(option => [option.file, option]));
+const ANIMATED_EMOJI_BY_CODE = new Map(ANIMATED_EMOJIS.map(option => [option.code, option]));
 function defaultColor(id) { return COLORS[(id - 1) % COLORS.length]; }
 
 // Parses avatar string into { emoji, color }.
-// Formats: "" | "#hex" | "emoji" | "emoji|#hex"
+// Formats: "" | "#hex" | "animated:file.webp" | "animated:file.webp|#hex" | legacy emoji
 function parseAvatar(avatar, projectId) {
-  if (!avatar) return { emoji: '', color: defaultColor(projectId) };
+  if (!avatar) return { emoji: '', animated: null, color: defaultColor(projectId) };
   if (avatar.includes('|')) {
     const [e, c] = avatar.split('|');
-    return { emoji: e, color: c };
+    if (e.startsWith('animated:')) {
+      return { emoji: '', animated: ANIMATED_EMOJI_BY_FILE.get(e.slice('animated:'.length)) || null, color: c };
+    }
+    return { emoji: e, animated: ANIMATED_EMOJI_BY_CODE.get(emojiCodepoints(e)) || null, color: c };
   }
-  if (avatar.startsWith('#')) return { emoji: '', color: avatar };
-  return { emoji: avatar, color: defaultColor(projectId) };
+  if (avatar.startsWith('#')) return { emoji: '', animated: null, color: avatar };
+  if (avatar.startsWith('animated:')) {
+    return { emoji: '', animated: ANIMATED_EMOJI_BY_FILE.get(avatar.slice('animated:'.length)) || null, color: defaultColor(projectId) };
+  }
+  return { emoji: avatar, animated: ANIMATED_EMOJI_BY_CODE.get(emojiCodepoints(avatar)) || null, color: defaultColor(projectId) };
+}
+
+function AnimatedEmojiImage({ option, className = '', animated = false }) {
+  return (
+    <img
+      className={`avatar-animated-image${className ? ` ${className}` : ''}`}
+      src={animated ? option.full : option.thumb}
+      alt=""
+      draggable="false"
+    />
+  );
 }
 
 export function ProjectAvatar({ project, size = 36 }) {
-  const { emoji, color } = parseAvatar(project.avatar, project.id);
+  const { emoji, animated, color } = parseAvatar(project.avatar, project.id);
+  const [playing, setPlaying] = useState(false);
   const initials = (project.name || '?').slice(0, 2).toUpperCase();
   return (
     <div className="project-avatar"
       style={{ width: size, height: size, minWidth: size, background: color,
-               fontSize: emoji ? size * 0.5 : size * 0.35 }}
+               fontSize: emoji && !animated ? size * 0.5 : size * 0.35 }}
       title={project.name}
+      onMouseEnter={() => setPlaying(true)}
+      onMouseLeave={() => setPlaying(false)}
     >
-      {emoji || initials}
+      {animated ? <AnimatedEmojiImage option={animated} animated={playing} /> : (emoji || initials)}
     </div>
   );
 }
@@ -193,7 +245,7 @@ function NewProjectForm({ csrfToken, onClose, onCreated }) {
 /* ── Avatar picker (inline in popover) ─────────── */
 function AvatarPickerForm({ project, csrfToken, onSaved, onClose }) {
   const parsed = parseAvatar(project.avatar, project.id);
-  const [emoji, setEmoji] = useState(parsed.emoji);
+  const [animated, setAnimated] = useState(parsed.animated);
   const [color, setColor] = useState(parsed.color);
   const [customColor, setCustomColor] = useState('');
   const [saving, setSaving] = useState(false);
@@ -202,7 +254,7 @@ function AvatarPickerForm({ project, csrfToken, onSaved, onClose }) {
 
   async function save() {
     setSaving(true);
-    const avatar = emoji ? `${emoji}|${color}` : color;
+    const avatar = animated ? `animated:${animated.file}|${color}` : color;
     try {
       await fetch(`/api/projects/${project.id}`, {
         method: 'PATCH',
@@ -223,8 +275,8 @@ function AvatarPickerForm({ project, csrfToken, onSaved, onClose }) {
 
       <div className="avatar-picker-preview">
         <div className="project-avatar avatar-preview-sm"
-          style={{ background: color, fontSize: emoji ? 18 : 13 }}>
-          {emoji || initials}
+          style={{ background: color, fontSize: animated ? 13 : 13 }}>
+          {animated ? <AnimatedEmojiImage option={animated} /> : initials}
         </div>
         <span className="avatar-preview-label">{project.name}</span>
       </div>
@@ -253,12 +305,20 @@ function AvatarPickerForm({ project, csrfToken, onSaved, onClose }) {
 
       <div className="avatar-section-title">Emoji</div>
       <div className="avatar-emoji-grid">
-        {EMOJIS.map(e => (
-          <button key={e} className={`avatar-emoji-btn${emoji === e ? ' selected' : ''}`}
-            onClick={() => setEmoji(prev => prev === e ? '' : e)}>{e}</button>
+        {ANIMATED_EMOJIS.map(option => (
+          <button
+            key={option.file}
+            type="button"
+            className={`avatar-emoji-btn${animated?.file === option.file ? ' selected' : ''}`}
+            onClick={() => setAnimated(prev => prev?.file === option.file ? null : option)}
+            aria-label={option.label}
+            title={option.label}
+          >
+            <AnimatedEmojiImage option={option} />
+          </button>
         ))}
-        {emoji && (
-          <button className="avatar-emoji-btn avatar-clear" onClick={() => setEmoji('')}>✕</button>
+        {animated && (
+          <button type="button" className="avatar-emoji-btn avatar-clear" onClick={() => setAnimated(null)}>✕</button>
         )}
       </div>
 
@@ -589,7 +649,7 @@ export default function ProjectsSidebar() {
 
       {/* Avatar picker popover */}
       {avatarTarget && (
-        <SidebarPopover onClose={() => setAvatarTarget(null)} width={260}>
+        <SidebarPopover onClose={() => setAvatarTarget(null)} width={390}>
           <AvatarPickerForm
             project={avatarTarget.project}
             csrfToken={csrfToken}
