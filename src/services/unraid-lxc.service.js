@@ -509,6 +509,66 @@ async function waitUntilAttachable(project, { attempts = 25, delayMs = 400 } = {
   }
 }
 
+/**
+ * Repair the in-container terminal-agent when terminals stop connecting.
+ * Common causes: a crashed/stopped agent, stale agent code after an Opus Command
+ * update, or the host helper resolving the wrong container IP (e.g. a Docker
+ * bridge address when Docker runs inside the workspace). This:
+ *   1. refreshes the host helper (picks up the LAN-correct IP resolution),
+ *   2. ensures the container is running/attachable,
+ *   3. restarts the agent — re-provisioning if the systemd unit is missing,
+ *   4. probes the agent over the LAN from the host, exactly as the proxy does.
+ * Returns { ip, healthy, reprovisioned, agentState }.
+ */
+async function repairTerminalAgent(project) {
+  // 1. Host helper refresh — without this the corrected IP resolution (and any
+  //    other helper fix) would not take effect until the next preflight.
+  await installHelper();
+
+  // 2. The container must be up to host an agent; start it if it is not.
+  let ready = await waitUntilAttachable(project);
+  if (!ready) {
+    await startWorkspace(project);
+    ready = await waitUntilAttachable(project);
+    if (!ready) throw new Error('container is not running/attachable — start the workspace first');
+  }
+
+  // 3. Restart the agent. A missing unit means the agent was never installed
+  //    (older workspace), so fall back to a full provision which installs it.
+  const restart = await execWorkspace(
+    project,
+    'systemctl restart opus-terminal-agent >/dev/null 2>&1 && echo RESTARTED || echo NO_UNIT',
+    { timeoutMs: 30_000 },
+  );
+  let reprovisioned = false;
+  if (!/RESTARTED/.test(restart.stdout)) {
+    await updateWorkspace(project);
+    reprovisioned = true;
+  }
+
+  const agentState = (await execWorkspace(
+    project,
+    'systemctl is-active opus-terminal-agent 2>/dev/null || echo unknown',
+    { timeoutMs: 15_000 },
+  )).stdout.trim() || 'unknown';
+
+  // 4. Probe over the LAN from the host — the exact path the terminal proxy uses,
+  //    so a green result means terminals will actually connect.
+  const ip = await getContainerIp(project);
+  let healthy = false;
+  if (ip) {
+    try {
+      const probe = await ssh.exec(
+        `curl -fsS -m 4 http://${ip}:${TERMINAL_AGENT_PORT}/health 2>/dev/null || true`,
+        { timeoutMs: 12_000 },
+      );
+      healthy = /"status"\s*:\s*"ok"/.test(probe.stdout || '');
+    } catch { /* healthy stays false; the caller surfaces it */ }
+  }
+
+  return { ip, healthy, reprovisioned, agentState };
+}
+
 module.exports = {
   NAME_PREFIX,
   containerNameFor,
@@ -525,6 +585,7 @@ module.exports = {
   updateWorkspace,
   execWorkspace,
   removeWorkspace,
+  repairTerminalAgent,
   buildProvisionScript,
   waitUntilAttachable,
   getContainerIp,

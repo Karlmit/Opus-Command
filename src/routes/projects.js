@@ -476,6 +476,22 @@ router.post('/:id/lifecycle', requireAuth, async (req, res) => {
           }).run();
           return res.json({ success: true, status, log: result?.log || '' });
         }
+        case 'repair-terminal': {
+          const before = await workspace.getStatus(project).catch(() => 'stopped');
+          if (before !== 'running') emitStatus('starting');
+          const repair = await workspace.repairTerminal(project);
+          status = await workspace.getStatus(project).catch(() => 'running');
+          emitStatus(status);
+          db.insert(activityLog).values({
+            projectId,
+            type: 'lifecycle_repair_terminal',
+            message: repair.healthy
+              ? `Terminal agent repaired — reachable at ${repair.ip}.`
+              : `Terminal agent repair ran but it is not reachable yet${repair.ip ? ` at ${repair.ip}` : ''}.`,
+            createdAt: Date.now(),
+          }).run();
+          return res.json({ success: true, status, repair });
+        }
         case 'status':
           status = await workspace.getStatus(project);
           db.update(projects).set({ lxcStatus: status }).where(eq(projects.id, projectId)).run();
@@ -550,6 +566,14 @@ router.post('/:id/lifecycle', requireAuth, async (req, res) => {
         emitStatus('starting');
         const { containerId: updatedId } = await docker.rebuildContainer(projectId, project.folderPath, project.template, volumes);
         db.update(projects).set({ containerId: updatedId, lastUpdatedAt: Date.now() }).where(eq(projects.id, projectId)).run();
+        emitStatus('running');
+        break;
+      }
+      case 'repair-terminal': {
+        // The Docker terminal-agent is baked into container init, so a restart
+        // revives a crashed agent without recreating the workspace.
+        emitStatus('starting');
+        await workspace.repairTerminal(project);
         emitStatus('running');
         break;
       }

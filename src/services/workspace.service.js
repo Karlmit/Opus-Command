@@ -84,6 +84,15 @@ async function remove(project) {
   return docker.removeWorkspace(project.id);
 }
 
+// Bring a workspace's terminal-agent back when terminals stop connecting.
+// LXC has a dedicated repair (helper refresh + agent restart + LAN probe);
+// Docker bakes the agent into container init, so a container restart revives it.
+async function repairTerminal(project) {
+  if (isLxc(project)) return lxc.repairTerminalAgent(project);
+  await docker.restartContainer(project.id);
+  return { restarted: true };
+}
+
 // ── docker-only helpers (no-op / empty for LXC) ───────────────────────────────
 
 async function getLogs(project, tail = 200) {
@@ -108,6 +117,7 @@ module.exports = {
   restart,
   update,
   remove,
+  repairTerminal,
   getLogs,
   getBinds,
 };

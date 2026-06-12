@@ -852,6 +852,13 @@ function WorkspacePanel({ projectId, project, csrfToken, addToast, onDelete, onP
       if (!d.success) addToast(d.error || 'Action failed.', 'error');
       else {
         if (action === 'status') addToast(`Workspace status: ${d.status}.`);
+        else if (action === 'repair-terminal') {
+          if (d.repair && !d.repair.healthy) {
+            addToast(`Repair ran, but the terminal agent isn't reachable yet${d.repair.ip ? ` (${d.repair.ip})` : ''}. Try again or Restart the workspace.`, 'error');
+          } else {
+            addToast(d.repair?.ip ? `Terminal agent repaired — reachable at ${d.repair.ip}.` : 'Terminal agent repaired.');
+          }
+        }
         else addToast(`${action.charAt(0).toUpperCase() + action.slice(1)} complete.`);
         if (d.status) onProjectUpdated?.({ status: d.status });
       }
@@ -891,19 +898,21 @@ function WorkspacePanel({ projectId, project, csrfToken, addToast, onDelete, onP
   }
 
   const ACTIONS = isLxc ? [
-    { id: 'start',    label: 'Start',   danger: false },
-    { id: 'stop',     label: 'Stop',    danger: false },
-    { id: 'restart',  label: 'Restart', danger: false },
-    { id: 'update',   label: 'Update',  danger: false },
-    { id: 'status',   label: 'Status',  danger: false },
+    { id: 'start',           label: 'Start',           danger: false },
+    { id: 'stop',            label: 'Stop',            danger: false },
+    { id: 'restart',         label: 'Restart',         danger: false },
+    { id: 'update',          label: 'Update',          danger: false },
+    { id: 'repair-terminal', label: 'Repair terminal', danger: false },
+    { id: 'status',          label: 'Status',          danger: false },
   ] : [
-    { id: 'start',    label: 'Start',             danger: false },
-    { id: 'stop',     label: 'Stop',              danger: false },
-    { id: 'restart',  label: 'Restart',           danger: false },
-    { id: 'update',   label: 'Update',            danger: false },
-    { id: 'recreate', label: 'Recreate',          danger: true },
-    { id: 'rebuild',  label: 'Rebuild',           danger: true },
-    { id: 'reset',    label: 'Reset Environment', danger: true },
+    { id: 'start',           label: 'Start',             danger: false },
+    { id: 'stop',            label: 'Stop',              danger: false },
+    { id: 'restart',         label: 'Restart',           danger: false },
+    { id: 'update',          label: 'Update',            danger: false },
+    { id: 'repair-terminal', label: 'Repair terminal',   danger: false },
+    { id: 'recreate',        label: 'Recreate',          danger: true },
+    { id: 'rebuild',         label: 'Rebuild',           danger: true },
+    { id: 'reset',           label: 'Reset Environment', danger: true },
   ];
 
   // Some LXC actions (update) can take a while; reflect that in the button label.
@@ -911,6 +920,7 @@ function WorkspacePanel({ projectId, project, csrfToken, addToast, onDelete, onP
     if (busy !== a.id) return a.label;
     if (a.id === 'update') return 'Updating…';
     if (a.id === 'status') return 'Checking…';
+    if (a.id === 'repair-terminal') return 'Repairing…';
     return `${a.label}ing…`;
   };
 

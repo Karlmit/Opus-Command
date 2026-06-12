@@ -174,12 +174,39 @@ cmd_restart() {
   cmd_start
 }
 
+# Resolve the container's LAN IP — the address Opus Command uses to reach the
+# in-container terminal-agent at <ip>:7681. A workspace may run Docker inside it,
+# which adds bridge interfaces in the 172.16/12 block whose addresses are NOT
+# routable from the host. `lxc-info -iH` lists every address and its order is not
+# guaranteed, so a naive `head -1` can hand back a Docker-bridge IP and silently
+# break terminals. Prefer the source IP of the container's own default route (its
+# eth0/LAN address), then the first non-bridge global address, then lxc-info.
+container_primary_ip() {
+  local ip
+  # 1. Source IP of the default route — the interface the container uses to reach
+  #    the LAN gateway. This stays the eth0 address even when Docker bridges exist.
+  ip="$(lxc-attach -n "$ARG_NAME" -- sh -c 'ip -4 route get 1.1.1.1 2>/dev/null' 2>/dev/null \
+    | sed -n 's/.* src \([0-9.][0-9.]*\).*/\1/p' | head -1)"
+  if [ -n "$ip" ]; then echo "$ip"; return; fi
+  # 2. First global-scope address that is not in the Docker default block (172.16/12).
+  ip="$(lxc-attach -n "$ARG_NAME" -- sh -c 'ip -4 -o addr show scope global 2>/dev/null' 2>/dev/null \
+    | awk '{print $4}' | cut -d/ -f1 | grep -Ev '^172\.(1[6-9]|2[0-9]|3[01])\.' | head -1)"
+  if [ -n "$ip" ]; then echo "$ip"; return; fi
+  # 3. Last resort: whatever lxc-info reports first (legacy behaviour).
+  lxc-info -n "$ARG_NAME" -iH 2>/dev/null | head -1
+}
+
 cmd_status() {
   require_name
-  echo "STATE=$(container_state)"
+  local state; state="$(container_state)"
+  echo "STATE=$state"
   # Container IP — Opus Command reaches the in-container terminal-agent at
   # <ip>:7681. Empty if stopped or not yet assigned; the caller retries.
-  echo "IP=$(lxc-info -n "$ARG_NAME" -iH 2>/dev/null | head -1)"
+  if [ "$state" = "RUNNING" ]; then
+    echo "IP=$(container_primary_ip)"
+  else
+    echo "IP="
+  fi
 }
 
 cmd_destroy() {
