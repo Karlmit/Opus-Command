@@ -349,12 +349,78 @@ function SnapshotRow({ snapshot, onRestore }) {
   );
 }
 
+function repoLabel(path) {
+  if (!path) return '';
+  if (path === '/workspace') return 'workspace';
+  return path.split('/').filter(Boolean).pop();
+}
+
+function RepoIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+      <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+    </svg>
+  );
+}
+
+/* Repository picker — shown in the toolbar when /workspace holds more than one
+   Git repo. A single repo renders as a static label so the user always knows
+   which working tree the menu acts on; two or more become a dropdown. */
+function RepoPicker({ repos, active, onSelect }) {
+  const [open, setOpen] = useState(false);
+  if (!repos || repos.length === 0) return null;
+
+  if (repos.length === 1) {
+    return (
+      <div className="gk-repo-pill" title={active}>
+        <RepoIcon />
+        <span className="gk-repo-name">{repoLabel(active)}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="gk-repo-picker">
+      <button className="gk-repo-pill clickable" onClick={() => setOpen(o => !o)} title={active}>
+        <RepoIcon />
+        <span className="gk-repo-name">{repoLabel(active)}</span>
+        <span className="gk-repo-caret">{open ? '▴' : '▾'}</span>
+      </button>
+      {open && (
+        <>
+          <div className="gk-repo-backdrop" onClick={() => setOpen(false)} />
+          <div className="gk-repo-menu" role="menu">
+            <div className="gk-repo-menu-label">Repository</div>
+            {repos.map(r => (
+              <button
+                key={r.path}
+                className={`gk-repo-option${r.path === active ? ' active' : ''}`}
+                title={r.path}
+                onClick={() => { setOpen(false); if (r.path !== active) onSelect(r.path); }}
+              >
+                <span className="gk-repo-option-name">{repoLabel(r.path)}</span>
+                <span className="gk-repo-option-meta">
+                  {r.branch}{r.clean ? '' : ` · ${r.dirty} changed`}
+                </span>
+                {r.path === active && <span className="gk-repo-check">✓</span>}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function GitPage() {
   const { id: projectId } = useParams();
   const { csrfToken } = useAuth();
   const { addToast } = useToast();
 
   const [status, setStatus] = useState(null);
+  const [repos, setRepos] = useState([]);
+  const [activeRepo, setActiveRepo] = useState(null);
   const [staged, setStaged] = useState(new Set());
   const [commitMessage, setCommitMessage] = useState('');
   const [selectedDiff, setSelectedDiff] = useState(null);
@@ -378,7 +444,36 @@ export default function GitPage() {
   }, [projectId]);
 
   async function loadAll() {
-    await Promise.all([loadStatus(), loadSnapshots(), loadLog(), loadRemote()]);
+    await Promise.all([loadStatus(), loadRepos(), loadSnapshots(), loadLog(), loadRemote()]);
+  }
+
+  async function loadRepos() {
+    try {
+      const res = await fetch(`/api/projects/${projectId}/git/repos`);
+      const data = await res.json();
+      setRepos(data.repos || []);
+      setActiveRepo(data.active || null);
+    } catch (_) {}
+  }
+
+  async function handleSelectRepo(path) {
+    const res = await fetch(`/api/projects/${projectId}/git/repos/active`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+      body: JSON.stringify({ path }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      setActiveRepo(data.active);
+      // Everything below is repo-scoped — reset selection and reload.
+      setStaged(new Set());
+      setSelectedDiff(null);
+      setDiff('');
+      addToast(`Switched to ${repoLabel(data.active)}.`);
+      await loadAll();
+    } else {
+      addToast(data.error || 'Could not switch repository.', 'error');
+    }
   }
 
   async function loadStatus() {
@@ -582,6 +677,7 @@ export default function GitPage() {
       {/* ── Toolbar ── */}
       <div className="gk-toolbar">
         <div className="gk-toolbar-left">
+          <RepoPicker repos={repos} active={activeRepo} onSelect={handleSelectRepo} />
           <div className="gk-branch-pill">
             <BranchIcon />
             <span className="gk-branch-name">{status.branch}</span>

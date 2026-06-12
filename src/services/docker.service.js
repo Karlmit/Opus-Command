@@ -16,16 +16,20 @@ const OPUS_GIT_GUIDANCE = `
 
 ## Git and Opus Command
 
-Opus Command's Git menu looks for a repository at \`/workspace/.git\` first, then
-for one repository one or two levels under \`/workspace\`. To keep the Git menu
-working correctly:
+Opus Command's Git menu auto-discovers Git repositories under \`/workspace\`. It
+checks \`/workspace/.git\` and one level down (e.g. \`/workspace/<project>/.git\`),
+and recognises \`.git\` as a directory *or* a file — Git worktrees and submodules
+store \`.git\` as a \`gitdir:\` pointer file. A repository nested in a subfolder
+such as \`/workspace/my-project\` is fully supported; you do not need to move it
+to \`/workspace\`.
 
-- Keep the project repository rooted at \`/workspace\` whenever possible.
-- If cloning into a subdirectory, clone directly under \`/workspace\`, not deeper.
-- Do not move \`.git\` outside \`/workspace\` or work from a repo under \`/root\`.
+- If more than one repository is found, the Git menu shows a repository picker
+  and remembers the active one per project. Every Git-menu action (status, diff,
+  commit, snapshot, push) operates on the active repository.
+- Run Git commands from the repository root, or use \`git -C <repo-root> ...\`
+  (for example \`git -C /workspace/my-project ...\`).
 - If the project is not initialized and the user expects the Git menu to work,
-  run \`git init\` in \`/workspace\` before making changes.
-- Run Git commands from the repo root, or use \`git -C /workspace ...\`.
+  run \`git init\` in the repository folder before making changes.
 - Check \`git status --porcelain\` before and after edits so the Git menu and your
   summary agree about changed files.
 - Do not run destructive commands such as \`git reset --hard\`, \`git clean -fd\`,
@@ -161,8 +165,15 @@ function buildWorkspaceCmd(image, template) {
 
   const initScript = [
     'mkdir -p ~/.claude ~/bin ~/.npm-global /workspace/.opus/skills /workspace/.planning',
-    'touch /workspace/.gitignore',
-    'grep -qxF ".planning/" /workspace/.gitignore 2>/dev/null || printf ".planning/\\n" >> /workspace/.gitignore',
+    // Keep the planning area out of Git. `.planning` lives at /workspace/.planning,
+    // so it only needs ignoring in a repo rooted at /workspace. If the only repo
+    // is nested in a subfolder (e.g. /workspace/Opus-Command), `.planning` is
+    // outside it — no entry needed, and we avoid leaving a stray
+    // /workspace/.gitignore. With no repo yet, seed it so a future `git init`
+    // at /workspace inherits the rule.
+    'WS_REPO=$(git -C /workspace rev-parse --show-toplevel 2>/dev/null || true)',
+    'NESTED=$(find /workspace -mindepth 2 -maxdepth 2 -name .git 2>/dev/null | head -1)',
+    'if [ "$WS_REPO" = /workspace ] || [ -z "$NESTED" ]; then touch /workspace/.gitignore; grep -qxF ".planning/" /workspace/.gitignore 2>/dev/null || printf ".planning/\\n" >> /workspace/.gitignore; fi',
     // Clean up the removed cdesktop integration from existing workspace home volumes.
     'pkill -f "cdesktop" 2>/dev/null || true',
     'npm uninstall -g cdesktop >/dev/null 2>&1 || true',

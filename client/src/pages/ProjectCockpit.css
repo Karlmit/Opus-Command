@@ -855,6 +855,29 @@
   justify-content: space-between;
 }
 
+/* Repository picker inside the Git panel header — only rendered when the
+   workspace holds more than one Git repo. */
+.git-repo-select {
+  margin-right: 6px;
+  padding: 1px 4px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: normal;
+  max-width: 130px;
+}
+
+.git-repo-select:hover {
+  border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-border));
+  color: var(--color-text-primary);
+}
+
 .panel-hint {
   font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);

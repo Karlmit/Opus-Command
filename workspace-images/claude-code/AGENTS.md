@@ -17,13 +17,18 @@ recreates. Install tools into `~`, not system directories.
 
 ## Git and Opus Command
 
-Opus Command's Git menu works best when the repo is rooted at `/workspace`.
-It can also detect one repo directly below `/workspace`, but deeper nesting is
-unreliable. Keep `.git` under `/workspace`, never under `/root`.
+Opus Command's Git menu auto-discovers Git repositories under `/workspace`: it
+checks `/workspace/.git` and one level down (e.g. `/workspace/<project>/.git`),
+recognising `.git` as a directory *or* a `gitdir:` pointer file (worktrees and
+submodules). A repo nested in a subfolder such as `/workspace/my-project` is
+fully supported — no need to move it to `/workspace`. Never put `.git` under
+`/root`.
 
+- If more than one repo is found, the Git menu shows a picker and remembers the
+  active repo per project; all actions operate on the active repo.
 - If Git is not initialized and the user expects the Git menu to work, run
-  `git init` in `/workspace`.
-- Run Git commands from the repo root, or use `git -C /workspace ...`.
+  `git init` in the repository folder.
+- Run Git commands from the repo root, or use `git -C <repo-root> ...`.
 - Check `git status --porcelain` before and after edits.
 - Do not run destructive commands like `git reset --hard`, `git clean -fd`,
   rebases, or history rewrites unless explicitly requested.

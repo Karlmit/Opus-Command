@@ -1474,17 +1474,35 @@ function TasksPanel({
 }
 
 /* ── Git panel ─────────────────────────────────── */
+function gitRepoLabel(path) {
+  if (!path) return '';
+  if (path === '/workspace') return 'workspace';
+  return path.split('/').filter(Boolean).pop();
+}
+
 function GitPanel({ projectId, csrfToken, addToast }) {
   const [status, setStatus] = useState(null);
   const [staged, setStaged] = useState(new Set());
   const [msg, setMsg] = useState('');
   const [diff, setDiff] = useState('');
   const [snapshots, setSnaps] = useState([]);
+  const [repos, setRepos] = useState([]);
+  const [activeRepo, setActiveRepo] = useState(null);
 
-  useEffect(() => { loadStatus(); loadSnaps(); const t = setInterval(loadStatus, 3000); return () => clearInterval(t); }, [projectId]);
+  useEffect(() => { loadStatus(); loadRepos(); loadSnaps(); const t = setInterval(loadStatus, 3000); return () => clearInterval(t); }, [projectId]);
 
   async function loadStatus() {
     try { const r = await fetch(`/api/projects/${projectId}/git/status`); setStatus(await r.json()); } catch (_) {}
+  }
+  async function loadRepos() {
+    try { const r = await fetch(`/api/projects/${projectId}/git/repos`); const d = await r.json(); setRepos(d.repos || []); setActiveRepo(d.active || null); } catch (_) {}
+  }
+  async function selectRepo(path) {
+    if (!path || path === activeRepo) return;
+    const r = await fetch(`/api/projects/${projectId}/git/repos/active`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: JSON.stringify({ path }) });
+    const d = await r.json();
+    if (d.success) { setActiveRepo(d.active); setStaged(new Set()); setDiff(''); addToast(`Switched to ${gitRepoLabel(d.active)}.`); loadStatus(); loadSnaps(); }
+    else addToast(d.error || 'Could not switch repository.', 'error');
   }
   async function loadSnaps() {
     try { const r = await fetch(`/api/projects/${projectId}/git/snapshots`); const d = await r.json(); setSnaps(d.snapshots || []); } catch (_) {}
@@ -1529,7 +1547,21 @@ function GitPanel({ projectId, csrfToken, addToast }) {
     <div className="panel-content">
       <div className="panel-section">
         <div className="panel-section-header">
-          <div className="panel-section-title">⎇ {status.branch}</div>
+          <div className="panel-section-title">
+            {repos.length > 1 && (
+              <select
+                className="git-repo-select"
+                value={activeRepo || ''}
+                onChange={e => selectRepo(e.target.value)}
+                title={activeRepo || 'Active repository'}
+              >
+                {repos.map(r => (
+                  <option key={r.path} value={r.path}>{gitRepoLabel(r.path)}{r.clean ? '' : ' •'}</option>
+                ))}
+              </select>
+            )}
+            ⎇ {status.branch}
+          </div>
           <div style={{ display:'flex', gap: 4 }}>
             <button className="btn btn-ghost" style={{fontSize:'var(--font-size-xs)'}} onClick={snapshot}>Snapshot</button>
           </div>

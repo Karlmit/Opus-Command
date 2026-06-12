@@ -65,24 +65,53 @@ async function execInWorkspace(project, command) {
   return execInDockerContainer(containerName(project.id), command);
 }
 
-// Cache git root per workspace so we only pay the detection cost once.
-const gitRootCache = new Map();
+// Cache discovered repos per workspace with a short TTL: cheap enough that a
+// newly cloned repo shows up without a backend restart, but we don't pay the
+// find cost on every git call.
+const repoCache = new Map();
+const REPO_TTL_MS = 15000;
 
-async function getGitRoot(project) {
+// Discover Git working trees under /workspace. Matches `.git` as a directory OR
+// a file — worktrees and submodules store `.git` as a `gitdir:` pointer file,
+// not a directory — then resolves each to its working-tree root via rev-parse.
+// maxdepth 2 covers both /workspace/.git and /workspace/<project>/.git.
+async function discoverRepos(project, { force = false } = {}) {
   const cacheKey = `${project.workspaceBackend || 'docker'}:${project.id}`;
-  if (gitRootCache.has(cacheKey)) return gitRootCache.get(cacheKey);
+  const cached = repoCache.get(cacheKey);
+  if (!force && cached && Date.now() - cached.at < REPO_TTL_MS) return cached.repos;
+
+  let repos = [];
   try {
-    // Try /workspace first (most common); fall back to first .git found one level down.
     const r = await execInWorkspace(project,
-      'if [ -d /workspace/.git ]; then echo /workspace; ' +
-      'else find /workspace -maxdepth 2 -name ".git" -type d 2>/dev/null | head -1 | sed "s|/\\.git$||"; fi'
+      'find /workspace -maxdepth 2 -name .git 2>/dev/null | while read g; do ' +
+      'git -C "$(dirname "$g")" rev-parse --show-toplevel 2>/dev/null; ' +
+      'done'
     );
-    const root = r.stdout.trim() || '/workspace';
-    gitRootCache.set(cacheKey, root);
-    return root;
+    repos = Array.from(new Set(
+      r.stdout.split('\n').map(s => s.trim()).filter(Boolean)
+    )).sort();
+    // Float a repo rooted directly at /workspace to the front — it's the
+    // natural default when the user hasn't chosen one.
+    if (repos.includes('/workspace')) {
+      repos = ['/workspace', ...repos.filter(p => p !== '/workspace')];
+    }
   } catch {
-    return '/workspace';
+    repos = [];
   }
+
+  repoCache.set(cacheKey, { at: Date.now(), repos });
+  return repos;
+}
+
+// The repo the Git menu currently operates on: the user's saved choice if it is
+// still present, otherwise the default (prefer /workspace, else first found).
+async function getActiveRepoRoot(project) {
+  const repos = await discoverRepos(project);
+  if (!repos.length) return '/workspace'; // preserve legacy fallback
+  if (project.gitRepoPath && repos.includes(project.gitRepoPath)) {
+    return project.gitRepoPath;
+  }
+  return repos[0]; // discoverRepos already floats /workspace to the front
 }
 
 // GET /api/projects/:projectId/git/status
@@ -91,7 +120,7 @@ router.get('/status', requireAuth, async (req, res) => {
   if (!project) return res.status(404).json({ error: 'Project not found.' });
 
   try {
-    const root = await getGitRoot(project);
+    const root = await getActiveRepoRoot(project);
     const repoResult = await execInWorkspace(project, `git -C '${root}' rev-parse --is-inside-work-tree 2>/dev/null || echo false`);
     if (repoResult.stdout.trim() !== 'true') {
       return res.json({ initialized: false });
@@ -120,6 +149,60 @@ router.get('/status', requireAuth, async (req, res) => {
   }
 });
 
+// GET /api/projects/:projectId/git/repos — list every Git repo discovered under
+// /workspace, with branch + clean state, and which one is active. The picker
+// only needs to render when there are two or more.
+router.get('/repos', requireAuth, async (req, res) => {
+  const project = getProjectInfo(req.params.projectId);
+  if (!project) return res.status(404).json({ error: 'Project not found.' });
+
+  try {
+    const paths = await discoverRepos(project, { force: req.query.refresh === '1' });
+    const active = await getActiveRepoRoot(project);
+
+    const repos = await Promise.all(paths.map(async (path) => {
+      try {
+        const [branchRes, statusRes] = await Promise.all([
+          execInWorkspace(project, `git -C '${path}' branch --show-current 2>/dev/null || echo ""`),
+          execInWorkspace(project, `git -C '${path}' status --porcelain 2>/dev/null`),
+        ]);
+        const dirty = statusRes.stdout.split('\n').filter(Boolean).length;
+        return { path, branch: branchRes.stdout.trim() || 'HEAD', dirty, clean: dirty === 0 };
+      } catch {
+        return { path, branch: 'HEAD', dirty: 0, clean: true };
+      }
+    }));
+
+    res.json({ repos, active });
+  } catch (err) {
+    res.json({ repos: [], active: null, error: err.message });
+  }
+});
+
+// POST /api/projects/:projectId/git/repos/active — remember the chosen repo.
+router.post('/repos/active', requireAuth, async (req, res) => {
+  const project = getProjectInfo(req.params.projectId);
+  if (!project) return res.status(404).json({ error: 'Project not found.' });
+
+  const { path } = req.body;
+  if (!path) return res.status(400).json({ error: 'Repository path required.' });
+
+  // Only accept a path we actually discovered — never trust an arbitrary path
+  // from the client into a shell git command.
+  const repos = await discoverRepos(project, { force: true });
+  if (!repos.includes(path)) {
+    return res.status(400).json({ error: 'Unknown repository path.' });
+  }
+
+  try {
+    const db = getDB();
+    db.update(projects).set({ gitRepoPath: path }).where(eq(projects.id, project.id)).run();
+    res.json({ success: true, active: path });
+  } catch (err) {
+    res.status(500).json({ error: `Could not save repository choice: ${err.message}` });
+  }
+});
+
 // GET /api/projects/:projectId/git/diff
 router.get('/diff', requireAuth, async (req, res) => {
   const project = getProjectInfo(req.params.projectId);
@@ -129,7 +212,7 @@ router.get('/diff', requireAuth, async (req, res) => {
   if (!filePath) return res.status(400).json({ error: 'Path required.' });
 
   try {
-    const root = await getGitRoot(project);
+    const root = await getActiveRepoRoot(project);
     const safe = filePath.replace(/'/g, "\\'");
     const result = await execInWorkspace(project,
       `git -C '${root}' diff -- '${safe}' 2>/dev/null; git -C '${root}' diff --cached -- '${safe}' 2>/dev/null`
@@ -149,7 +232,7 @@ router.post('/stage', requireAuth, async (req, res) => {
   if (!Array.isArray(files) || !files.length) return res.status(400).json({ error: 'Files required.' });
 
   try {
-    const root = await getGitRoot(project);
+    const root = await getActiveRepoRoot(project);
     const safePaths = files.map(f => `'${f.replace(/'/g, "\\'")}'`).join(' ');
     const cmd = unstage
       ? `git -C '${root}' reset HEAD -- ${safePaths}`
@@ -171,7 +254,7 @@ router.post('/commit', requireAuth, async (req, res) => {
 
   const safeMsg = message.replace(/'/g, "\\'");
   try {
-    const root = await getGitRoot(project);
+    const root = await getActiveRepoRoot(project);
     const result = await execInWorkspace(project,
       `git -C '${root}' -c user.email="opus@command" -c user.name="Opus Command" commit -m '${safeMsg}' 2>&1`
     );
@@ -191,7 +274,7 @@ router.post('/revert', requireAuth, async (req, res) => {
 
   const { filePath, all } = req.body;
   try {
-    const root = await getGitRoot(project);
+    const root = await getActiveRepoRoot(project);
     let cmd;
     if (all) {
       cmd = `git -C '${root}' checkout -- . && git -C '${root}' clean -fd 2>&1`;
@@ -217,7 +300,7 @@ router.post('/branch', requireAuth, async (req, res) => {
 
   const safe = name.trim().replace(/'/g, "\\'");
   try {
-    const root = await getGitRoot(project);
+    const root = await getActiveRepoRoot(project);
     const result = await execInWorkspace(project, `git -C '${root}' checkout -b '${safe}' 2>&1`);
     if (result.stdout.includes('fatal') || result.stderr.includes('fatal')) {
       return res.status(400).json({ error: result.stdout || result.stderr });
@@ -242,7 +325,7 @@ router.post('/snapshot', requireAuth, async (req, res) => {
   const safeTag = tag.replace(/'/g, "\\'");
   const safeMsg = msg.replace(/'/g, "\\'");
   try {
-    const root = await getGitRoot(project);
+    const root = await getActiveRepoRoot(project);
     await execInWorkspace(project,
       `git -C '${root}' -c user.email="opus@command" -c user.name="Opus Command" tag -a '${safeTag}' -m '${safeMsg}' 2>&1`
     );
@@ -258,7 +341,7 @@ router.get('/snapshots', requireAuth, async (req, res) => {
   if (!project) return res.status(404).json({ error: 'Project not found.' });
 
   try {
-    const root = await getGitRoot(project);
+    const root = await getActiveRepoRoot(project);
     const result = await execInWorkspace(project,
       `git -C '${root}' tag -l "snapshot/*" --sort=-creatordate --format="%(refname:short)|%(creatordate:iso)|%(subject)" 2>/dev/null`
     );
@@ -288,7 +371,7 @@ router.post('/restore', requireAuth, async (req, res) => {
   }
 
   try {
-    const root = await getGitRoot(project);
+    const root = await getActiveRepoRoot(project);
     const quotedRoot = shellQuote(root);
     const quotedTag = shellQuote(tag);
     const quotedCommit = shellQuote(`${tag}^{commit}`);
@@ -312,7 +395,7 @@ router.get('/log', requireAuth, async (req, res) => {
   if (!project) return res.status(404).json({ error: 'Project not found.' });
 
   try {
-    const root = await getGitRoot(project);
+    const root = await getActiveRepoRoot(project);
     const result = await execInWorkspace(project,
       `git -C '${root}' log --all --date-order --format="%H%x1f%h%x1f%s%x1f%an%x1f%ar%x1f%D%x1f%P" -60 2>/dev/null`
     );
@@ -340,7 +423,7 @@ router.get('/remote', requireAuth, async (req, res) => {
   if (!project) return res.status(404).json({ error: 'Project not found.' });
 
   try {
-    const root = await getGitRoot(project);
+    const root = await getActiveRepoRoot(project);
     const urlResult = await execInWorkspace(project,
       `git -C '${root}' remote get-url origin 2>/dev/null || echo ""`
     );
@@ -371,7 +454,7 @@ router.post('/fetch', requireAuth, async (req, res) => {
   if (!project) return res.status(404).json({ error: 'Project not found.' });
 
   try {
-    const root = await getGitRoot(project);
+    const root = await getActiveRepoRoot(project);
     const result = await execInWorkspace(project, `git -C '${root}' fetch --prune 2>&1`);
     const output = (result.stdout + ' ' + result.stderr).trim();
     if (output.includes('fatal:') || output.includes('error:')) {
@@ -389,7 +472,7 @@ router.post('/pull', requireAuth, async (req, res) => {
   if (!project) return res.status(404).json({ error: 'Project not found.' });
 
   try {
-    const root = await getGitRoot(project);
+    const root = await getActiveRepoRoot(project);
     const result = await execInWorkspace(project, `git -C '${root}' pull 2>&1`);
     const output = (result.stdout + ' ' + result.stderr).trim();
     if (output.includes('fatal:') || output.includes('error:')) {
@@ -407,7 +490,7 @@ router.post('/push', requireAuth, async (req, res) => {
   if (!project) return res.status(404).json({ error: 'Project not found.' });
 
   try {
-    const root = await getGitRoot(project);
+    const root = await getActiveRepoRoot(project);
     const result = await execInWorkspace(project, `git -C '${root}' push 2>&1`);
     const output = (result.stdout + ' ' + result.stderr).trim();
     if (output.includes('fatal:') || output.includes('error:')) {

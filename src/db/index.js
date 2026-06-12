@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS projects (
   last_started_at INTEGER,
   last_stopped_at INTEGER,
   last_updated_at INTEGER,
+  git_repo_path TEXT,
   created_at INTEGER NOT NULL
 );
 
@@ -170,6 +171,8 @@ function initDB() {
   try { sqlite.exec("ALTER TABLE projects ADD COLUMN last_started_at INTEGER"); } catch (_) {}
   try { sqlite.exec("ALTER TABLE projects ADD COLUMN last_stopped_at INTEGER"); } catch (_) {}
   try { sqlite.exec("ALTER TABLE projects ADD COLUMN last_updated_at INTEGER"); } catch (_) {}
+  // Active Git repo chosen via the Git menu's repository picker (null = auto).
+  try { sqlite.exec("ALTER TABLE projects ADD COLUMN git_repo_path TEXT"); } catch (_) {}
   try { sqlite.exec("ALTER TABLE connectors ADD COLUMN labels TEXT DEFAULT '[]'"); } catch (_) {}
   try { sqlite.exec("ALTER TABLE connectors ADD COLUMN capabilities TEXT DEFAULT '{}'"); } catch (_) {}
   runMigrations(sqlite);

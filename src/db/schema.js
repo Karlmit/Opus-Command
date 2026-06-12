@@ -37,6 +37,10 @@ const projects = sqliteTable('projects', {
   lastStartedAt: integer('last_started_at'),
   lastStoppedAt: integer('last_stopped_at'),
   lastUpdatedAt: integer('last_updated_at'),
+  // Active Git repository the Git menu operates on. Null = auto (prefer
+  // /workspace, else the first repo discovered under /workspace). Set when the
+  // user picks a repo via the Git menu's repository picker.
+  gitRepoPath: text('git_repo_path'),
   createdAt: integer('created_at').notNull(),
 });
 
