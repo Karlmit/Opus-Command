@@ -1,0 +1,157 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-06-11T00:00:00.000Z",
+  "title": "Design System: Opus Command",
+  "extensions": {
+    "colorMeta": {
+      "accent": {
+        "role": "primary",
+        "displayName": "Signal Blue",
+        "canonical": "#3B82F6",
+        "note": "Default-theme accent token. Catppuccin themes carry this role as mauve. Spend on action/selection/focus/live state only.",
+        "tonalRamp": ["#0a1a33", "#102a52", "#173d78", "#1f5099", "#2f6fcf", "#3B82F6", "#60A5FA", "#a8c8f8"]
+      },
+      "background": {
+        "role": "neutral",
+        "displayName": "Cockpit Black",
+        "canonical": "#2B2D31",
+        "tonalRamp": ["#16171a", "#1e2024", "#26282c", "#2B2D31", "#313338", "#383A40", "#404249", "#4a4d55"]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Panel Slate",
+        "canonical": "#313338",
+        "tonalRamp": ["#1e2024", "#26282c", "#2B2D31", "#313338", "#383A40", "#404249", "#4a4d55", "#565a63"]
+      },
+      "success": {
+        "role": "tertiary",
+        "displayName": "Running Green",
+        "canonical": "#22C55E",
+        "tonalRamp": ["#06200f", "#0a3318", "#0f4d24", "#136634", "#188044", "#22C55E", "#4ade80", "#a7f3c0"]
+      },
+      "warning": {
+        "role": "tertiary",
+        "displayName": "Starting Amber",
+        "canonical": "#F59E0B",
+        "tonalRamp": ["#3a2503", "#5a3a05", "#7a4f08", "#9c660b", "#c8830f", "#F59E0B", "#fbbf4d", "#fde4a8"]
+      },
+      "error": {
+        "role": "tertiary",
+        "displayName": "Error Red",
+        "canonical": "#EF4444",
+        "tonalRamp": ["#3a0d0d", "#5a1414", "#7a1d1d", "#9c2626", "#c83333", "#EF4444", "#f87171", "#fcc0c0"]
+      },
+      "text-primary": {
+        "role": "neutral",
+        "displayName": "Ink Primary",
+        "canonical": "#F2F3F5",
+        "tonalRamp": ["#36383a", "#4d4f52", "#6b6e72", "#8a8d92", "#aeb1b6", "#cdd0d4", "#e3e5e8", "#F2F3F5"]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Page titles and largest headings (28px, fixed; ceiling 36px)." },
+      "title": { "displayName": "Title", "purpose": "Card titles, panel headers, primary list-item labels (15px/600)." },
+      "body": { "displayName": "Body", "purpose": "Default UI and prose (14px/400, line-height 1.5)." },
+      "label": { "displayName": "Label", "purpose": "Eyebrows, badges, status chips (11px/600, tracking 0.04em, often uppercase)." },
+      "mono": { "displayName": "Mono", "purpose": "Terminal, code, paths, hashes — machine voice (JetBrains Mono)." }
+    },
+    "shadows": [
+      { "name": "shadow-1", "value": "0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06)", "purpose": "Resting cards — LIGHT themes only." },
+      { "name": "shadow-2", "value": "0 4px 12px rgba(0,0,0,0.10), 0 2px 4px rgba(0,0,0,0.06)", "purpose": "Menus, popovers — LIGHT themes only." },
+      { "name": "shadow-3", "value": "0 8px 24px rgba(0,0,0,0.12), 0 4px 8px rgba(0,0,0,0.08)", "purpose": "Dialogs — LIGHT themes only. Dark themes use tonal layering instead." }
+    ],
+    "motion": [
+      { "name": "motion-hover", "value": "120ms ease", "purpose": "Hover color/background transitions." },
+      { "name": "motion-press", "value": "80ms", "purpose": "Active press scale (transform: scale(0.97))." },
+      { "name": "motion-pulse", "value": "2s ease-in-out infinite", "purpose": "AI-active beacon and starting-status dot opacity pulse." }
+    ],
+    "breakpoints": []
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The single saturated action button; one per context.",
+      "html": "<button class=\"ds-btn-primary\">Start workspace</button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 32px; padding: 0 12px; border: none; border-radius: 8px; font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: 12px; font-weight: 500; line-height: 1.2; color: #fff; background: var(--color-accent, #3B82F6); cursor: pointer; transition: background 120ms ease, transform 80ms; } .ds-btn-primary:hover { background: var(--color-accent-hover, #60A5FA); } .ds-btn-primary:active { transform: scale(0.97); } .ds-btn-primary:focus-visible { outline: 2px solid var(--color-accent, #3B82F6); outline-offset: 2px; }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Default for secondary actions; hairline appears on hover.",
+      "html": "<button class=\"ds-btn-ghost\">Cancel</button>",
+      "css": ".ds-btn-ghost { display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 32px; padding: 0 12px; border: 1px solid transparent; border-radius: 8px; font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: 12px; font-weight: 500; line-height: 1.2; color: var(--color-text-secondary, rgba(242,243,245,0.6)); background: transparent; cursor: pointer; transition: background 120ms ease, transform 80ms; } .ds-btn-ghost:hover { border-color: var(--color-border-strong, rgba(255,255,255,0.14)); color: var(--color-text-primary, #F2F3F5); } .ds-btn-ghost:active { transform: scale(0.97); } .ds-btn-ghost:focus-visible { outline: 2px solid var(--color-accent, #3B82F6); outline-offset: 2px; }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Standard field; focus shows accent border + 3px subtle glow.",
+      "html": "<input class=\"ds-input\" type=\"text\" placeholder=\"Project name\" />",
+      "css": ".ds-input { display: block; width: 220px; height: 32px; padding: 0 10px; border-radius: 8px; font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: 14px; color: var(--color-text-primary, #F2F3F5); background: var(--color-surface-elevated, #383A40); border: 1px solid var(--color-border, rgba(255,255,255,0.08)); transition: border-color 120ms ease, box-shadow 120ms ease; } .ds-input::placeholder { color: var(--color-text-tertiary, rgba(242,243,245,0.38)); } .ds-input:focus { outline: none; border-color: var(--color-accent, #3B82F6); box-shadow: 0 0 0 3px var(--color-accent-subtle, rgba(59,130,246,0.12)); }"
+    },
+    {
+      "name": "AI Signal Badge",
+      "kind": "chip",
+      "refersTo": "badge-ai",
+      "description": "Pulsing beacon shown when an agent is waiting for input.",
+      "html": "<span class=\"ds-badge-ai\">AI</span>",
+      "css": ".ds-badge-ai { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 9999px; font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: 11px; font-weight: 600; color: #fff; background: var(--color-accent, #3B82F6); white-space: nowrap; animation: ds-pulse 2s ease-in-out infinite; } @keyframes ds-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } } @media (prefers-reduced-motion: reduce) { .ds-badge-ai { animation: none; } }"
+    },
+    {
+      "name": "Status Badge (Running)",
+      "kind": "chip",
+      "refersTo": "badge-status",
+      "description": "Status pill: 12% tint + matching text + dot. Never color alone.",
+      "html": "<span class=\"ds-badge-status\"><span class=\"ds-badge-dot\"></span>Running</span>",
+      "css": ".ds-badge-status { display: inline-flex; align-items: center; gap: 5px; height: 18px; padding: 0 6px; border-radius: 9999px; font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: 11px; font-weight: 600; white-space: nowrap; color: var(--color-success, #22C55E); background: var(--color-success-subtle, rgba(34,197,94,0.12)); } .ds-badge-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--color-success, #22C55E); }"
+    },
+    {
+      "name": "Project Sidebar Item",
+      "kind": "nav",
+      "refersTo": "sidebar-project-item",
+      "description": "Signature nav row. Active/AI state marked by a ::before pill, never a border-left stripe.",
+      "html": "<a class=\"ds-nav-item ds-nav-item--active\"><span class=\"ds-nav-avatar\">OC</span><span class=\"ds-nav-label\">Opus Command</span><span class=\"ds-nav-dot\"></span></a>",
+      "css": ".ds-nav-item { position: relative; display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 10px 0 12px; border-radius: 8px; color: var(--color-text-secondary, rgba(242,243,245,0.6)); text-decoration: none; cursor: pointer; transition: background 120ms ease; } .ds-nav-item::before { content: ''; position: absolute; left: 0; top: 50%; width: 3px; height: 0; transform: translateY(-50%); border-radius: 9999px; background: var(--color-accent, #3B82F6); transition: height 120ms ease; } .ds-nav-item:hover { background: var(--color-surface, #313338); } .ds-nav-item--active { background: var(--color-surface, #313338); color: var(--color-text-primary, #F2F3F5); } .ds-nav-item--active::before { height: 18px; } .ds-nav-avatar { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 8px; background: var(--color-surface-overlay, #404249); font-size: 11px; font-weight: 600; color: rgba(255,255,255,0.95); flex-shrink: 0; } .ds-nav-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; } .ds-nav-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--color-success, #22C55E); flex-shrink: 0; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Calm Cockpit",
+    "overview": "Opus Command is dark-grade instrumentation you sit at for hours. At rest it is quiet, dense, and almost monochrome — a near-black control surface where the terminal and the active work are the only things asking for attention. When a workspace needs you, an agent goes idle, or a session reconnects, the surface lights up precisely at that one point and nothing else moves. The craft is the gap between calm and signal: the calmer the resting state, the louder a single accent dot reads. It is product UI in service of a power user — a Discord/Linear-class app shell with standard controls and a restrained scale — where personality is concentrated in the indicators and the micro-interactions on repeated actions, not painted across surfaces. The accent belongs to the active theme (blue by default, mauve in Catppuccin); what stays constant is the rule, not the hue.",
+    "keyCharacteristics": [
+      "Dark-first, low-chroma resting state; depth from tonal layering, not shadow.",
+      "One accent, theme-scoped, spent only on action / selection / focus / live state.",
+      "Dense but legible: 11–28px type scale on a 4px spacing grid, comfortable for long sessions.",
+      "Multi-theme by architecture: every color is a token; six themes ship.",
+      "Motion is allowed to be fun but always optional and never in the way; prefers-reduced-motion honored."
+    ],
+    "rules": [
+      { "name": "The Theme Signal Rule", "body": "The accent is the active theme's accent token, not a fixed brand color. Spend it only where it means something — primary action, current selection, focus, live AI activity, loading, feedback motion. If the accent decorates a non-interactive, non-active surface, it's wrong.", "section": "colors" },
+      { "name": "The Tonal Depth Rule", "body": "Elevation is built by stepping the slate ramp (background → surface → surface-elevated → surface-overlay), not by shadow. On dark themes, shadows are none.", "section": "colors" },
+      { "name": "The No Color-Alone Rule", "body": "Status is never conveyed by hue alone — every status color rides with a dot, glyph, or label.", "section": "colors" },
+      { "name": "The One-Family Rule", "body": "Inter does all UI work; JetBrains Mono does all machine work. No third UI face, no display font in labels.", "section": "typography" },
+      { "name": "The Fixed-Scale Rule", "body": "Type sizes are fixed px steps, not clamp(). Users sit at consistent DPI.", "section": "typography" },
+      { "name": "The Light-By-Color Rule", "body": "Dark themes never use shadow for elevation — step the slate ramp. Reserve shadow for light themes, where it is structural.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do spend the accent only on action, selection, focus, and live state. Keep the resting screen near-monochrome so a single lit dot reads loudly.",
+      "Do build elevation from the slate ramp on dark themes; shadows stay none.",
+      "Do keep every color a token so new surfaces theme cleanly across all six themes.",
+      "Do pair every status color with a dot, glyph, or label.",
+      "Do keep body text at text-primary or text-secondary; verify ≥4.5:1 (3:1 for ≥18px/bold).",
+      "Do let micro-interactions be playful but route every one through a prefers-reduced-motion alternative.",
+      "Do use Inter for UI and JetBrains Mono for machine output; keep the sans-vs-mono contrast."
+    ],
+    "donts": [
+      "Don't build the cloud-IDE / cPanel kitchen sink — no nested panels, tabs-inside-tabs, or chrome competing with the terminal.",
+      "Don't drift toward lifeless gray enterprise admin density.",
+      "Don't reach for gradient-AI SaaS tropes: no purple gradients, no glassmorphism-by-default, no hero-metric template, no gradient text.",
+      "Don't use a border-left/border-right colored stripe to mark active or alert states — use the ::before pill, a background wash, or a leading dot.",
+      "Don't put body text on text-dim (22%) or use it for placeholders; it fails contrast.",
+      "Don't add shadows on dark themes, or introduce a third UI font / a display face in labels.",
+      "Don't let motion gate content visibility or demand attention."
+    ]
+  }
+}

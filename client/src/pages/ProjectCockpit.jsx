@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -44,21 +45,52 @@ const FILE_COLORS = {
   gif: '#b088f0', svg: '#ffb13b', webp: '#b088f0',
 };
 
+/* Context menu rendered to document.body so it escapes the file-tree's
+   backdrop-filter / overflow:hidden, and clamped to stay on-screen. */
+function ContextMenuPortal({ x, y, className, children, ...rest }) {
+  const ref = useRef(null);
+  const [pos, setPos] = useState({ left: x, top: y });
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    let left = x, top = y;
+    if (left + r.width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - r.width - 8);
+    if (top + r.height > window.innerHeight - 8) top = Math.max(8, window.innerHeight - r.height - 8);
+    setPos({ left, top });
+  }, [x, y]);
+  return createPortal(
+    <div ref={ref} className={className} style={{ position: 'fixed', left: pos.left, top: pos.top }} role="menu" {...rest}>
+      {children}
+    </div>,
+    document.body
+  );
+}
+
 function FileIcon({ name, isDir, open }) {
   if (isDir) {
     return (
-      <svg className="fi-icon fi-dir" viewBox="0 0 16 16" fill="currentColor">
-        {open
-          ? <path d="M1.5 3a.5.5 0 0 0-.5.5v9a.5.5 0 0 0 .5.5h13a.5.5 0 0 0 .5-.5V6a.5.5 0 0 0-.5-.5H7.621a.5.5 0 0 1-.44-.265L6.161 3.5H1.5z"/>
-          : <path d="M.54 3.87.5 3a2 2 0 0 1 2-2h3.672a2 2 0 0 1 1.414.586l.828.828A2 2 0 0 0 9.828 3h3.982a2 2 0 0 1 1.992 2.181L15.546 12a2 2 0 0 1-1.992 1.819H1.546a2 2 0 0 1-1.992-1.82L.54 3.87z"/>}
+      <svg className="fi-icon fi-dir" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        {/* back tab (deeper shade) */}
+        <path d="M1.4 4.1A1.5 1.5 0 0 1 2.9 2.6h2.7c.4 0 .78.16 1.06.44l1.06 1.06H13a1.5 1.5 0 0 1 1.5 1.5v.7H1.4V4.1Z" fill="currentColor" opacity="0.55"/>
+        {/* front body */}
+        <path d="M1.4 5.9h13.2v5A1.5 1.5 0 0 1 13.1 12.4H2.9A1.5 1.5 0 0 1 1.4 10.9V5.9Z" fill="currentColor"/>
+        {/* glossy top edge */}
+        <path d="M1.4 5.9h13.2v1.0H1.4z" fill="#ffffff" opacity="0.26"/>
+        {open && <path d="M3 12.4l1.3-3.0a1 1 0 0 1 .92-.6H15l-1.25 2.9a1.5 1.5 0 0 1-1.38.9H3Z" fill="currentColor" opacity="0.85"/>}
       </svg>
     );
   }
   const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
-  const color = FILE_COLORS[ext] || '#888';
+  const color = FILE_COLORS[ext] || '#9aa0aa';
   return (
-    <svg className="fi-icon fi-file" viewBox="0 0 16 16" style={{ color }} fill="currentColor">
-      <path d="M4 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V4.707A1 1 0 0 0 13.707 4L10 .293A1 1 0 0 0 9.293 0H4zm5.5 1.5v2a1 1 0 0 0 1 1h2l-3-3z"/>
+    <svg className="fi-icon fi-file" viewBox="0 0 16 16" style={{ color }} fill="none" aria-hidden="true">
+      {/* body */}
+      <path d="M3.4 1.4h5.5L13 5.5V13a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 3 13V2.9A1.5 1.5 0 0 1 3.4 1.4Z" fill="currentColor"/>
+      {/* folded corner highlight */}
+      <path d="M8.9 1.4 13 5.5H9.7a.8.8 0 0 1-.8-.8V1.4Z" fill="#ffffff" opacity="0.42"/>
+      {/* top gloss */}
+      <path d="M4.5 1.4h4.4v0.9H4.5z" fill="#ffffff" opacity="0.16"/>
     </svg>
   );
 }
@@ -1130,6 +1162,8 @@ function TasksPanel({
   onSectionDraftChange,
   onAddTask,
   onAddSection,
+  onDeleteSection,
+  onRenameSection,
   onToggleTask,
   onDeleteTask,
   onEditTask,
@@ -1142,6 +1176,18 @@ function TasksPanel({
 }) {
   const planningFiles = collectPlanningMarkdownFiles(planningTree);
   const completedTasks = tasks.filter(t => t.completed);
+
+  const [editingSectionId, setEditingSectionId] = useState(null);
+  const [sectionTitleDraft, setSectionTitleDraft] = useState('');
+
+  function startRename(section) {
+    setSectionTitleDraft(section.title);
+    setEditingSectionId(section.id);
+  }
+  function commitRename(sectionId) {
+    if (sectionTitleDraft.trim()) onRenameSection(sectionId, sectionTitleDraft);
+    setEditingSectionId(null);
+  }
 
   function submitTask(e) {
     e.preventDefault();
@@ -1171,24 +1217,16 @@ function TasksPanel({
           className="task-input"
           value={taskDraft}
           onChange={e => onDraftChange(e.target.value)}
-          placeholder="Add task"
+          placeholder="Add a task…"
+          aria-label="Add a task"
         />
-        <button className="btn btn-primary" type="submit">Add</button>
-      </form>
-
-      <form className="task-add-row" onSubmit={submitSection}>
-        <input
-          className="task-input"
-          value={taskSectionDraft}
-          onChange={e => onSectionDraftChange(e.target.value)}
-          placeholder="Add section"
-        />
-        <button className="btn btn-ghost" type="submit">Section</button>
+        <button className="btn btn-primary" type="submit" disabled={!taskDraft.trim()}>Add</button>
       </form>
 
       <div className="task-sections">
         {taskSections.map(section => {
           const sectionTasks = tasks.filter(t => !t.completed && (t.sectionId || DEFAULT_TASK_SECTION_ID) === section.id);
+          const isDefault = section.id === DEFAULT_TASK_SECTION_ID;
           return (
             <section
               key={section.id}
@@ -1197,11 +1235,54 @@ function TasksPanel({
               onDrop={e => handleDrop(e, section.id)}
             >
               <div className="task-section-header">
-                <span>{section.title}</span>
+                {editingSectionId === section.id ? (
+                  <input
+                    className="task-section-title-input"
+                    value={sectionTitleDraft}
+                    autoFocus
+                    aria-label="Section name"
+                    onChange={e => setSectionTitleDraft(e.target.value)}
+                    onBlur={() => commitRename(section.id)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') { e.preventDefault(); commitRename(section.id); }
+                      if (e.key === 'Escape') setEditingSectionId(null);
+                    }}
+                  />
+                ) : (
+                  <span
+                    className="task-section-title"
+                    title="Double-click to rename"
+                    onDoubleClick={() => startRename(section)}
+                  >
+                    {section.title}
+                  </span>
+                )}
                 <span className="task-count">{sectionTasks.length}</span>
+                <button
+                  type="button"
+                  className="task-section-edit"
+                  title="Rename section"
+                  aria-label={`Rename section ${section.title}`}
+                  onClick={() => startRename(section)}
+                >
+                  ✎
+                </button>
+                {!isDefault && (
+                  <button
+                    type="button"
+                    className="task-section-delete"
+                    title="Delete section (tasks move to Open)"
+                    aria-label={`Delete section ${section.title}`}
+                    onClick={() => onDeleteSection(section.id)}
+                  >
+                    ×
+                  </button>
+                )}
               </div>
               <div className="task-list">
-                {sectionTasks.length === 0 && <p className="panel-hint">Drop tasks here.</p>}
+                {sectionTasks.length === 0 && (
+                  <p className="task-empty">{isDefault ? 'No tasks yet' : 'Drag tasks here'}</p>
+                )}
                 {sectionTasks.map(task => (
                   <TaskRow
                     key={task.id}
@@ -1219,10 +1300,21 @@ function TasksPanel({
         })}
       </div>
 
+      <form className="task-add-section" onSubmit={submitSection}>
+        <input
+          className="task-input task-input-sm"
+          value={taskSectionDraft}
+          onChange={e => onSectionDraftChange(e.target.value)}
+          placeholder="New section…"
+          aria-label="Add a section"
+        />
+        <button className="btn btn-ghost" type="submit" disabled={!taskSectionDraft.trim()}>+ Section</button>
+      </form>
+
       <div className="task-completed-section">
         <button className="task-completed-toggle" type="button" onClick={onToggleCompleted}>
-          <span>{completedOpen ? '▾' : '▸'}</span>
-          <span>Completed tasks</span>
+          <span className="task-completed-caret">{completedOpen ? '▾' : '▸'}</span>
+          <span>Completed</span>
           <span className="task-count">{completedTasks.length}</span>
         </button>
         {completedOpen && (
@@ -1734,6 +1826,23 @@ export default function ProjectCockpit() {
     if (!title) return;
     updateTaskSections(prev => [...prev, { id: makeTaskSectionId(), title }]);
     setTaskSectionDraft('');
+  }
+
+  function deleteTaskSection(sectionId) {
+    if (sectionId === DEFAULT_TASK_SECTION_ID) return;
+    // Don't lose tasks — move them back to the default "Open" section.
+    updateTasks(prev => prev.map(task => (
+      task.sectionId === sectionId ? { ...task, sectionId: DEFAULT_TASK_SECTION_ID } : task
+    )));
+    updateTaskSections(prev => prev.filter(section => section.id !== sectionId));
+  }
+
+  function renameTaskSection(sectionId, title) {
+    const clean = title.trim();
+    if (!clean) return;
+    updateTaskSections(prev => prev.map(section => (
+      section.id === sectionId ? { ...section, title: clean } : section
+    )));
   }
 
   function toggleTask(id) {
@@ -2322,10 +2431,6 @@ export default function ProjectCockpit() {
         <div className="filetree-header">
           {!treeCollapsed && <span className="filetree-title">FILES</span>}
           <div className="filetree-actions">
-            {!treeCollapsed && <>
-              <button className="ft-btn ft-icon-btn" title="Upload to Project Files" aria-label="Upload to Project Files" onClick={() => triggerUpload('', 'Project Files')}><UploadIcon /></button>
-              <button className="ft-btn ft-icon-btn" title="Upload to Planning Files" aria-label="Upload to Planning Files" onClick={() => triggerUpload('.planning', 'Planning Files')}><UploadIcon /></button>
-            </>}
             <button className="ft-btn ft-collapse-btn" title={treeCollapsed ? 'Expand files' : 'Collapse files'} onClick={() => setTreeCollapsed(c => !c)}>
               {treeCollapsed ? '›' : '‹'}
             </button>
@@ -2357,6 +2462,7 @@ export default function ProjectCockpit() {
               <div className="filetree-section-actions">
                 <button className="ft-btn ft-icon-btn" title="New planning file" aria-label="New planning file" onClick={() => createInPath('.planning', 'file')}><NewFileIcon /></button>
                 <button className="ft-btn ft-icon-btn" title="New planning folder" aria-label="New planning folder" onClick={() => createInPath('.planning', 'dir')}><NewFolderIcon /></button>
+                <button className="ft-btn ft-icon-btn" title="Upload to Planning Files" aria-label="Upload to Planning Files" onClick={() => triggerUpload('.planning', 'Planning Files')}><UploadIcon /></button>
               </div>
             </div>
             {planningTree.length === 0 && <p className="filetree-empty filetree-empty-section">Empty</p>}
@@ -2389,6 +2495,7 @@ export default function ProjectCockpit() {
               <div className="filetree-section-actions">
                 <button className="ft-btn ft-icon-btn" title="New project file" aria-label="New project file" onClick={() => createInPath('', 'file')}><NewFileIcon /></button>
                 <button className="ft-btn ft-icon-btn" title="New project folder" aria-label="New project folder" onClick={() => createInPath('', 'dir')}><NewFolderIcon /></button>
+                <button className="ft-btn ft-icon-btn" title="Upload to Project Files" aria-label="Upload to Project Files" onClick={() => triggerUpload('', 'Project Files')}><UploadIcon /></button>
               </div>
             </div>
             {tree.length === 0 && <p className="filetree-empty filetree-empty-section">Empty project</p>}
@@ -2581,6 +2688,8 @@ export default function ProjectCockpit() {
                 onSectionDraftChange={setTaskSectionDraft}
                 onAddTask={addTask}
                 onAddSection={addTaskSection}
+                onDeleteSection={deleteTaskSection}
+                onRenameSection={renameTaskSection}
                 onToggleTask={toggleTask}
                 onDeleteTask={deleteTask}
                 onEditTask={setEditingTaskId}
@@ -2605,10 +2714,10 @@ export default function ProjectCockpit() {
       />
 
       {fileContextMenu && (
-        <div
+        <ContextMenuPortal
+          x={fileContextMenu.x}
+          y={fileContextMenu.y}
           className="context-menu"
-          style={{ top: fileContextMenu.y, left: fileContextMenu.x }}
-          role="menu"
           onClick={e => e.stopPropagation()}
           onContextMenu={e => {
             e.preventDefault();
@@ -2636,7 +2745,7 @@ export default function ProjectCockpit() {
           {fileContextMenu.node?.type !== 'dir' && fileContextMenu.node && <button role="menuitem" onClick={() => handleFileContextAction('download')}>Download</button>}
           {fileContextMenu.node && !isPlanningRootNode(fileContextMenu.node) && <div className="context-separator" />}
           {fileContextMenu.node && !isPlanningRootNode(fileContextMenu.node) && <button role="menuitem" className="context-danger" onClick={() => handleFileContextAction('delete')}>Delete</button>}
-        </div>
+        </ContextMenuPortal>
       )}
 
       {renameDialog && (

@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { getNotificationSocket } from '../context/NotificationsContext';
@@ -272,6 +273,7 @@ function AvatarPickerForm({ project, csrfToken, onSaved, onClose }) {
 /* ── Context menu ───────────────────────────────── */
 function ProjectContextMenu({ project, position, onClose, onOpenAvatar, navigate }) {
   const ref = useRef(null);
+  const [pos, setPos] = useState({ left: position.x, top: position.y });
   useEffect(() => {
     function down(e) { if (ref.current && !ref.current.contains(e.target)) onClose(); }
     function key(e)  { if (e.key === 'Escape') onClose(); }
@@ -280,16 +282,28 @@ function ProjectContextMenu({ project, position, onClose, onOpenAvatar, navigate
     return () => { document.removeEventListener('mousedown', down); document.removeEventListener('keydown', key); };
   }, []);
 
+  // Keep the menu inside the viewport (flip/clamp near edges).
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    let left = position.x, top = position.y;
+    if (left + r.width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - r.width - 8);
+    if (top + r.height > window.innerHeight - 8) top = Math.max(8, window.innerHeight - r.height - 8);
+    setPos({ left, top });
+  }, [position.x, position.y]);
+
   function go(path) { navigate(path); onClose(); }
 
-  return (
-    <div ref={ref} className="project-context-menu" style={{ top: position.y, left: position.x }} role="menu">
+  return createPortal(
+    <div ref={ref} className="project-context-menu" style={{ left: pos.left, top: pos.top }} role="menu">
       <button role="menuitem" onClick={() => go(`/project/${project.id}`)}>Open</button>
       <button role="menuitem" onClick={() => go(`/project/${project.id}?tab=settings`)}>Workspace &amp; Logs</button>
       <button role="menuitem" onClick={() => go(`/project/${project.id}?tab=git`)}>Git</button>
       <div className="context-separator" />
       <button role="menuitem" onClick={() => { onOpenAvatar(); onClose(); }}>Change Avatar</button>
-    </div>
+    </div>,
+    document.body
   );
 }
 

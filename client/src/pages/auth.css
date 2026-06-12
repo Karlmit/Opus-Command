@@ -1,23 +1,46 @@
 .auth-screen {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
   min-height: 100vh;
   background: var(--color-background);
   padding: var(--spacing-lg);
+  overflow: hidden;
+  isolation: isolate;
+}
+
+/* Ambient accent glow — the same light the rest of the app sits in. */
+.auth-screen::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(40% 40% at 30% 18%,
+      color-mix(in srgb, var(--color-accent) 26%, transparent) 0%, transparent 62%),
+    radial-gradient(38% 38% at 72% 88%,
+      color-mix(in srgb, var(--color-accent) 18%, transparent) 0%, transparent 60%);
 }
 
 .auth-card {
   width: 100%;
-  max-width: 360px;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-xl);
+  max-width: 380px;
+  background: color-mix(in srgb, var(--color-surface) 72%, transparent);
+  -webkit-backdrop-filter: blur(24px) saturate(1.5);
+  backdrop-filter: blur(24px) saturate(1.5);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-2xl);
   padding: var(--spacing-2xl);
   display: flex;
   flex-direction: column;
   gap: var(--spacing-xl);
-  box-shadow: var(--shadow-2);
+  box-shadow: 0 24px 60px -24px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.06);
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .auth-card { background: var(--color-surface); }
 }
 
 .auth-wordmark {

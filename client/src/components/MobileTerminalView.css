@@ -12,7 +12,7 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: #0f1117;
+  background: var(--color-terminal-bg);
 }
 
 /* ── Status label ── */
@@ -25,20 +25,20 @@
   font-family: 'IBM Plex Mono', ui-monospace, monospace;
   font-size: 11px;
   letter-spacing: 0.02em;
-  color: rgba(226, 232, 240, 0.6);
-  background: #11151d;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  color: color-mix(in srgb, var(--color-terminal-text) 60%, transparent);
+  background: color-mix(in srgb, var(--color-terminal-bg) 90%, var(--color-terminal-text));
+  border-bottom: 1px solid var(--color-border);
 }
 .mtv-status-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: rgba(148, 163, 184, 0.6);
+  background: color-mix(in srgb, var(--color-terminal-text) 45%, transparent);
   flex-shrink: 0;
 }
-.mtv-status-live .mtv-status-dot { background: #34d399; }
-.mtv-status-dead { color: #f87171; }
-.mtv-status-dead .mtv-status-dot { background: #f87171; }
+.mtv-status-live .mtv-status-dot { background: var(--color-success); }
+.mtv-status-dead { color: var(--color-error); }
+.mtv-status-dead .mtv-status-dot { background: var(--color-error); }
 
 /* ── Output scroll area ── */
 .mtv-output {
@@ -51,7 +51,7 @@
   font-family: 'Cascadia Mono', 'JetBrains Mono', ui-monospace, monospace;
   font-size: 12.5px;
   line-height: 1.55;
-  color: #e2e8f0;
+  color: var(--color-terminal-text);
   word-break: break-all;
   white-space: pre-wrap;
 }
@@ -66,13 +66,13 @@
 
 .mtv-notice {
   padding: 16px 0 8px;
-  color: rgba(226, 232, 240, 0.4);
+  color: color-mix(in srgb, var(--color-terminal-text) 40%, transparent);
   font-size: 12px;
   text-align: center;
 }
 
 .mtv-notice-dead {
-  color: #f87171;
+  color: var(--color-error);
 }
 
 /* ── Jump to bottom button ── */
@@ -80,8 +80,8 @@
   position: absolute;
   bottom: calc(var(--mtv-input-height, 96px) + 10px);
   right: 12px;
-  background: rgba(59, 130, 246, 0.9);
-  color: #fff;
+  background: color-mix(in srgb, var(--color-accent) 90%, transparent);
+  color: var(--color-on-accent);
   border: none;
   border-radius: 20px;
   padding: 6px 14px;
@@ -96,8 +96,8 @@
 /* ── Input bar ── */
 .mtv-input-bar {
   flex-shrink: 0;
-  background: #161b26;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: color-mix(in srgb, var(--color-terminal-bg) 85%, var(--color-terminal-text));
+  border-top: 1px solid var(--color-border);
   padding: 6px 8px env(safe-area-inset-bottom, 0px);
 }
 
@@ -116,10 +116,10 @@
   flex-shrink: 0;
   height: 34px;
   padding: 0 12px;
-  background: rgba(255, 255, 255, 0.07);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: color-mix(in srgb, var(--color-terminal-text) 7%, transparent);
+  border: 1px solid var(--color-border-strong);
   border-radius: 6px;
-  color: #cbd5e1;
+  color: color-mix(in srgb, var(--color-terminal-text) 80%, transparent);
   font-size: 12px;
   font-family: 'IBM Plex Mono', ui-monospace, monospace;
   cursor: pointer;
@@ -127,7 +127,7 @@
   -webkit-tap-highlight-color: transparent;
   transition: background 100ms;
 }
-.mtv-qkey:active { background: rgba(59, 130, 246, 0.25); border-color: rgba(59, 130, 246, 0.5); }
+.mtv-qkey:active { background: var(--color-accent-subtle); border-color: color-mix(in srgb, var(--color-accent) 50%, transparent); }
 
 /* Command input row */
 .mtv-input-row {
@@ -138,10 +138,10 @@
 
 .mtv-textarea {
   flex: 1;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: color-mix(in srgb, var(--color-terminal-text) 6%, transparent);
+  border: 1px solid var(--color-border-strong);
   border-radius: 8px;
-  color: #f1f5f9;
+  color: var(--color-terminal-text);
   font-family: 'Cascadia Mono', ui-monospace, monospace;
   font-size: 14px;
   line-height: 1.5;
@@ -154,19 +154,19 @@
 }
 .mtv-textarea:focus {
   outline: none;
-  border-color: rgba(59, 130, 246, 0.5);
-  background: rgba(255, 255, 255, 0.08);
+  border-color: color-mix(in srgb, var(--color-accent) 50%, transparent);
+  background: color-mix(in srgb, var(--color-terminal-text) 9%, transparent);
 }
-.mtv-textarea::placeholder { color: rgba(241, 245, 249, 0.3); }
+.mtv-textarea::placeholder { color: color-mix(in srgb, var(--color-terminal-text) 62%, transparent); }
 
 .mtv-send {
   flex-shrink: 0;
   height: 40px;
   padding: 0 18px;
-  background: var(--color-accent, #3b82f6);
+  background: var(--color-accent);
   border: none;
   border-radius: 8px;
-  color: #fff;
+  color: var(--color-on-accent);
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;

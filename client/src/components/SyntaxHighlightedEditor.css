@@ -52,8 +52,8 @@
 }
 
 .syntax-editor .syntax-editor-textarea::placeholder {
-  color: var(--color-text-tertiary);
-  -webkit-text-fill-color: var(--color-text-tertiary);
+  color: var(--color-text-placeholder);
+  -webkit-text-fill-color: var(--color-text-placeholder);
 }
 
 .syntax-line {

@@ -14,6 +14,8 @@ export const THEMES = [
     swatch: ['#2B2D31', '#383A40', '#3B82F6', '#F2F3F5'] },
   { id: 'opus-light', label: 'Opus Light', group: 'Opus', mode: 'light',
     swatch: ['#F5F5F6', '#FFFFFF', '#3B82F6', '#0D0D0E'] },
+  { id: 'opus-purple', label: 'Opus Purple', group: 'Opus', mode: 'dark',
+    swatch: ['#16121F', '#2A2240', '#8B5CF6', '#ECE8F8'] },
   { id: 'catppuccin-latte',     label: 'Latte',     group: 'Catppuccin', mode: 'light',
     swatch: ['#e6e9ef', '#ffffff', '#8839ef', '#4c4f69'] },
   { id: 'catppuccin-frappe',    label: 'Frappé',    group: 'Catppuccin', mode: 'dark',

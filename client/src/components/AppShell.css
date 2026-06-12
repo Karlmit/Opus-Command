@@ -1,8 +1,27 @@
 .app-shell {
+  position: relative;
   display: flex;
   height: 100dvh;
   overflow: hidden;
   background: var(--color-background);
+  isolation: isolate;
+}
+
+/* Ambient accent glow — gives the glass chrome something to refract.
+   Theme-owned color; subtle by default (tune via --ambient-strength). */
+.app-shell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(48% 48% at 4% 2%,
+      color-mix(in srgb, var(--color-accent) calc(var(--ambient-strength) * 100%), transparent) 0%,
+      transparent 60%),
+    radial-gradient(42% 42% at 98% 100%,
+      color-mix(in srgb, var(--color-accent) calc(var(--ambient-strength) * 65%), transparent) 0%,
+      transparent 58%);
 }
 
 .app-body {

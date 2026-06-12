@@ -40,17 +40,19 @@
   line-height: var(--leading-normal);
 }
 
-.toast-success {
-  border-left: 3px solid var(--color-success);
+/* Leading status dot — replaces side-stripe borders, matches badge-status-dot vocabulary */
+.toast::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--color-text-tertiary);
 }
 
-.toast-error {
-  border-left: 3px solid var(--color-error);
-}
-
-.toast-info {
-  border-left: 3px solid var(--color-accent);
-}
+.toast-success::before { background: var(--color-success); }
+.toast-error::before { background: var(--color-error); }
+.toast-info::before { background: var(--color-accent); }
 
 .toast-close {
   background: none;

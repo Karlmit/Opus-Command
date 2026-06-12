@@ -10,7 +10,11 @@
 .cockpit-filetree {
   width: 220px;
   min-width: 220px;
-  background: var(--color-surface);
+  /* Translucent glass so the ambient accent glow bleeds across the tree,
+     matching the chrome (sidebar / tab strip). */
+  background: color-mix(in srgb, var(--color-surface) 52%, transparent);
+  -webkit-backdrop-filter: blur(20px) saturate(1.5);
+  backdrop-filter: blur(20px) saturate(1.5);
   border-right: 1px solid var(--color-border);
   display: flex;
   flex-direction: column;
@@ -18,6 +22,10 @@
   flex-shrink: 0;
   transition: width 150ms ease, min-width 150ms ease;
   position: relative;
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .cockpit-filetree { background: var(--color-surface); }
 }
 
 .cockpit-filetree.resizing {
@@ -41,7 +49,7 @@
 
 .filetree-resize-handle:hover,
 .cockpit-filetree.resizing .filetree-resize-handle {
-  background: rgba(59, 130, 246, 0.22);
+  background: color-mix(in srgb, var(--color-accent) 22%, transparent);
 }
 
 .filetree-header {
@@ -181,11 +189,15 @@
 }
 
 .file-node:hover { background: var(--color-surface-elevated); color: var(--color-text-primary); }
-.file-node.active { background: rgba(59,130,246,0.12); color: var(--color-text-primary); }
-.file-node.marked {
-  background: rgba(59,130,246,0.18);
+.file-node.active {
+  background: color-mix(in srgb, var(--color-accent) 13%, transparent);
   color: var(--color-text-primary);
-  box-shadow: inset 2px 0 0 var(--color-accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 24%, transparent);
+}
+.file-node.marked {
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  color: var(--color-text-primary);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 40%, transparent);
 }
 
 /* Chevron arrow for folders */
@@ -204,9 +216,24 @@
 
 /* SVG file / folder icon */
 .fi-icon {
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
   flex-shrink: 0;
+  /* subtle depth at rest */
+  filter: drop-shadow(0 1px 1.5px rgba(0,0,0,0.40));
+  transition: filter 160ms var(--ease-out-quint), transform 160ms var(--ease-out-quint);
+}
+/* subtle glow in the icon's own colour on hover / active — pop without shouting */
+.file-node:hover .fi-icon {
+  filter: drop-shadow(0 0 2px currentColor) drop-shadow(0 1px 1px rgba(0,0,0,0.35));
+  transform: scale(1.04);
+}
+.file-node.active .fi-icon {
+  filter: drop-shadow(0 0 1.5px currentColor) drop-shadow(0 1px 1px rgba(0,0,0,0.3));
+}
+@media (prefers-reduced-motion: reduce) {
+  .fi-icon { transition: none; }
+  .file-node:hover .fi-icon { transform: none; }
 }
 .fi-dir { color: #e8a838; }
 
@@ -379,41 +406,60 @@
   min-width: 0;
 }
 
-/* Tab bar */
+/* Tab bar — frosted chrome with soft pill tabs */
 .cockpit-tabs {
   display: flex;
   align-items: center;
-  background: var(--color-surface);
+  gap: 3px;
+  padding: 0 8px;
+  background: color-mix(in srgb, var(--color-surface) 66%, transparent);
+  -webkit-backdrop-filter: blur(20px) saturate(1.5);
+  backdrop-filter: blur(20px) saturate(1.5);
   border-bottom: 1px solid var(--color-border);
   overflow-x: auto;
   overflow-y: hidden;
   flex-shrink: 0;
   scrollbar-width: none;
-  min-height: 36px;
+  min-height: 40px;
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .cockpit-tabs { background: var(--color-surface); }
 }
 .cockpit-tabs::-webkit-scrollbar { display: none; }
 
 .cockpit-tab {
   display: flex;
   align-items: center;
-  gap: 5px;
-  height: 36px;
-  padding: 0 10px;
+  gap: 6px;
+  height: 28px;
+  padding: 0 9px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   color: var(--color-text-tertiary);
-  border-bottom: 2px solid transparent;
   white-space: nowrap;
   flex-shrink: 0;
   position: relative;
-  transition: color 100ms;
+  transition: color var(--motion-hover), background var(--motion-hover), box-shadow var(--motion-hover);
   font-size: var(--font-size-sm);
 }
 
-.cockpit-tab:hover { color: var(--color-text-secondary); background: var(--color-surface-elevated); }
-.cockpit-tab.active { color: var(--color-text-primary); border-bottom-color: var(--color-accent); }
-.cockpit-tab.ai-waiting { background: rgba(59,130,246,0.08); color: var(--color-text-secondary); }
-.cockpit-tab.ai-active  { border-left: 2px solid rgba(59,130,246,0.4); }
-.cockpit-tab.file-tab.active { border-bottom-color: var(--color-text-tertiary); }
+.cockpit-tab:hover { color: var(--color-text-primary); background: color-mix(in srgb, var(--color-surface) 55%, transparent); }
+.cockpit-tab.active {
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-accent) 15%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 28%, transparent);
+}
+.cockpit-tab.ai-waiting {
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+}
+.cockpit-tab.ai-active {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 30%, transparent);
+}
+.cockpit-tab.file-tab.active {
+  background: color-mix(in srgb, var(--color-accent) 13%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 24%, transparent);
+}
 
 .tab-icon { font-size: 12px; opacity: 0.6; }
 .term-icon { font-size: 14px; }
@@ -442,19 +488,20 @@
 .tab-close:hover { color: var(--color-text-primary); background: var(--color-surface-overlay); }
 
 .cockpit-new-term {
-  height: 36px;
-  padding: 0 10px;
+  height: 26px;
+  padding: 0 9px;
+  margin-left: 2px;
   background: none;
-  border: none;
-  border-left: 1px solid var(--color-border);
-  color: var(--color-text-dim);
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-md);
+  color: var(--color-text-tertiary);
   cursor: pointer;
   font-size: var(--font-size-xs);
   white-space: nowrap;
   flex-shrink: 0;
-  transition: color 120ms;
+  transition: color var(--motion-hover), border-color var(--motion-hover);
 }
-.cockpit-new-term:hover { color: var(--color-text-primary); }
+.cockpit-new-term:hover { color: var(--color-accent); border-color: var(--color-accent); }
 
 .tab-divider {
   width: 1px;
@@ -464,14 +511,16 @@
   flex-shrink: 0;
 }
 
-/* Content layer */
+/* Content layer — soft floating panes over the ambient app background.
+   The 8px padding is the inset; the resize handle is the gap between panes. */
 .cockpit-content {
   flex: 1;
   overflow: hidden;
   display: flex;
   flex-direction: column;
   position: relative;
-  background: var(--color-terminal-bg);
+  padding: 8px;
+  background: transparent;
 }
 
 .cockpit-content.file-split-active {
@@ -482,25 +531,45 @@
   cursor: col-resize;
 }
 
-/* Terminals always fill the content area — never hidden from layout */
+/* Terminals always fill the content area — never hidden from layout.
+   Lifted work surface: solid terminal-bg, soft corners, real drop shadow. */
 .terminals-layer {
   flex: 1;
   overflow: hidden;
   position: relative;
   min-width: 280px;
+  border-radius: var(--radius-lg);
+  background: var(--color-terminal-bg);
+  border: 1px solid var(--color-border-strong);
+  box-shadow: 0 14px 40px -18px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04);
 }
 
+/* Resize handle = the visual gap between terminal and editor (centre pill) */
 .file-panel-resize-handle {
-  width: 6px;
-  flex: 0 0 6px;
+  width: 8px;
+  flex: 0 0 8px;
   cursor: col-resize;
-  background: var(--color-border);
+  background: transparent;
+  position: relative;
   z-index: 12;
 }
-
-.file-panel-resize-handle:hover,
-.cockpit-content.resizing-file-panel .file-panel-resize-handle {
+.file-panel-resize-handle::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) scaleY(1);
+  transform-origin: center;
+  width: 3px;
+  height: 44px;
+  border-radius: var(--radius-full);
+  background: var(--color-border-strong);
+  transition: background var(--motion-hover), transform var(--motion-hover) var(--ease-out-quint);
+}
+.file-panel-resize-handle:hover::after,
+.cockpit-content.resizing-file-panel .file-panel-resize-handle::after {
   background: var(--color-accent);
+  transform: translate(-50%, -50%) scaleY(1.3);
 }
 
 .file-split-pane {
@@ -510,7 +579,9 @@
   flex-direction: column;
   overflow: hidden;
   background: var(--color-surface);
-  border-left: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 14px 40px -18px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04);
   z-index: 11;
 }
 
@@ -561,11 +632,15 @@
 /* Overlay: file editor / git / workspace panels — sit on top of terminals */
 .content-overlay {
   position: absolute;
-  inset: 0;
+  inset: 8px;
   z-index: 10;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 14px 40px -18px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04);
 }
 
 .terminal-reconnect-overlay {
@@ -574,7 +649,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(30,32,36,0.85);
+  background: color-mix(in srgb, var(--color-terminal-bg) 85%, transparent);
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
   font-family: var(--font-mono);
@@ -685,20 +760,25 @@
 .tabs-spacer { flex: 1; }
 
 .cockpit-panel-tab {
-  height: 36px;
-  padding: 0 12px;
+  height: 28px;
+  padding: 0 11px;
   background: none;
   border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--color-text-dim);
+  border-radius: var(--radius-md);
+  color: var(--color-text-tertiary);
   cursor: pointer;
   font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
   white-space: nowrap;
   flex-shrink: 0;
-  transition: color 100ms;
+  transition: color var(--motion-hover), background var(--motion-hover), box-shadow var(--motion-hover);
 }
-.cockpit-panel-tab:hover { color: var(--color-text-secondary); }
-.cockpit-panel-tab.active { color: var(--color-text-primary); border-bottom-color: var(--color-text-tertiary); }
+.cockpit-panel-tab:hover { color: var(--color-text-primary); background: color-mix(in srgb, var(--color-surface) 55%, transparent); }
+.cockpit-panel-tab.active {
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-accent) 15%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 28%, transparent);
+}
 
 /* Side panels (Git / Workspace) */
 .side-panel {
@@ -713,13 +793,24 @@
   width: 320px;
   min-width: 280px;
   max-width: min(420px, 42vw);
+  margin-left: 8px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--color-surface);
-  border-left: 1px solid var(--color-border);
+  /* Frosted glass so the ambient accent glow bleeds through, matching the
+     file tree and the rest of the chrome (not an opaque colour block). */
+  background: color-mix(in srgb, var(--color-surface) 60%, transparent);
+  -webkit-backdrop-filter: blur(20px) saturate(1.5);
+  backdrop-filter: blur(20px) saturate(1.5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 14px 40px -18px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04);
   flex-shrink: 0;
   z-index: 13;
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .tasks-drawer { background: var(--color-surface); }
 }
 
 .side-panel-header {
@@ -773,93 +864,197 @@
 
 .panel-loading { font-size: var(--font-size-sm); color: var(--color-text-tertiary); }
 
-/* Tasks */
+/* ── Tasks — a simple, polished checklist ───────────────── */
 .tasks-content {
-  gap: var(--spacing-sm);
+  gap: var(--spacing-md);
 }
 
-.task-add-row {
-  display: flex;
-  gap: var(--spacing-xs);
-  flex-shrink: 0;
+/* Add-task row (primary action) */
+.task-add-row { display: flex; gap: var(--spacing-sm); flex-shrink: 0; }
+.task-add-row .btn { height: 36px; flex-shrink: 0; }
+
+/* Soft accent buttons — a tonal tint (opaque accent-over-surface) carrying
+   primary text. Reads as the accent action via tint + border, but the label
+   is just text-primary on a near-surface background, so it stays ≥4.5:1 on
+   every theme and in both light/dark modes — unlike accent-coloured text,
+   which sits mid-luminance and can't pass on a dark surface. */
+.task-add-row .btn-primary,
+.task-add-section .btn-primary {
+  background: color-mix(in srgb, var(--color-accent) 12%, var(--color-surface));
+  color: var(--color-text-primary);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 48%, transparent);
+}
+.task-add-row .btn-primary:hover:not(:disabled),
+.task-add-section .btn-primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-accent) 16%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--color-accent) 66%, transparent);
+}
+.task-add-row .btn-primary:disabled,
+.task-add-section .btn-primary:disabled {
+  opacity: 0.5;
 }
 
 .task-input {
   flex: 1;
   min-width: 0;
-  height: 34px;
-  padding: 0 10px;
+  height: 36px;
+  padding: 0 12px;
   background: var(--color-surface-elevated);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   color: var(--color-text-primary);
   font: inherit;
   font-size: var(--font-size-sm);
   outline: none;
+  transition: border-color var(--motion-hover), box-shadow var(--motion-hover);
 }
-
+.task-input::placeholder { color: var(--color-text-placeholder); }
 .task-input:focus {
   border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-subtle);
 }
+.task-input-sm { height: 32px; font-size: var(--font-size-xs); }
 
-.task-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.task-sections {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-sm);
-}
+/* Vertical sections */
+.task-sections { display: flex; flex-direction: column; gap: var(--spacing-md); }
 
 .task-section {
-  min-height: 74px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
   padding: 8px;
-  background: var(--color-surface-elevated);
+  background: color-mix(in srgb, var(--color-surface-elevated) 55%, transparent);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-lg);
+  transition: border-color var(--motion-hover), background var(--motion-hover);
+}
+.task-section:focus-within {
+  border-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
 }
 
 .task-section-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--spacing-xs);
-  color: var(--color-text-tertiary);
+  gap: var(--spacing-sm);
+  padding: 2px 4px 4px;
+}
+.task-section-title {
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
   letter-spacing: var(--tracking-wide);
   text-transform: uppercase;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.task-section-delete {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  opacity: 0;
+  flex-shrink: 0;
+  transition: opacity var(--motion-hover), color var(--motion-hover), background var(--motion-hover);
+}
+.task-section:hover .task-section-delete,
+.task-section-delete:focus-visible { opacity: 1; }
+.task-section-delete:hover { background: var(--color-error-subtle); color: var(--color-error); }
+
+.task-section-edit {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  opacity: 0;
+  flex-shrink: 0;
+  transition: opacity var(--motion-hover), color var(--motion-hover), background var(--motion-hover);
+}
+.task-section:hover .task-section-edit,
+.task-section-edit:focus-visible { opacity: 1; }
+.task-section-edit:hover { background: var(--color-surface); color: var(--color-text-primary); }
+
+.task-section-title-input {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 8px;
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  outline: none;
+  box-shadow: 0 0 0 3px var(--color-accent-subtle);
 }
 
+.task-count {
+  margin-left: auto;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--color-text-primary) 8%, transparent);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+}
+
+.task-list { display: flex; flex-direction: column; gap: 2px; }
+
+.task-empty {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  padding: 9px;
+  text-align: center;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+/* Task row */
 .task-row {
   min-height: 36px;
   display: flex;
   align-items: center;
-  gap: var(--spacing-xs);
-  padding: 4px 6px;
-  border-radius: var(--radius-sm);
-  color: var(--color-text-secondary);
+  gap: var(--spacing-sm);
+  padding: 5px 6px 5px 8px;
+  border-radius: var(--radius-md);
+  color: var(--color-text-primary);
   font-size: var(--font-size-sm);
   cursor: grab;
+  transition: background var(--motion-hover);
 }
+.task-row:hover { background: var(--color-surface); }
+.task-row:active { cursor: grabbing; }
+.task-row.completed { cursor: default; }
 
-.task-row:hover {
-  background: var(--color-surface);
-  color: var(--color-text-primary);
-}
-
-.task-row.completed {
-  cursor: default;
-}
-
-.task-row input {
+.task-row input[type="checkbox"] {
   flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-accent);
+  cursor: pointer;
 }
 
 .task-row.completed .task-title {
@@ -869,9 +1064,9 @@
 
 .task-title {
   display: block;
-  flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
+  color: var(--color-text-primary);
 }
 
 .task-main-btn {
@@ -889,15 +1084,11 @@
   padding: 2px 0;
 }
 
-.task-main-btn:hover .task-title,
-.task-main-btn:focus-visible .task-title {
-  color: var(--color-text-primary);
-}
-
 .task-main-btn:focus-visible,
 .task-link-btn:focus-visible,
-.task-delete-btn:focus-visible {
-  outline: 1px solid var(--color-accent);
+.task-delete-btn:focus-visible,
+.task-section-delete:focus-visible {
+  outline: 2px solid var(--color-accent);
   outline-offset: 2px;
 }
 
@@ -909,10 +1100,16 @@
   font-size: var(--font-size-xs);
   line-height: 1.2;
 }
+.task-meta span {
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--color-text-primary) 7%, transparent);
+}
 
-.task-link-btn {
-  width: 28px;
-  height: 28px;
+.task-link-btn,
+.task-delete-btn {
+  width: 26px;
+  height: 26px;
   display: grid;
   place-items: center;
   border: 0;
@@ -921,60 +1118,48 @@
   color: var(--color-text-tertiary);
   cursor: pointer;
   flex-shrink: 0;
-  font-size: 15px;
-}
-
-.task-link-btn:hover {
-  background: var(--color-surface);
-  color: var(--color-text-primary);
-}
-
-.task-delete-btn {
-  width: 30px;
-  height: 30px;
-  display: grid;
-  place-items: center;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  flex-shrink: 0;
-  font-size: 24px;
   line-height: 1;
-  font-weight: var(--font-weight-semibold);
+  opacity: 0;
+  transition: opacity var(--motion-hover), color var(--motion-hover), background var(--motion-hover);
 }
+.task-link-btn { font-size: 14px; }
+.task-delete-btn { font-size: 18px; }
+.task-row:hover .task-link-btn,
+.task-row:hover .task-delete-btn,
+.task-link-btn:focus-visible,
+.task-delete-btn:focus-visible { opacity: 1; }
+.task-link-btn:hover { background: var(--color-surface-elevated); color: var(--color-accent); }
+.task-delete-btn:hover { background: var(--color-error-subtle); color: var(--color-error); }
 
-.task-delete-btn:hover {
-  background: var(--color-surface);
-  color: var(--color-error);
-}
+/* Add-section row (secondary action) */
+.task-add-section { display: flex; gap: var(--spacing-sm); flex-shrink: 0; }
+.task-add-section .btn { height: 32px; flex-shrink: 0; }
 
+/* Completed */
 .task-completed-section {
   border-top: 1px solid var(--color-border);
   padding-top: var(--spacing-sm);
+  margin-top: auto;
 }
-
 .task-completed-toggle {
   width: 100%;
   height: 32px;
   display: flex;
   align-items: center;
-  gap: var(--spacing-xs);
+  gap: var(--spacing-sm);
   border: 0;
   background: transparent;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
   cursor: pointer;
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
   letter-spacing: var(--tracking-wide);
   text-transform: uppercase;
-  padding: 0;
+  padding: 0 4px;
+  border-radius: var(--radius-md);
 }
-
-.task-completed-toggle:hover {
-  color: var(--color-text-primary);
-}
+.task-completed-toggle:hover { color: var(--color-text-primary); background: var(--color-surface); }
+.task-completed-caret { font-size: 9px; color: var(--color-text-tertiary); }
 
 .task-edit-modal {
   width: min(560px, 100%);
@@ -1016,11 +1201,6 @@
   border-color: var(--color-accent);
 }
 
-.task-count {
-  margin-left: auto;
-  font-family: var(--font-mono);
-  color: var(--color-text-dim);
-}
 
 .panel-logs {
   background: var(--color-terminal-bg);

@@ -14,8 +14,11 @@
   --color-text-secondary: rgba(242, 243, 245, 0.60);
   --color-text-tertiary: rgba(242, 243, 245, 0.38);
   --color-text-dim: rgba(242, 243, 245, 0.22);
+  --color-text-placeholder: rgba(242, 243, 245, 0.60); /* AA on inputs */
+  --color-on-accent: #ffffff;                          /* text on accent fills */
   --color-accent: #3B82F6;
   --color-accent-hover: #60A5FA;
+  --color-accent-strong: #2563EB;                      /* deeper — AA white button text */
   --color-accent-subtle: rgba(59, 130, 246, 0.12);
   --color-success: #22C55E;
   --color-success-subtle: rgba(34, 197, 94, 0.12);
@@ -46,8 +49,11 @@
   --color-text-secondary: rgba(13, 13, 14, 0.60);
   --color-text-tertiary: rgba(13, 13, 14, 0.38);
   --color-text-dim: rgba(13, 13, 14, 0.22);
+  --color-text-placeholder: rgba(13, 13, 14, 0.60); /* AA on inputs */
+  --color-on-accent: #ffffff;
   --color-accent: #3B82F6;
   --color-accent-hover: #60A5FA;
+  --color-accent-strong: #2563EB;
   --color-accent-subtle: rgba(59, 130, 246, 0.12);
   --color-success: #22C55E;
   --color-success-subtle: rgba(34, 197, 94, 0.12);
@@ -66,6 +72,45 @@
 }
 
 /* ============================================================
+   OPUS PURPLE (dark) — violet "Soft Glass Cockpit", mockup-inspired
+   ============================================================ */
+[data-theme="opus-purple"] {
+  --color-background: #16121F;       /* deep violet-black */
+  --color-surface: #211A30;
+  --color-surface-elevated: #2A2240;
+  --color-surface-overlay: #352B4D;
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-border-strong: rgba(255, 255, 255, 0.14);
+  --color-text-primary: #ECE8F8;
+  --color-text-secondary: rgba(236, 232, 248, 0.62);
+  --color-text-tertiary: rgba(236, 232, 248, 0.40);
+  --color-text-dim: rgba(236, 232, 248, 0.24);
+  --color-text-placeholder: rgba(236, 232, 248, 0.60); /* AA on inputs */
+  --color-on-accent: #ffffff;
+  --color-accent: #8B5CF6;           /* violet — bright signal */
+  --color-accent-hover: #A78BFA;
+  --color-accent-strong: #7C3AED;    /* deeper — AA white button text */
+  --color-accent-subtle: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  --color-success: #4ADE80;
+  --color-success-subtle: color-mix(in srgb, var(--color-success) 12%, transparent);
+  --color-warning: #FBBF24;
+  --color-warning-subtle: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  --color-error: #FB7185;
+  --color-error-subtle: color-mix(in srgb, var(--color-error) 12%, transparent);
+  --color-terminal-bg: #120E1C;      /* near-black violet — the deepest layer */
+  --color-terminal-text: #ECE8F8;
+  --color-terminal-cursor: #A78BFA;
+  --color-terminal-selection: color-mix(in srgb, var(--color-accent) 30%, transparent);
+
+  /* a touch more ambient so the violet wash reads — this is the showcase theme */
+  --ambient-strength: 0.32;
+
+  --shadow-1: none;
+  --shadow-2: none;
+  --shadow-3: none;
+}
+
+/* ============================================================
    CATPPUCCIN — LATTE (light)
    ============================================================ */
 [data-theme="catppuccin-latte"] {
@@ -76,9 +121,11 @@
   --color-border: rgba(76, 79, 105, 0.10);
   --color-border-strong: rgba(76, 79, 105, 0.18);
   --color-text-primary: #4c4f69;     /* text */
-  --color-text-secondary: rgba(76, 79, 105, 0.60);
+  --color-text-secondary: rgba(76, 79, 105, 0.85); /* AA on light surfaces */
   --color-text-tertiary: rgba(76, 79, 105, 0.38);
   --color-text-dim: rgba(76, 79, 105, 0.22);
+  --color-text-placeholder: rgba(76, 79, 105, 0.80); /* AA on inputs */
+  --color-on-accent: #ffffff;
   --color-accent: #8839ef;           /* mauve */
   --color-accent-hover: color-mix(in srgb, var(--color-accent) 85%, black);
   --color-accent-subtle: color-mix(in srgb, var(--color-accent) 12%, transparent);
@@ -109,9 +156,11 @@
   --color-border: rgba(255, 255, 255, 0.08);
   --color-border-strong: rgba(255, 255, 255, 0.14);
   --color-text-primary: #c6d0f5;     /* text */
-  --color-text-secondary: rgba(198, 208, 245, 0.60);
+  --color-text-secondary: rgba(198, 208, 245, 0.80); /* AA on light surfaces */
   --color-text-tertiary: rgba(198, 208, 245, 0.38);
   --color-text-dim: rgba(198, 208, 245, 0.22);
+  --color-text-placeholder: rgba(198, 208, 245, 0.99); /* AA on light input bg */
+  --color-on-accent: #232634;        /* dark text on light mauve */
   --color-accent: #ca9ee6;           /* mauve */
   --color-accent-hover: #babbf1;     /* lavender */
   --color-accent-subtle: color-mix(in srgb, var(--color-accent) 12%, transparent);
@@ -142,9 +191,11 @@
   --color-border: rgba(255, 255, 255, 0.08);
   --color-border-strong: rgba(255, 255, 255, 0.14);
   --color-text-primary: #cad3f5;     /* text */
-  --color-text-secondary: rgba(202, 211, 245, 0.60);
+  --color-text-secondary: rgba(202, 211, 245, 0.71); /* AA on light surfaces */
   --color-text-tertiary: rgba(202, 211, 245, 0.38);
   --color-text-dim: rgba(202, 211, 245, 0.22);
+  --color-text-placeholder: rgba(202, 211, 245, 0.86); /* AA on light input bg */
+  --color-on-accent: #181926;        /* dark text on light mauve */
   --color-accent: #c6a0f6;           /* mauve */
   --color-accent-hover: #b7bdf8;     /* lavender */
   --color-accent-subtle: color-mix(in srgb, var(--color-accent) 12%, transparent);
@@ -175,9 +226,11 @@
   --color-border: rgba(255, 255, 255, 0.08);
   --color-border-strong: rgba(255, 255, 255, 0.14);
   --color-text-primary: #cdd6f4;     /* text */
-  --color-text-secondary: rgba(205, 214, 244, 0.60);
+  --color-text-secondary: rgba(205, 214, 244, 0.65); /* AA on light surfaces */
   --color-text-tertiary: rgba(205, 214, 244, 0.38);
   --color-text-dim: rgba(205, 214, 244, 0.22);
+  --color-text-placeholder: rgba(205, 214, 244, 0.79); /* AA on light input bg */
+  --color-on-accent: #11111b;        /* dark text on light mauve */
   --color-accent: #cba6f7;           /* mauve */
   --color-accent-hover: #b4befe;     /* lavender */
   --color-accent-subtle: color-mix(in srgb, var(--color-accent) 12%, transparent);
@@ -257,6 +310,35 @@
   --motion-hover: 120ms ease;
   --motion-press: 80ms;
   --motion-pulse: 2s ease-in-out;
+
+  /* Confident decelerating snap — no overshoot. Use for active/reveal motion. */
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* Larger soft radius for floating panes (terminal/editor/cards). */
+  --radius-2xl: 20px;
+
+  /* Ambient glow — theme accent, lit behind glass chrome. */
+  --ambient-strength: 0.26;
+}
+
+/* ============================================================
+   GLASS — frosted chrome (sidebar, tab strip, status bar, panels)
+   Deliberate, purposeful use over the ambient-lit app background.
+   Not for content surfaces or the terminal.
+   ============================================================ */
+.glass {
+  background: color-mix(in srgb, var(--color-surface) 66%, transparent);
+  -webkit-backdrop-filter: blur(20px) saturate(1.5);
+  backdrop-filter: blur(20px) saturate(1.5);
+}
+
+/* No backdrop-filter support → solid surface (never see-through). */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass { background: var(--color-surface); }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .glass { background: var(--color-surface); -webkit-backdrop-filter: none; backdrop-filter: none; }
 }
 
 /* ============================================================
@@ -349,8 +431,8 @@ body {
 }
 
 .btn-primary {
-  background: var(--color-accent);
-  color: #ffffff;
+  background: var(--color-accent-strong, var(--color-accent));
+  color: var(--color-on-accent);
 }
 
 .btn-primary:hover:not(:disabled) {
@@ -397,7 +479,7 @@ body {
 }
 
 .input::placeholder {
-  color: var(--color-text-tertiary);
+  color: var(--color-text-placeholder);
 }
 
 .input:focus {
@@ -421,8 +503,8 @@ body {
   border-radius: var(--radius-full);
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
-  color: #ffffff;
-  background: var(--color-accent);
+  color: var(--color-on-accent);
+  background: var(--color-accent-strong, var(--color-accent));
   white-space: nowrap;
   animation: pulse var(--motion-pulse) ease-in-out infinite;
 }
