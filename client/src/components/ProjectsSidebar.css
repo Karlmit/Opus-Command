@@ -471,6 +471,19 @@ body.mobile-device .projects-sidebar { display: none; }
   cursor: pointer;
 }
 .project-context-menu button:hover { background: var(--color-surface-overlay); color: var(--color-text-primary); }
+.project-context-menu button:disabled {
+  color: var(--color-text-dim);
+  cursor: not-allowed;
+}
+.project-context-menu button:disabled:hover {
+  background: transparent;
+  color: var(--color-text-dim);
+}
+.project-context-menu .context-separator {
+  height: 1px;
+  background: var(--color-border);
+  margin: 3px 0;
+}
 
 /* ── Avatar picker modal ───────────────────────── */
 .avatar-picker-modal { max-width: 340px; }

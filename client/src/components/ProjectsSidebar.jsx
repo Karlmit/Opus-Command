@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from './Toast';
 import { getNotificationSocket } from '../context/NotificationsContext';
 import './ProjectsSidebar.css';
 
@@ -63,13 +64,14 @@ function SidebarPopover({ onClose, children, width = 280 }) {
   // Close when clicking the backdrop (but not the dialog itself)
   function onBackdrop(e) { if (e.target === e.currentTarget) onClose(); }
 
-  return (
+  return createPortal(
     <div className="sidebar-modal-backdrop" onMouseDown={onBackdrop}>
       <div ref={popoverRef} className="sidebar-popover sidebar-popover-centered"
            style={{ width }} role="dialog" aria-modal="true">
         {children}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -271,7 +273,7 @@ function AvatarPickerForm({ project, csrfToken, onSaved, onClose }) {
 }
 
 /* ── Context menu ───────────────────────────────── */
-function ProjectContextMenu({ project, position, onClose, onOpenAvatar, navigate }) {
+function ProjectContextMenu({ project, position, lifecycleBusy, onClose, onOpenAvatar, onLifecycle, navigate }) {
   const ref = useRef(null);
   const [pos, setPos] = useState({ left: position.x, top: position.y });
   useEffect(() => {
@@ -294,12 +296,26 @@ function ProjectContextMenu({ project, position, onClose, onOpenAvatar, navigate
   }, [position.x, position.y]);
 
   function go(path) { navigate(path); onClose(); }
+  function runLifecycle(action) {
+    onLifecycle(project, action);
+    onClose();
+  }
+
+  const isBusy = lifecycleBusy === project.id;
+  const isRunning = project.status === 'running' || project.status === 'starting';
 
   return createPortal(
     <div ref={ref} className="project-context-menu" style={{ left: pos.left, top: pos.top }} role="menu">
       <button role="menuitem" onClick={() => go(`/project/${project.id}`)}>Open</button>
       <button role="menuitem" onClick={() => go(`/project/${project.id}?tab=settings`)}>Workspace &amp; Logs</button>
       <button role="menuitem" onClick={() => go(`/project/${project.id}?tab=git`)}>Git</button>
+      <div className="context-separator" />
+      <button role="menuitem" onClick={() => runLifecycle('start')} disabled={isBusy || isRunning}>
+        {isBusy && !isRunning ? 'Starting…' : 'Start Workspace'}
+      </button>
+      <button role="menuitem" onClick={() => runLifecycle('stop')} disabled={isBusy || !isRunning}>
+        {isBusy && isRunning ? 'Stopping…' : 'Stop Workspace'}
+      </button>
       <div className="context-separator" />
       <button role="menuitem" onClick={() => { onOpenAvatar(); onClose(); }}>Change Avatar</button>
     </div>,
@@ -313,10 +329,12 @@ export default function ProjectsSidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const { csrfToken } = useAuth();
+  const { addToast } = useToast();
   const filesActive = location.pathname === '/files';
 
   const [projects, setProjects]   = useState([]);
   const [contextMenu, setContext] = useState(null);
+  const [lifecycleBusy, setLifecycleBusy] = useState(null);
 
   // Drag-to-reorder state
   const [dragId, setDragId]   = useState(null);
@@ -381,6 +399,19 @@ export default function ProjectsSidebar() {
     return () => sock.off('project:ai-state', onProjectAIState);
   }, []);
 
+  useEffect(() => {
+    const sock = getNotificationSocket();
+
+    function onProjectStatus({ id, status }) {
+      setProjects(prev => prev.map(project => (
+        String(project.id) === String(id) ? { ...project, status } : project
+      )));
+    }
+
+    sock.on('project:status', onProjectStatus);
+    return () => sock.off('project:status', onProjectStatus);
+  }, []);
+
   async function load() {
     // Don't clobber the optimistic order mid-drag.
     if (draggingRef.current) return;
@@ -429,6 +460,37 @@ export default function ProjectsSidebar() {
   function handleCreated(p) { setProjects(prev => [...prev, p]); navigate(`/project/${p.id}`); }
   function handleAvatarSaved(pid, avatar) { setProjects(prev => prev.map(p => p.id === pid ? { ...p, avatar } : p)); }
   function handleContext(e, project) { e.preventDefault(); e.stopPropagation(); setContext({ project, x: e.clientX, y: e.clientY }); }
+
+  async function runProjectLifecycle(project, action) {
+    setLifecycleBusy(project.id);
+    setProjects(prev => prev.map(p => (
+      p.id === project.id ? { ...p, status: action === 'start' ? 'starting' : p.status } : p
+    )));
+
+    try {
+      const r = await fetch(`/api/projects/${project.id}/lifecycle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ action }),
+      });
+      const d = await r.json();
+      if (!d.success) {
+        addToast(d.error || `${action === 'start' ? 'Start' : 'Stop'} failed.`, 'error');
+        await load();
+        return;
+      }
+
+      setProjects(prev => prev.map(p => (
+        p.id === project.id ? { ...p, status: d.status || (action === 'stop' ? 'stopped' : 'running') } : p
+      )));
+      addToast(action === 'start' ? 'Workspace started.' : 'Workspace stopped.');
+    } catch (e) {
+      addToast(e.message || `${action === 'start' ? 'Start' : 'Stop'} failed.`, 'error');
+      await load();
+    } finally {
+      setLifecycleBusy(null);
+    }
+  }
 
   /* ── Render ──────────────────────────────────── */
   return (
@@ -542,8 +604,10 @@ export default function ProjectsSidebar() {
         <ProjectContextMenu
           project={contextMenu.project}
           position={{ x: contextMenu.x, y: contextMenu.y }}
+          lifecycleBusy={lifecycleBusy}
           onClose={() => setContext(null)}
           onOpenAvatar={() => setAvatarTarget({ project: contextMenu.project })}
+          onLifecycle={runProjectLifecycle}
           navigate={navigate}
         />
       )}
