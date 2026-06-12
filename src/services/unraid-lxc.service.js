@@ -582,6 +582,72 @@ async function repairTerminalAgent(project) {
   return { ip, healthy, reprovisioned, agentState };
 }
 
+// ── Docker-inside-the-workspace control ───────────────────────────────────────
+// LXC workspaces can run Docker inside them. These let the UI see and stop those
+// inner containers without spending agent tokens. Everything runs via the same
+// lxc-attach path as execWorkspace; container ids/names are validated before
+// interpolation so a crafted name can't break out of the docker command.
+
+const DOCKER_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/;
+
+/**
+ * List Docker containers running inside the workspace. Returns
+ * { available, reason?, containers: [{ id, name, image, status, state, ports, createdAt }] }.
+ * `available:false` with a reason ('not_installed' | 'daemon_stopped') lets the UI
+ * explain why the list is empty instead of showing a bare "none".
+ */
+async function listDockerContainers(project, { all = false } = {}) {
+  const psFlag = all ? '-a' : '';
+  const cmd =
+    `command -v docker >/dev/null 2>&1 || { echo OPUS_NO_DOCKER; exit 0; }; ` +
+    `docker info >/dev/null 2>&1 || { echo OPUS_NO_DAEMON; exit 0; }; ` +
+    `docker ps ${psFlag} --no-trunc --format '{{json .}}'`;
+  const { stdout } = await execWorkspace(project, cmd, { timeoutMs: 20_000 });
+  if (/OPUS_NO_DOCKER/.test(stdout)) return { available: false, reason: 'not_installed', containers: [] };
+  if (/OPUS_NO_DAEMON/.test(stdout)) return { available: false, reason: 'daemon_stopped', containers: [] };
+  const containers = [];
+  for (const line of String(stdout || '').split('\n')) {
+    const t = line.trim();
+    if (!t.startsWith('{')) continue;
+    try {
+      const c = JSON.parse(t);
+      containers.push({
+        id: c.ID || '',
+        name: c.Names || '',
+        image: c.Image || '',
+        status: c.Status || '',
+        state: c.State || '',
+        ports: c.Ports || '',
+        createdAt: c.CreatedAt || '',
+      });
+    } catch { /* skip malformed line */ }
+  }
+  return { available: true, containers };
+}
+
+// Stop a single inner Docker container by id or name.
+async function stopDockerContainer(project, containerId, { timeoutMs = 40_000 } = {}) {
+  if (!DOCKER_ID_RE.test(String(containerId || ''))) {
+    throw new Error('invalid container id');
+  }
+  const { code, stdout, stderr } = await execWorkspace(
+    project, `docker stop ${containerId}`, { timeoutMs },
+  );
+  if (code !== 0) throw new Error(stderr || stdout || `docker stop failed (exit ${code})`);
+  return { stopped: (stdout || containerId).trim() };
+}
+
+// Stop every running inner Docker container. Returns the count stopped.
+async function stopAllDockerContainers(project, { timeoutMs = 90_000 } = {}) {
+  const cmd =
+    `ids=$(docker ps -q); ` +
+    `if [ -z "$ids" ]; then echo OPUS_NONE; else docker stop $ids >/dev/null && echo "$ids" | wc -l; fi`;
+  const { code, stdout, stderr } = await execWorkspace(project, cmd, { timeoutMs });
+  if (code !== 0) throw new Error(stderr || stdout || `docker stop failed (exit ${code})`);
+  if (/OPUS_NONE/.test(stdout)) return { stopped: 0 };
+  return { stopped: parseInt(String(stdout).trim(), 10) || 0 };
+}
+
 module.exports = {
   NAME_PREFIX,
   containerNameFor,
@@ -599,6 +665,9 @@ module.exports = {
   execWorkspace,
   removeWorkspace,
   repairTerminalAgent,
+  listDockerContainers,
+  stopDockerContainer,
+  stopAllDockerContainers,
   buildProvisionScript,
   waitUntilAttachable,
   getContainerIp,

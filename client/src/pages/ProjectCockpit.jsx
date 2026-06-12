@@ -824,6 +824,115 @@ function VolumesSection({ projectId, project, csrfToken, addToast }) {
   );
 }
 
+/* ── Docker containers (LXC workspaces only) ──────── */
+function DockerSection({ projectId, project, csrfToken, addToast }) {
+  const [state, setState] = useState({ available: false, containers: [], reason: null });
+  const [loading, setLoading] = useState(false);
+  const [stopping, setStopping] = useState(null); // container id, or 'all'
+
+  const running = project?.status === 'running';
+
+  async function load() {
+    if (!running) { setState({ available: false, containers: [], reason: 'workspace_stopped' }); return; }
+    setLoading(true);
+    try {
+      const r = await fetch(`/api/projects/${projectId}/docker`);
+      const d = await r.json();
+      if (d.error) { addToast(d.error, 'error'); return; }
+      setState({ available: !!d.available, containers: d.containers || [], reason: d.reason || null });
+    } catch (e) {
+      addToast(e.message || 'Failed to list Docker containers.', 'error');
+    } finally { setLoading(false); }
+  }
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [projectId, running]);
+
+  async function stopOne(containerId, label) {
+    setStopping(containerId);
+    try {
+      const r = await fetch(`/api/projects/${projectId}/docker/stop`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ containerId }),
+      });
+      const d = await r.json();
+      if (!d.success) addToast(d.error || 'Stop failed.', 'error');
+      else addToast(`Stopped ${label || containerId}.`);
+    } catch (e) { addToast(e.message, 'error'); }
+    finally { setStopping(null); load(); }
+  }
+
+  async function stopAll() {
+    if (!confirm('Stop all running Docker containers in this workspace?')) return;
+    setStopping('all');
+    try {
+      const r = await fetch(`/api/projects/${projectId}/docker/stop`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ all: true }),
+      });
+      const d = await r.json();
+      if (!d.success) addToast(d.error || 'Stop failed.', 'error');
+      else addToast(d.stopped ? `Stopped ${d.stopped} container${d.stopped === 1 ? '' : 's'}.` : 'No running containers.');
+    } catch (e) { addToast(e.message, 'error'); }
+    finally { setStopping(null); load(); }
+  }
+
+  const containers = state.containers || [];
+  const reasonText = {
+    workspace_stopped: 'Start the workspace to see and manage Docker containers.',
+    not_installed: 'Docker is not installed in this workspace.',
+    daemon_stopped: 'Docker is installed but its daemon is not running.',
+  };
+
+  return (
+    <div className="panel-section">
+      <div className="panel-section-header">
+        <div className="panel-section-title">DOCKER CONTAINERS</div>
+        <div className="ws-actions">
+          <button className="btn btn-ghost" onClick={load} disabled={loading || !running}>
+            {loading ? 'Refreshing…' : 'Refresh'}
+          </button>
+          {state.available && containers.length > 0 && (
+            <button className="btn btn-ghost ws-danger" onClick={stopAll} disabled={stopping === 'all'}>
+              {stopping === 'all' ? 'Stopping…' : 'Stop all'}
+            </button>
+          )}
+        </div>
+      </div>
+      <p className="panel-hint">Containers running inside this LXC workspace's Docker.</p>
+
+      {!state.available && (
+        <p className="panel-hint">{reasonText[state.reason] || 'No Docker containers.'}</p>
+      )}
+
+      {state.available && containers.length === 0 && (
+        <p className="panel-hint">No containers running.</p>
+      )}
+
+      {state.available && containers.map(c => {
+        const up = /^up/i.test(c.status) || c.state === 'running';
+        return (
+          <div key={c.id} className="vol-row">
+            <div className="vol-row-main">
+              <div className="vol-paths">
+                <span className={`dk-dot ${up ? 'up' : 'down'}`} />
+                <code>{c.name || c.id.slice(0, 12)}</code>
+                <span className="dk-image">{c.image}</span>
+              </div>
+              <div className="vol-desc">{c.status}{c.ports ? ` · ${c.ports}` : ''}</div>
+            </div>
+            <div className="vol-row-actions">
+              <button className="btn btn-ghost ws-danger"
+                onClick={() => stopOne(c.id, c.name)}
+                disabled={stopping === c.id}>
+                {stopping === c.id ? 'Stopping…' : 'Stop'}
+              </button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /* ── Workspace settings panel ──────────────────── */
 function WorkspacePanel({ projectId, project, csrfToken, addToast, onDelete, onProjectUpdated }) {
   const [logs, setLogs] = useState('');
@@ -981,6 +1090,15 @@ function WorkspacePanel({ projectId, project, csrfToken, addToast, onDelete, onP
           ))}
         </div>
       </div>
+
+      {isLxc && (
+        <DockerSection
+          projectId={projectId}
+          project={project}
+          csrfToken={csrfToken}
+          addToast={addToast}
+        />
+      )}
 
       {!isLxc && (
         <VolumesSection

@@ -93,6 +93,22 @@ async function repairTerminal(project) {
   return { restarted: true };
 }
 
+// ── Docker-inside-the-workspace (LXC only) ────────────────────────────────────
+// LXC workspaces can run Docker inside them; Docker-backed workspaces cannot nest
+// Docker, so these report/refuse for the Docker backend.
+async function listDockerContainers(project, opts) {
+  if (isLxc(project)) return lxc.listDockerContainers(project, opts);
+  return { available: false, reason: 'unsupported', containers: [] };
+}
+async function stopDockerContainer(project, containerId) {
+  if (isLxc(project)) return lxc.stopDockerContainer(project, containerId);
+  throw new Error('Docker control is only available for Unraid LXC workspaces.');
+}
+async function stopAllDockerContainers(project) {
+  if (isLxc(project)) return lxc.stopAllDockerContainers(project);
+  throw new Error('Docker control is only available for Unraid LXC workspaces.');
+}
+
 // ── docker-only helpers (no-op / empty for LXC) ───────────────────────────────
 
 async function getLogs(project, tail = 200) {
@@ -118,6 +134,9 @@ module.exports = {
   update,
   remove,
   repairTerminal,
+  listDockerContainers,
+  stopDockerContainer,
+  stopAllDockerContainers,
   getLogs,
   getBinds,
 };

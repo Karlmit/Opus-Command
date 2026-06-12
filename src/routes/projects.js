@@ -418,6 +418,68 @@ router.put('/:id/volumes', requireAuth, async (req, res) => {
   }
 });
 
+// ── Docker inside an LXC workspace ────────────────────────────────────────────
+// LXC workspaces can run Docker inside them; these let the UI list and stop those
+// inner containers directly. Docker-backed workspaces have no nested Docker, so
+// these are LXC-only.
+
+// GET /api/projects/:id/docker — list inner Docker containers
+router.get('/:id/docker', requireAuth, async (req, res) => {
+  const projectId = parseInt(req.params.id);
+  try {
+    const db = getDB();
+    const rows = db.select().from(projects).where(eq(projects.id, projectId)).all();
+    if (!rows.length) return res.status(404).json({ error: 'Project not found.' });
+    const project = rows[0];
+    if (!workspace.isLxc(project)) {
+      return res.json({ supported: false, available: false, containers: [] });
+    }
+    const status = await workspace.getStatus(project).catch(() => 'stopped');
+    if (status !== 'running') {
+      return res.json({ supported: true, available: false, reason: 'workspace_stopped', containers: [] });
+    }
+    const all = req.query.all === '1' || req.query.all === 'true';
+    const result = await workspace.listDockerContainers(project, { all });
+    res.json({ supported: true, ...result });
+  } catch (err) {
+    console.error('[projects] Docker list error:', err.message);
+    res.status(500).json({ error: `Failed to list Docker containers: ${err.message}` });
+  }
+});
+
+// POST /api/projects/:id/docker/stop — stop one ({ containerId }) or all ({ all: true })
+router.post('/:id/docker/stop', requireAuth, async (req, res) => {
+  const projectId = parseInt(req.params.id);
+  const { containerId, all } = req.body || {};
+  try {
+    const db = getDB();
+    const rows = db.select().from(projects).where(eq(projects.id, projectId)).all();
+    if (!rows.length) return res.status(404).json({ error: 'Project not found.' });
+    const project = rows[0];
+    if (!workspace.isLxc(project)) {
+      return res.status(400).json({ error: 'Docker control is only available for Unraid LXC workspaces.' });
+    }
+    if (!all && !containerId) {
+      return res.status(400).json({ error: 'containerId is required (or pass all: true).' });
+    }
+    const result = all
+      ? await workspace.stopAllDockerContainers(project)
+      : await workspace.stopDockerContainer(project, containerId);
+    db.insert(activityLog).values({
+      projectId,
+      type: 'docker_stop',
+      message: all
+        ? `Stopped ${result.stopped} inner Docker container${result.stopped === 1 ? '' : 's'}.`
+        : `Stopped inner Docker container ${containerId}.`,
+      createdAt: Date.now(),
+    }).run();
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[projects] Docker stop error:', err.message);
+    res.status(500).json({ error: `Failed to stop Docker container: ${err.message}` });
+  }
+});
+
 // POST /api/projects/:id/lifecycle — workspace lifecycle actions
 router.post('/:id/lifecycle', requireAuth, async (req, res) => {
   const projectId = parseInt(req.params.id);

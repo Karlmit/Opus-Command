@@ -1275,6 +1275,16 @@
 .vol-row-actions { display: flex; gap: 4px; flex-shrink: 0; }
 .vol-row-actions .btn { font-size: var(--font-size-xs); }
 
+/* Docker containers (LXC) */
+.dk-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: var(--color-text-dim); }
+.dk-dot.up { background: var(--color-success); box-shadow: 0 0 6px color-mix(in srgb, var(--color-success) 60%, transparent); }
+.dk-image {
+  font-family: var(--font-mono); font-size: var(--font-size-xs);
+  padding: 1px 6px; border-radius: 4px;
+  background: color-mix(in srgb, var(--color-text-dim) 25%, transparent);
+  color: var(--color-text-secondary); word-break: break-all;
+}
+
 .vol-form {
   display: flex; flex-direction: column; gap: var(--spacing-sm);
   padding: var(--spacing-sm); margin-top: var(--spacing-sm);
