@@ -255,6 +255,19 @@ This workspace runs inside a persistent Unraid LXC container managed by Opus Com
 - The container is persistent: tools you install (apt, \`npm -g\`, \`pip\`) survive
   stop/start and are not wiped — install normally.
 - Files written under \`/workspace\` appear on the Unraid project share and persist.
+
+## Docker inside the workspace
+
+Docker works inside this LXC (overlayfs + cgroup v2). If you run it, the container
+then has several IPv4 addresses: its LAN address on \`eth0\` (DHCP — it can change on
+restart) plus Docker bridge gateways in the \`172.16/12\` block (\`172.17.0.1\`, …).
+Only the \`eth0\`/LAN address is routable from the Unraid host and the LAN; the
+\`172.x\` addresses are internal to this container. Find the current LAN IP with
+\`ip -4 route get 1.1.1.1\` (the \`src\` field) and never hardcode it. Opus Command
+reaches this workspace's terminal-agent at \`<eth0-ip>:7681\` and re-resolves that IP
+on every connection, so a restart's new IP is handled automatically — but any
+host-reachable service you expose must advertise the \`eth0\` address, not a \`172.x\`
+bridge IP.
 ${GIT_GUIDANCE}
 ${SKILL_POINTER}`
   );
