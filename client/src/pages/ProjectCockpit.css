@@ -234,6 +234,14 @@
 @media (prefers-reduced-motion: reduce) {
   .fi-icon { transition: none; }
   .file-node:hover .fi-icon { transform: none; }
+
+  /* Keep gentle opacity fades for comprehension; drop the positional motion. */
+  .tasks-drawer { transition: opacity 160ms ease; }
+  .task-list > .task-row { animation: tasksContentIn 160ms ease both; animation-delay: 0ms !important; }
+  .cockpit-main.project-switch-in { animation: tasksContentIn 160ms ease both; }
+  @starting-style {
+    .tasks-drawer { opacity: 0; transform: none; }
+  }
 }
 .fi-dir { color: #e8a838; }
 
@@ -404,6 +412,18 @@
   flex-direction: column;
   overflow: hidden;
   min-width: 0;
+}
+
+/* Plays on first mount and on every project switch (class is re-applied in JS).
+   A soft settle — opacity + a few px of lift — so swapping projects reads as a
+   deliberate change, not a hard cut. Transform/opacity only: GPU, no reflow. */
+.cockpit-main.project-switch-in {
+  animation: projectSwitchIn 260ms var(--ease-out-quint) both;
+}
+
+@keyframes projectSwitchIn {
+  from { opacity: 0.5; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 /* Tab bar — frosted chrome with soft pill tabs */
@@ -807,6 +827,19 @@
   box-shadow: 0 14px 40px -18px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04);
   flex-shrink: 0;
   z-index: 13;
+  /* Anchored to the right edge of the work surface — scale/slide in from there. */
+  transform-origin: right center;
+  transition: opacity 220ms var(--ease-out-quint), transform 220ms var(--ease-out-quint);
+}
+
+/* Enter animation when the panel mounts (toggled open). Exit is intentionally
+   instant: the terminal reclaims the space immediately, which reads as the
+   system responding fast — a slide-out would fight the flex reflow. */
+@starting-style {
+  .tasks-drawer {
+    opacity: 0;
+    transform: translateX(14px) scale(0.985);
+  }
 }
 
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
@@ -890,6 +923,14 @@
 /* ── Tasks — a simple, polished checklist ───────────────── */
 .tasks-content {
   gap: var(--spacing-md);
+  /* Soft fade for the static scaffolding (add-row, section frames); the rows
+     themselves additionally cascade via .task-row entrance. */
+  animation: tasksContentIn 200ms ease both;
+}
+
+@keyframes tasksContentIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 /* Add-task row (primary action) */
@@ -1071,6 +1112,23 @@
 .task-row:hover { background: var(--color-surface); }
 .task-row:active { cursor: grabbing; }
 .task-row.completed { cursor: default; }
+
+/* Entrance — rows cascade in when the panel opens or a task is added. The DOM
+   node only mounts on open/add (not on toggle/edit), so this plays exactly when
+   something new appears, never on every re-render. */
+.task-list > .task-row {
+  animation: taskRowIn 300ms var(--ease-out-quint) both;
+}
+.task-list > .task-row:nth-child(1) { animation-delay: 0ms; }
+.task-list > .task-row:nth-child(2) { animation-delay: 40ms; }
+.task-list > .task-row:nth-child(3) { animation-delay: 80ms; }
+.task-list > .task-row:nth-child(4) { animation-delay: 120ms; }
+.task-list > .task-row:nth-child(n+5) { animation-delay: 150ms; }
+
+@keyframes taskRowIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 
 .task-row input[type="checkbox"] {
   flex-shrink: 0;

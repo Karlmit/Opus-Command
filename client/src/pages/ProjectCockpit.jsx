@@ -1670,6 +1670,7 @@ export default function ProjectCockpit() {
   const [resizingTree, setResizingTree] = useState(false);
   const [resizingFilePanel, setResizingFilePanel] = useState(false);
   const renameInputRef = useRef(null);
+  const cockpitMainRef = useRef(null);
   const fileTreeRef = useRef(null);
   const fileTreePanelRef = useRef(null);
   const uploadInputRef = useRef(null);
@@ -1705,6 +1706,17 @@ export default function ProjectCockpit() {
   useEffect(() => {
     activeTabStateRef.current = activeTab;
   }, [activeTab]);
+
+  // Replay a soft entrance on the work surface whenever the project changes.
+  // The route component is reused across :id changes (terminals stay mounted),
+  // so we restart the CSS animation manually rather than relying on mount.
+  useEffect(() => {
+    const el = cockpitMainRef.current;
+    if (!el) return;
+    el.classList.remove('project-switch-in');
+    void el.offsetWidth; // force reflow so the animation restarts
+    el.classList.add('project-switch-in');
+  }, [projectId]);
 
   useEffect(() => {
     fileContentRef.current = fileContent;
@@ -2805,7 +2817,7 @@ export default function ProjectCockpit() {
       </div>
 
       {/* Main */}
-      <div className="cockpit-main">
+      <div className="cockpit-main" ref={cockpitMainRef}>
         {/* Tab bar */}
         <div className="cockpit-tabs" role="tablist">
           {/* Terminal tabs */}
