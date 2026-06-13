@@ -2,26 +2,15 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useMobileUI } from '../context/MobileUIContext';
+import { ProjectAvatar } from './ProjectsSidebar';
 import './MobileNav.css';
 
-/* ── Avatar helpers (mirrored from ProjectsSidebar) ── */
-const COLORS = ['#6366f1','#8b5cf6','#ec4899','#ef4444','#f59e0b','#22c55e','#06b6d4','#3b82f6','#64748b','#92400e'];
-function defaultColor(id) { return COLORS[(id - 1) % COLORS.length]; }
-function parseAvatar(avatar, id) {
-  if (!avatar) return { emoji: '', color: defaultColor(id) };
-  if (avatar.includes('|')) { const [e, c] = avatar.split('|'); return { emoji: e, color: c }; }
-  if (avatar.startsWith('#')) return { emoji: '', color: avatar };
-  return { emoji: avatar, color: defaultColor(id) };
-}
-
+/* Avatar parsing + animated-emoji rendering is shared with the desktop sidebar
+   via ProjectAvatar — it understands the "animated:file.webp" format, so mobile
+   shows the real (looping) emoji instead of the raw avatar string as text.
+   `playing` is forced on because mobile has no hover to trigger the animation. */
 function MiniAvatar({ project, size = 34 }) {
-  const { emoji, color } = parseAvatar(project?.avatar, project?.id);
-  const initials = (project?.name || '??').slice(0, 2).toUpperCase();
-  return (
-    <div className="mnav-avatar" style={{ width: size, height: size, background: color, fontSize: emoji ? size * 0.48 : size * 0.34 }}>
-      {emoji || initials}
-    </div>
-  );
+  return <ProjectAvatar project={project} size={size} playing />;
 }
 
 /* ── Icons ─────────────────────────────────────────── */

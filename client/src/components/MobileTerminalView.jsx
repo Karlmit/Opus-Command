@@ -8,6 +8,44 @@ import './MobileTerminalView.css';
 // Claude Code). This component just renders the latest snapshot — it never
 // mounts xterm, never parses ANSI, and never resizes the PTY.
 
+// Compact terminal switcher for mobile. The desktop .cockpit-tabs bar is hidden
+// on touch layouts, so this is the only way to switch between, add, or close
+// terminal sessions on a phone. Mirrors the desktop tab semantics (active
+// state, AI-waiting/active highlight, close button).
+export function MobileTermTabs({ tabs, activeId, onSelect, onAdd, onClose }) {
+  return (
+    <div className="mtt-bar" role="tablist" aria-label="Terminals">
+      <div className="mtt-scroll">
+        {tabs.map(t => {
+          const active = t.id === activeId;
+          const aiClass = t.aiState === 'waiting' ? ' ai-waiting'
+            : t.aiState === 'active' ? ' ai-active' : '';
+          return (
+            <div
+              key={t.id}
+              role="tab"
+              aria-selected={active}
+              className={`mtt-tab${active ? ' active' : ''}${aiClass}`}
+              onClick={() => onSelect(t.id)}
+            >
+              <span className="mtt-tab-icon" aria-hidden="true">⌨</span>
+              <span className="mtt-tab-label">{t.name}</span>
+              {t.aiState === 'waiting' && <span className="mtt-ai-badge" aria-hidden="true">!</span>}
+              <button
+                type="button"
+                className="mtt-tab-close"
+                aria-label={`Close ${t.name}`}
+                onClick={e => { e.stopPropagation(); onClose(t.id); }}
+              >×</button>
+            </div>
+          );
+        })}
+      </div>
+      <button type="button" className="mtt-add" aria-label="New terminal" onClick={onAdd}>+</button>
+    </div>
+  );
+}
+
 export default function MobileTerminalView({ sessionId }) {
   const [lines, setLines] = useState([]);
   const [atBottom, setAtBottom] = useState(true);

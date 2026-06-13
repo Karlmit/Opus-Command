@@ -11,7 +11,7 @@ import { useMobileUI } from '../context/MobileUIContext';
 import { useDevice } from '../context/DeviceContext';
 import { getSocket } from '../lib/socket';
 import { TERMINAL_ANSI } from '../lib/themes';
-import MobileTerminalView from '../components/MobileTerminalView';
+import MobileTerminalView, { MobileTermTabs } from '../components/MobileTerminalView';
 import SyntaxHighlightedEditor from '../components/SyntaxHighlightedEditor';
 import { FilePlainIcon, FileDocIcon, FileImageIcon, FolderIcon, FolderOpenIcon } from '../components/FileTreeIcons';
 import GitPage from './Git';
@@ -2881,9 +2881,22 @@ export default function ProjectCockpit() {
             className="terminals-layer"
           >
             {isMobile ? (
-              /* Mobile: read-only log viewer — never mounts xterm, never resizes PTY */
+              /* Mobile: read-only log viewer — never mounts xterm, never resizes PTY.
+                 A compact tab strip lets you switch between, add, and close
+                 terminals (the desktop .cockpit-tabs bar is hidden on mobile). */
               activeTermId ? (
-                <MobileTerminalView key={activeTermId} sessionId={activeTermId} />
+                <div className="mtv-shell">
+                  <MobileTermTabs
+                    tabs={termTabs}
+                    activeId={activeTermId}
+                    onSelect={activateTerm}
+                    onAdd={() => createTerminal()}
+                    onClose={killTerminal}
+                  />
+                  <div className="mtv-shell-body">
+                    <MobileTerminalView key={activeTermId} sessionId={activeTermId} />
+                  </div>
+                </div>
               ) : (
                 renderEmptyTerminal()
               )

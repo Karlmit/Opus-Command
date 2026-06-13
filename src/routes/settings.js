@@ -5,6 +5,27 @@ const { getSetting, setSetting } = require('../services/auth.service');
 const { APP_VERSION } = require('../config');
 const https = require('https');
 
+const GITHUB_REPO = 'Karlmit/Opus-Command';
+
+// Pick the highest semantic version from a list of tag/release names
+// (e.g. ["v0.23.1", "v0.22.1", "v0.9.0"] → "0.23.1"). Numeric per-component
+// compare so 0.23.x correctly outranks 0.9.x; the leading "v" is stripped and
+// non-numeric / pre-release tags are ignored.
+function pickLatestSemver(names) {
+  const parse = (n) => (n || '').replace(/^v/, '').split('.').map(x => parseInt(x, 10));
+  const cmp = (a, b) => {
+    for (let i = 0; i < 3; i++) { const d = (a[i] || 0) - (b[i] || 0); if (d) return d; }
+    return 0;
+  };
+  let best = null, bestParts = null;
+  for (const name of names || []) {
+    const parts = parse(name);
+    if (!parts.length || parts.some(Number.isNaN)) continue;
+    if (!bestParts || cmp(parts, bestParts) > 0) { best = name.replace(/^v/, ''); bestParts = parts; }
+  }
+  return best;
+}
+
 // Selectable theme ids (see client/src/lib/themes.js). Legacy values from
 // older clients are normalized onto current ids rather than rejected.
 const THEME_IDS = [
@@ -176,16 +197,33 @@ router.get('/updates/check', requireAuth, async (req, res) => {
     const os = require('os');
     const { docker } = require('../services/docker.service');
 
-    // 1. GitHub releases — what is the latest tagged release?
-    let githubRelease = null;
+    // 1. Latest released version. Git TAGS are the source of truth, not the
+    //    GitHub "Releases" feed: a Release object isn't always created for every
+    //    tag push, so /releases/latest can lag far behind the real latest tag
+    //    (e.g. tags at v0.23.1 while releases/latest still reports v0.22.0).
+    //    Reading from /tags keeps both the version comparison and the
+    //    "What's new" link pinned to the genuine newest version.
+    let latestRelease = null;
     try {
-      githubRelease = await fetchJson(
-        'https://api.github.com/repos/Karlmit/Opus-Command/releases/latest'
+      const tags = await fetchJson(
+        `https://api.github.com/repos/${GITHUB_REPO}/tags?per_page=100`
       );
+      if (Array.isArray(tags)) latestRelease = pickLatestSemver(tags.map(t => t.name));
     } catch (_) {}
-
-    const latestRelease = githubRelease?.tag_name?.replace(/^v/, '') || null;
-    const releaseUrl    = githubRelease?.html_url || null;
+    if (!latestRelease) {
+      // Fallback to the published "latest" release if the tags API is unavailable.
+      try {
+        const rel = await fetchJson(
+          `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`
+        );
+        latestRelease = rel?.tag_name?.replace(/^v/, '') || null;
+      } catch (_) {}
+    }
+    // /releases/tag/<tag> renders the release notes when a Release exists for the
+    // tag, and the tag page otherwise — never a stale older version.
+    const releaseUrl = latestRelease
+      ? `https://github.com/${GITHUB_REPO}/releases/tag/v${latestRelease}`
+      : null;
 
     // 2. Image config digest check — detects ANY new push to :latest.
     //    selfInfo.Image = sha256 of the image config blob.
