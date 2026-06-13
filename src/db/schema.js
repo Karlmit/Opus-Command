@@ -44,6 +44,16 @@ const projects = sqliteTable('projects', {
   createdAt: integer('created_at').notNull(),
 });
 
+// Per-project task board (kanban-style sections + tasks). Stored as JSON blobs
+// keyed by project so the board syncs across devices/browsers instead of living
+// only in each browser's localStorage. One row per project.
+const projectTasks = sqliteTable('project_tasks', {
+  projectId: integer('project_id').primaryKey(),
+  tasks: text('tasks').default('[]'),
+  sections: text('sections').default('[]'),
+  updatedAt: integer('updated_at').notNull(),
+});
+
 const terminalSessions = sqliteTable('terminal_sessions', {
   id: text('id').primaryKey(),
   projectId: integer('project_id'),
@@ -116,6 +126,7 @@ module.exports = {
   users,
   settings,
   projects,
+  projectTasks,
   terminalSessions,
   activityLog,
   connectors,

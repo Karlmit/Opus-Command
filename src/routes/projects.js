@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const { requireAuth } = require('../middleware/auth');
 const { getDB } = require('../db');
-const { projects, terminalSessions, activityLog } = require('../db/schema');
+const { projects, projectTasks, terminalSessions, activityLog } = require('../db/schema');
 const { eq, asc } = require('drizzle-orm');
 const { PROJECTS_DIR } = require('../config');
 const docker = require('../services/docker.service');
@@ -341,6 +341,52 @@ router.patch('/:id', requireAuth, (req, res) => {
     res.json({ success: true, project: updated });
   } catch (err) {
     res.status(500).json({ error: 'Update failed.' });
+  }
+});
+
+// GET /api/projects/:id/tasks — the project's task board (sections + tasks).
+// Server-stored so the board is the same on every device, not per-browser.
+router.get('/:id/tasks', requireAuth, (req, res) => {
+  const projectId = parseInt(req.params.id);
+  try {
+    const db = getDB();
+    if (!db.select().from(projects).where(eq(projects.id, projectId)).all().length) {
+      return res.status(404).json({ error: 'Project not found.' });
+    }
+    const rows = db.select().from(projectTasks).where(eq(projectTasks.projectId, projectId)).all();
+    if (!rows.length) return res.json({ tasks: [], sections: [] });
+    let tasks = [], sections = [];
+    try { tasks = JSON.parse(rows[0].tasks || '[]'); } catch (_) {}
+    try { sections = JSON.parse(rows[0].sections || '[]'); } catch (_) {}
+    res.json({ tasks, sections });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load tasks.' });
+  }
+});
+
+// PUT /api/projects/:id/tasks — replace the project's task board. The client
+// owns the data model (ordering, sections, completion); the server just stores
+// the two JSON blobs verbatim, upserting the single per-project row.
+router.put('/:id/tasks', requireAuth, (req, res) => {
+  const projectId = parseInt(req.params.id);
+  try {
+    const db = getDB();
+    if (!db.select().from(projects).where(eq(projects.id, projectId)).all().length) {
+      return res.status(404).json({ error: 'Project not found.' });
+    }
+    const payload = {
+      tasks: JSON.stringify(Array.isArray(req.body.tasks) ? req.body.tasks : []),
+      sections: JSON.stringify(Array.isArray(req.body.sections) ? req.body.sections : []),
+      updatedAt: Date.now(),
+    };
+    if (db.select().from(projectTasks).where(eq(projectTasks.projectId, projectId)).all().length) {
+      db.update(projectTasks).set(payload).where(eq(projectTasks.projectId, projectId)).run();
+    } else {
+      db.insert(projectTasks).values({ projectId, ...payload }).run();
+    }
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to save tasks.' });
   }
 });
 

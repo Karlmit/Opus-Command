@@ -1648,6 +1648,9 @@ export default function ProjectCockpit() {
   const [editingTaskId, setEditingTaskId] = useState(null);
   const [completedTasksOpen, setCompletedTasksOpen] = useState(false);
   const [tasksOpen, setTasksOpen] = useState(false);
+  // Gate server writes until the board has loaded for the current project, so we
+  // never persist an empty board over real data during the load round-trip.
+  const tasksLoadedRef = useRef(false);
   const [reconnecting, setRecon]  = useState(false);
   const [reconSecs, setReconSecs] = useState(0);
   const [deleting, setDeleting]   = useState(false);
@@ -1739,26 +1742,60 @@ export default function ProjectCockpit() {
     localStorage.setItem('opus:file-panel-width', String(filePanelWidth));
   }, [filePanelWidth]);
 
+  // Load the task board for this project from the server (shared across devices).
+  // Falls back to any pre-sync tasks left in this browser's localStorage and
+  // adopts them — the debounced save effect below then pushes them to the server.
   useEffect(() => {
-    let savedTasks = [];
-    let savedSections = [];
-    try {
-      savedTasks = JSON.parse(localStorage.getItem(`opus:tasks:${projectId}`) || '[]');
-    } catch (_) {}
-    try {
-      savedSections = JSON.parse(localStorage.getItem(`opus:task-sections:${projectId}`) || '[]');
-    } catch (_) {}
-    const nextSections = normalizeTaskSections(savedSections);
-    const nextTasks = normalizeTasks(savedTasks, nextSections);
-    setTaskSections(nextSections);
-    setTasks(nextTasks);
-    localStorage.setItem(`opus:task-sections:${projectId}`, JSON.stringify(nextSections));
-    localStorage.setItem(`opus:tasks:${projectId}`, JSON.stringify(nextTasks));
+    let cancelled = false;
+    tasksLoadedRef.current = false;
     setTaskDraft('');
     setTaskSectionDraft('');
     setEditingTaskId(null);
     setCompletedTasksOpen(false);
+
+    (async () => {
+      let savedTasks = [];
+      let savedSections = [];
+      try {
+        const r = await fetch(`/api/projects/${projectId}/tasks`);
+        if (r.ok) {
+          const d = await r.json();
+          savedTasks = Array.isArray(d.tasks) ? d.tasks : [];
+          savedSections = Array.isArray(d.sections) ? d.sections : [];
+        }
+      } catch (_) {}
+
+      // One-time migration: server has nothing yet, but this browser does.
+      if (!savedTasks.length && !savedSections.length) {
+        try { savedTasks = JSON.parse(localStorage.getItem(`opus:tasks:${projectId}`) || '[]'); } catch (_) {}
+        try { savedSections = JSON.parse(localStorage.getItem(`opus:task-sections:${projectId}`) || '[]'); } catch (_) {}
+      }
+
+      if (cancelled) return;
+      const nextSections = normalizeTaskSections(savedSections);
+      const nextTasks = normalizeTasks(savedTasks, nextSections);
+      setTaskSections(nextSections);
+      setTasks(nextTasks);
+      tasksLoadedRef.current = true;
+    })();
+
+    return () => { cancelled = true; };
   }, [projectId]);
+
+  // Persist the board to the server (debounced) whenever it changes. Skipped
+  // until the initial load completes so we don't clobber stored data.
+  useEffect(() => {
+    if (!tasksLoadedRef.current) return;
+    const pid = projectId;
+    const timer = setTimeout(() => {
+      fetch(`/api/projects/${pid}/tasks`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ tasks, sections: taskSections }),
+      }).catch(() => {});
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [tasks, taskSections, projectId, csrfToken]);
 
   useEffect(() => {
     if (!renameDialog) return;
@@ -1953,28 +1990,13 @@ export default function ProjectCockpit() {
     } catch (_) {}
   }
 
-  function persistTasks(nextTasks) {
-    localStorage.setItem(`opus:tasks:${projectId}`, JSON.stringify(nextTasks));
-  }
-
-  function persistTaskSections(nextSections) {
-    localStorage.setItem(`opus:task-sections:${projectId}`, JSON.stringify(nextSections));
-  }
-
+  // State updates only — the debounced effect above syncs the board to the server.
   function updateTasks(updater) {
-    setTasks(prev => {
-      const next = updater(prev);
-      persistTasks(next);
-      return next;
-    });
+    setTasks(prev => updater(prev));
   }
 
   function updateTaskSections(updater) {
-    setTaskSections(prev => {
-      const next = normalizeTaskSections(updater(prev));
-      persistTaskSections(next);
-      return next;
-    });
+    setTaskSections(prev => normalizeTaskSections(updater(prev)));
   }
 
   function addTask() {

@@ -44,6 +44,13 @@ CREATE TABLE IF NOT EXISTS projects (
   created_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS project_tasks (
+  project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+  tasks TEXT DEFAULT '[]',
+  sections TEXT DEFAULT '[]',
+  updated_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS terminal_sessions (
   id TEXT PRIMARY KEY NOT NULL,
   project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
