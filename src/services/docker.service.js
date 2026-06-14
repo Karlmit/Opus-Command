@@ -146,6 +146,14 @@ function buildWorkspaceCmd(image, template) {
   const opusCliBase64 = fs.existsSync(opusCliPath)
     ? Buffer.from(fs.readFileSync(opusCliPath, 'utf8')).toString('base64')
     : '';
+  const agentHookPath = path.join(__dirname, '..', 'workspace', 'opus-agent-hook.js');
+  const agentHookBase64 = fs.existsSync(agentHookPath)
+    ? Buffer.from(fs.readFileSync(agentHookPath, 'utf8')).toString('base64')
+    : '';
+  const configureHooksPath = path.join(__dirname, '..', 'workspace', 'configure-agent-hooks.js');
+  const configureHooksBase64 = fs.existsSync(configureHooksPath)
+    ? Buffer.from(fs.readFileSync(configureHooksPath, 'utf8')).toString('base64')
+    : '';
   const connectorSkillPath = path.join(__dirname, '..', 'workspace', 'connectors.md');
   const connectorSkillBase64 = fs.existsSync(connectorSkillPath)
     ? Buffer.from(fs.readFileSync(connectorSkillPath, 'utf8')).toString('base64')
@@ -180,6 +188,12 @@ function buildWorkspaceCmd(image, template) {
     'rm -rf /root/.cdesktop /root/.config/cdesktop /root/.local/share/cdesktop 2>/dev/null || true',
     opusCliBase64
       ? `printf '%s' '${opusCliBase64}' | base64 -d > ~/bin/opus && chmod +x ~/bin/opus && cp ~/bin/opus /usr/local/bin/opus && chmod +x /usr/local/bin/opus`
+      : 'true',
+    agentHookBase64
+      ? `printf '%s' '${agentHookBase64}' | base64 -d > /usr/local/bin/opus-agent-hook && chmod +x /usr/local/bin/opus-agent-hook`
+      : 'true',
+    configureHooksBase64
+      ? `printf '%s' '${configureHooksBase64}' | base64 -d > /usr/local/bin/opus-configure-agent-hooks && chmod +x /usr/local/bin/opus-configure-agent-hooks`
       : 'true',
     connectorSkillBase64
       ? `printf '%s' '${connectorSkillBase64}' | base64 -d > /workspace/.opus/skills/connectors.md`
@@ -228,6 +242,7 @@ function buildWorkspaceCmd(image, template) {
     // Configure git to use gh as the credential helper (idempotent)
     // Check ~/bin/gh explicitly since ~/bin isn't in PATH during non-interactive init
     '[ -z "$GH_TOKEN" ] || { GH=$(command -v gh 2>/dev/null || echo ~/bin/gh); [ -x "$GH" ] && GH_TOKEN=$GH_TOKEN "$GH" auth setup-git 2>/dev/null; } || true',
+    '[ -x /usr/local/bin/opus-configure-agent-hooks ] && /usr/local/bin/opus-configure-agent-hooks || true',
   ].join('; ');
 
   const fallbackInstall = workspaceTemplate.fallbackPackages

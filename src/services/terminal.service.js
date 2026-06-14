@@ -21,6 +21,14 @@ const { terminalSessions, projects } = require('../db/schema');
 const { eq } = require('drizzle-orm');
 const { containerName } = require('./docker.service');
 const lxc = require('./unraid-lxc.service');
+const {
+  AGENT_STATUS,
+  AGENT_STATUS_PRIORITY,
+  agentStatusLabel,
+  normalizeAgentStatus,
+  pickMostImportantAgentStatus,
+  legacyAIStateToAgentStatus,
+} = require('./agent-status.service');
 
 // Look up a project row by id (used to pick the terminal backend).
 function _getProject(projectId) {
@@ -39,6 +47,7 @@ const AGENT_PORT   = parseInt(process.env.TERMINAL_AGENT_PORT || '7681', 10);
 const MAX_BUFFER   = 500_000; // bytes
 const CONNECT_TIMEOUT_MS = 5_000;
 const AI_IDLE_TIMEOUT_MS = 3500;
+const AGENT_OUTPUT_ACTIVE_MS = 5000;
 
 // Mobile read-only viewer rendering (headless terminal emulator → text snapshots)
 const SNAPSHOT_MAX_LINES = 600;        // lines pushed to mobile (screen + recent scrollback)
@@ -188,6 +197,10 @@ async function createSession(projectId, io) {
 // scrollback, mobile snapshots, and AI-state detection behave identically.
 function _ingestOutput(sessionId, entry, data, ioRef) {
   entry.lastOutputTime = Date.now();
+  _setSessionAgentStatus(sessionId, AGENT_STATUS.WORKING, ioRef, {
+    source: 'terminal_output',
+    idleAfterMs: AGENT_OUTPUT_ACTIVE_MS,
+  });
   entry.buffer += data;
   if (entry.buffer.length > MAX_BUFFER) {
     entry.buffer = entry.buffer.slice(entry.buffer.length - MAX_BUFFER / 2);
@@ -223,6 +236,8 @@ function _connectProxy(projectId, sessionId, io, host) {
     name: '',
     aiState: 'none',
     aiAgent: null,
+    agentStatus: AGENT_STATUS.READY,
+    agentStatusUpdatedAt: Date.now(),
     inputBuffer: '',
     alive: false,
     lastOutputTime: Date.now(),
@@ -234,6 +249,7 @@ function _connectProxy(projectId, sessionId, io, host) {
     lastSnapTime: 0,
   };
   activeProxies.set(sessionId, entry);
+  _emitProjectAgentSummary(projectId, io);
 
   ws.on('open', () => {
     console.log(`[terminal] proxy WS open for session ${sessionId.slice(0, 8)}`);
@@ -257,6 +273,7 @@ function _connectProxy(projectId, sessionId, io, host) {
 
     } else if (msg.type === 'attached') {
       entry.alive = true;
+      _setSessionAgentStatus(sessionId, AGENT_STATUS.READY, ioRef, { source: 'session_attached' });
       ioRef?.to(`session:${sessionId}`).emit('terminal:session-attached', { sessionId });
 
     } else if (msg.type === 'output') {
@@ -265,6 +282,7 @@ function _connectProxy(projectId, sessionId, io, host) {
     } else if (msg.type === 'exit') {
       console.log(`[terminal] session ${sessionId.slice(0, 8)} exited`);
       _setAIState(sessionId, 'none', ioRef, { force: true });
+      _setSessionAgentStatus(sessionId, AGENT_STATUS.EXITED, ioRef, { force: true });
       entry.alive = false;
       _persistScrollback(sessionId, entry, true);
       _disposeHeadless(entry);
@@ -275,6 +293,7 @@ function _connectProxy(projectId, sessionId, io, host) {
 
     } else if (msg.type === 'error') {
       console.warn(`[terminal] agent error for ${sessionId.slice(0, 8)}:`, msg.message);
+      _setSessionAgentStatus(sessionId, AGENT_STATUS.ERROR, ioRef, { message: msg.message });
     }
   });
 
@@ -452,6 +471,8 @@ function killSession(sessionId) {
   const proxy = activeProxies.get(sessionId);
   const projectId = proxy?.projectId || _getSessionProjectId(sessionId);
   if (proxy) {
+    _setSessionAgentStatus(sessionId, AGENT_STATUS.EXITED, _io, { force: true, source: 'session_killed' });
+    if (proxy.agentStatusTimer) clearTimeout(proxy.agentStatusTimer);
     if (proxy.agentHost) {
       fetch(`${agentHttp(proxy.agentHost)}/sessions/${sessionId}`, {
         method: 'DELETE',
@@ -498,11 +519,12 @@ function listSessions(projectId) {
     active:   isSessionAlive(s.id),
     aiState:  activeProxies.get(s.id)?.aiState || s.aiState || 'none',
     aiAgent:  activeProxies.get(s.id)?.aiAgent || null,
+    agentStatus: _sessionAgentStatusPayload(s.id, s, activeProxies.get(s.id)),
     projectId: s.projectId,
   }));
 }
 
-function getProjectAISummary(projectId) {
+function getProjectAISummary(projectId, options = {}) {
   const db = getDB();
   const rows = db.select().from(terminalSessions)
     .where(eq(terminalSessions.projectId, projectId)).all();
@@ -510,13 +532,25 @@ function getProjectAISummary(projectId) {
   let aiActive = 0;
   let aiWaiting = 0;
   let terminalCount = 0;
+  const sessionStatuses = [];
+  const statusCounts = {};
 
   for (const row of rows) {
     terminalCount++;
-    const state = activeProxies.get(row.id)?.aiState || row.aiState || 'none';
+    const proxy = activeProxies.get(row.id);
+    const state = proxy?.aiState || row.aiState || 'none';
     if (state === 'active') aiActive++;
     else if (state === 'waiting') aiWaiting++;
+    const statusPayload = _sessionAgentStatusPayload(row.id, row, proxy);
+    sessionStatuses.push(statusPayload);
+    statusCounts[statusPayload.status] = (statusCounts[statusPayload.status] || 0) + 1;
   }
+
+  let projectStatus = terminalCount > 0
+    ? pickMostImportantAgentStatus(sessionStatuses.map(s => s.status))
+    : AGENT_STATUS.READY;
+
+  if (options.workspaceStatus === 'error') projectStatus = AGENT_STATUS.ERROR;
 
   return {
     projectId,
@@ -524,6 +558,13 @@ function getProjectAISummary(projectId) {
     aiActive,
     aiWaiting,
     aiBusy: aiActive + aiWaiting,
+    agentStatus: {
+      status: projectStatus,
+      label: agentStatusLabel(projectStatus),
+      priority: AGENT_STATUS_PRIORITY[projectStatus] || AGENT_STATUS_PRIORITY.unknown,
+      counts: statusCounts,
+      sessions: sessionStatuses,
+    },
   };
 }
 
@@ -697,13 +738,23 @@ function _detectAICommandInput(sessionId, data, io) {
   const chunk = String(data || '');
   if (proxy.aiState === 'waiting' && chunk.includes('\r')) {
     _setAIState(sessionId, 'active', io, { agentName: proxy.aiAgent });
+    _setSessionAgentStatus(sessionId, AGENT_STATUS.WORKING, io, {
+      source: 'user_input',
+      idleAfterMs: AGENT_OUTPUT_ACTIVE_MS,
+    });
   }
 
   for (const char of chunk) {
     if (char === '\r' || char === '\n') {
       const agentName = _agentFromCommand(proxy.inputBuffer);
       proxy.inputBuffer = '';
-      if (agentName) _setAIState(sessionId, 'active', io, { agentName });
+      if (agentName) {
+        _setAIState(sessionId, 'active', io, { agentName });
+        _setSessionAgentStatus(sessionId, AGENT_STATUS.WORKING, io, {
+          source: 'user_prompt_submit',
+          idleAfterMs: AGENT_OUTPUT_ACTIVE_MS,
+        });
+      }
     } else if (char === '\u007f' || char === '\b') {
       proxy.inputBuffer = proxy.inputBuffer.slice(0, -1);
     } else if (char >= ' ') {
@@ -758,6 +809,20 @@ function _setAIState(sessionId, state, io, options = {}) {
     proxy.aiState = state;
     proxy.aiAgent = state === 'none' ? null : agentName;
   }
+  if (state === 'waiting') {
+    _setSessionAgentStatus(sessionId, AGENT_STATUS.WAITING_FOR_INPUT, io, {
+      source: 'legacy_waiting_pattern',
+    });
+  } else if (state === 'active') {
+    _setSessionAgentStatus(sessionId, AGENT_STATUS.WORKING, io, {
+      source: 'legacy_active_pattern',
+      idleAfterMs: AI_IDLE_TIMEOUT_MS,
+    });
+  } else if (state === 'none' && proxy?.agentStatus !== AGENT_STATUS.EXITED) {
+    _setSessionAgentStatus(sessionId, AGENT_STATUS.READY, io, {
+      source: 'legacy_idle',
+    });
+  }
 
   if (_idleTimers[sessionId]) {
     clearTimeout(_idleTimers[sessionId]);
@@ -791,6 +856,126 @@ function _setAIState(sessionId, state, io, options = {}) {
   } catch (_) {}
 }
 
+function _deriveSessionAgentStatus(row, proxy) {
+  if (!proxy && row) return AGENT_STATUS.EXITED;
+  if (proxy?.alive !== true && proxy?.agentStatus !== AGENT_STATUS.EXITED && proxy?.agentStatus !== AGENT_STATUS.ERROR) {
+    return AGENT_STATUS.UNKNOWN;
+  }
+  if (proxy?.agentStatus) return normalizeAgentStatus(proxy.agentStatus);
+  const aiStatus = legacyAIStateToAgentStatus(proxy?.aiState || row.aiState || 'none');
+  if (aiStatus !== AGENT_STATUS.READY) return aiStatus;
+  if (proxy?.alive === true) {
+    return Date.now() - (proxy.lastOutputTime || 0) <= AGENT_OUTPUT_ACTIVE_MS
+      ? AGENT_STATUS.WORKING
+      : AGENT_STATUS.READY;
+  }
+  return AGENT_STATUS.UNKNOWN;
+}
+
+function _sessionAgentStatusPayload(sessionId, row, proxy) {
+  const status = _deriveSessionAgentStatus(row, proxy);
+  return {
+    sessionId,
+    projectId: proxy?.projectId || row?.projectId || null,
+    status,
+    label: agentStatusLabel(status),
+    priority: AGENT_STATUS_PRIORITY[status] || AGENT_STATUS_PRIORITY.unknown,
+    updatedAt: proxy?.agentStatusUpdatedAt || null,
+    source: proxy?.agentStatusSource || null,
+  };
+}
+
+function _setSessionAgentStatus(sessionId, status, io, options = {}) {
+  const proxy = activeProxies.get(sessionId);
+  const normalized = normalizeAgentStatus(status);
+  const previousStatus = proxy?.agentStatus;
+  const previousSource = proxy?.agentStatusSource || null;
+  const nextSource = options.source || previousSource;
+
+  if (proxy) {
+    if (proxy.agentStatusTimer) {
+      clearTimeout(proxy.agentStatusTimer);
+      proxy.agentStatusTimer = null;
+    }
+    proxy.agentStatus = normalized;
+    proxy.agentStatusSource = nextSource;
+    proxy.agentStatusUpdatedAt = Date.now();
+    if (options.idleAfterMs && normalized === AGENT_STATUS.WORKING) {
+      proxy.agentStatusTimer = setTimeout(() => {
+        const px = activeProxies.get(sessionId);
+        if (!px || px.agentStatus !== AGENT_STATUS.WORKING) return;
+        _setSessionAgentStatus(sessionId, AGENT_STATUS.READY, io || _io, { source: 'output_idle' });
+      }, options.idleAfterMs);
+    }
+  }
+
+  if (!options.force && previousStatus === normalized && previousSource === nextSource) return;
+
+  const rowProjectId = proxy?.projectId || _getSessionProjectId(sessionId);
+  const payload = _sessionAgentStatusPayload(sessionId, rowProjectId ? { id: sessionId, projectId: rowProjectId } : null, proxy);
+  (io || _io)?.emit('terminal:agent-status', payload);
+  if (rowProjectId) _emitProjectAgentSummary(rowProjectId, io || _io);
+}
+
+// Future CLI hooks should call this adapter instead of adding CLI-specific
+// states to the UI. Map Claude/Codex/Gemini hook events to AgentStatus here.
+function applyAgentHookEvent(sessionId, eventName, io, metadata = {}) {
+  const event = String(eventName || '');
+  if (/^(SessionStart)$/i.test(event)) {
+    return _setSessionAgentStatus(sessionId, AGENT_STATUS.READY, io, {
+      source: event,
+      metadata,
+    });
+  }
+  if (/^(PreToolUse|BeforeTool)$/i.test(event)) {
+    return _setSessionAgentStatus(sessionId, AGENT_STATUS.RUNNING_TOOL, io, {
+      source: event,
+      metadata,
+    });
+  }
+  if (/^(PostToolUse|UserPromptSubmit|BeforeAgent|BeforeModel)$/i.test(event)) {
+    return _setSessionAgentStatus(sessionId, AGENT_STATUS.WORKING, io, {
+      source: event,
+      idleAfterMs: AGENT_OUTPUT_ACTIVE_MS,
+      metadata,
+    });
+  }
+  if (/^(PermissionRequest)$/i.test(event) || metadata.kind === 'permission_prompt') {
+    return _setSessionAgentStatus(sessionId, AGENT_STATUS.WAITING_FOR_APPROVAL, io, {
+      source: event,
+      metadata,
+    });
+  }
+  if (metadata.kind === 'idle_prompt' || /^(Notification)$/i.test(event)) {
+    return _setSessionAgentStatus(sessionId, AGENT_STATUS.WAITING_FOR_INPUT, io, {
+      source: event,
+      metadata,
+    });
+  }
+  if (/^(Stop|AfterAgent)$/i.test(event)) {
+    return _setSessionAgentStatus(sessionId, AGENT_STATUS.DONE, io, {
+      source: event,
+      metadata,
+    });
+  }
+  if (/^(StopFailure)$/i.test(event)) {
+    return _setSessionAgentStatus(sessionId, AGENT_STATUS.ERROR, io, {
+      source: event,
+      metadata,
+    });
+  }
+  if (/^(SessionEnd)$/i.test(event)) {
+    return _setSessionAgentStatus(sessionId, AGENT_STATUS.EXITED, io, {
+      source: event,
+      metadata,
+    });
+  }
+  return _setSessionAgentStatus(sessionId, AGENT_STATUS.UNKNOWN, io, {
+    source: event || 'hook_unknown',
+    metadata,
+  });
+}
+
 function _getSessionProjectId(sessionId) {
   try {
     const rows = getDB().select().from(terminalSessions)
@@ -803,8 +988,17 @@ function _getSessionProjectId(sessionId) {
 
 function _emitProjectAISummary(projectId, io) {
   try {
-    (io || _io)?.emit('project:ai-state', getProjectAISummary(projectId));
+    const payload = getProjectAISummary(projectId);
+    (io || _io)?.emit('project:ai-state', payload);
+    (io || _io)?.emit('project:agent-status', {
+      projectId,
+      ...payload.agentStatus,
+    });
   } catch (_) {}
+}
+
+function _emitProjectAgentSummary(projectId, io) {
+  _emitProjectAISummary(projectId, io);
 }
 
 // ── Exports ──────────────────────────────────────────────────────────────────
@@ -818,6 +1012,7 @@ module.exports = {
   renameSession,
   listSessions,
   getProjectAISummary,
+  applyAgentHookEvent,
   clientJoinSession,
   clientLeaveSession,
   viewerJoin,

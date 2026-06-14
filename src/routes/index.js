@@ -8,6 +8,7 @@ const foldersRouter = require('./folders');
 const gitRouter = require('./git');
 const connectorsRouter = require('./connectors');
 const unraidRouter = require('./unraid');
+const agentEventsRouter = require('./agent-events');
 
 function registerRoutes(app) {
   app.use('/api/setup', setupRouter);
@@ -20,6 +21,7 @@ function registerRoutes(app) {
   app.use('/api/projects/:projectId/files', filesRouter);
   app.use('/api/projects/:projectId/git', gitRouter);
   app.use('/api/connectors', connectorsRouter);
+  app.use('/api/agent-events', agentEventsRouter);
 }
 
 module.exports = { registerRoutes };

@@ -108,7 +108,7 @@ function createSession({ sessionId, name, cols = 80, rows = 24 } = {}) {
     cols,
     rows,
     cwd: '/workspace',
-    env: { ...process.env, TERM: 'xterm-256color' },
+    env: { ...process.env, TERM: 'xterm-256color', OPUS_TERMINAL_SESSION_ID: id },
   });
 
   const entry = {

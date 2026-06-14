@@ -4,6 +4,12 @@ import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from './Toast';
 import { getNotificationSocket } from '../context/NotificationsContext';
+import {
+  agentStatusClass,
+  getAgentStatusIcon,
+  getAgentStatusLabel,
+  getProjectAgentStatus,
+} from '../lib/agentStatus';
 import './ProjectsSidebar.css';
 
 /* ── Constants ──────────────────────────────────── */
@@ -448,16 +454,28 @@ export default function ProjectsSidebar() {
   useEffect(() => {
     const sock = getNotificationSocket();
 
-    function onProjectAIState({ projectId, terminalCount, aiActive, aiWaiting, aiBusy }) {
+    function onProjectAIState({ projectId, terminalCount, aiActive, aiWaiting, aiBusy, agentStatus }) {
       setProjects(prev => prev.map(project => (
         String(project.id) === String(projectId)
-          ? { ...project, terminalCount, aiActive, aiWaiting, aiBusy }
+          ? { ...project, terminalCount, aiActive, aiWaiting, aiBusy, agentStatus: agentStatus || project.agentStatus }
+          : project
+      )));
+    }
+
+    function onProjectAgentStatus({ projectId, status, label, priority, counts, sessions }) {
+      setProjects(prev => prev.map(project => (
+        String(project.id) === String(projectId)
+          ? { ...project, agentStatus: { status, label, priority, counts, sessions } }
           : project
       )));
     }
 
     sock.on('project:ai-state', onProjectAIState);
-    return () => sock.off('project:ai-state', onProjectAIState);
+    sock.on('project:agent-status', onProjectAgentStatus);
+    return () => {
+      sock.off('project:ai-state', onProjectAIState);
+      sock.off('project:agent-status', onProjectAgentStatus);
+    };
   }, []);
 
   useEffect(() => {
@@ -465,7 +483,17 @@ export default function ProjectsSidebar() {
 
     function onProjectStatus({ id, status }) {
       setProjects(prev => prev.map(project => (
-        String(project.id) === String(id) ? { ...project, status } : project
+        String(project.id) === String(id)
+          ? {
+              ...project,
+              status,
+              agentStatus: status === 'error'
+                ? { ...(project.agentStatus || {}), status: 'error', label: 'Error', priority: 1 }
+                : project.agentStatus?.status === 'error' && (project.agentStatus?.sessions || []).length === 0
+                  ? { status: 'ready', label: 'Ready', priority: 7, counts: {}, sessions: [] }
+                  : project.agentStatus,
+            }
+          : project
       )));
     }
 
@@ -584,13 +612,22 @@ export default function ProjectsSidebar() {
         {projects.length === 0 && !isCollapsed && <p className="sidebar-empty">No projects yet</p>}
         {projects.map(project => {
           const isActive = String(project.id) === String(activeId);
-          const aiWaiting = (project.aiWaiting || 0) > 0;
-          const aiActive = !aiWaiting && (project.aiActive || project.aiBusy || 0) > 0;
+          const agentStatus = getProjectAgentStatus(project);
+          const agentClass = agentStatusClass(agentStatus);
+          const agentLabel = getAgentStatusLabel(agentStatus);
+          const agentIcon = getAgentStatusIcon(agentStatus);
+          const agentTitle = `AI status: ${agentLabel}`;
+          const isWaiting = agentStatus === 'waiting_for_input' || agentStatus === 'waiting_for_approval';
+          const isActiveAgent = agentStatus === 'working' || agentStatus === 'running_tool';
+          const isErrorAgent = agentStatus === 'error';
+          const terminalHint = project.terminalCount > 0
+            ? `${project.terminalCount} terminal${project.terminalCount === 1 ? '' : 's'}`
+            : 'No terminals';
           return (
             <div key={project.id}
               data-id={project.id}
               draggable
-              className={`sidebar-project-item${isActive ? ' active' : ''}${aiActive ? ' ai-active' : ''}${aiWaiting ? ' ai-waiting' : ''}${dragId === project.id ? ' dragging' : ''}`}
+              className={`sidebar-project-item agent-${agentClass}${isActive ? ' active' : ''}${isActiveAgent ? ' ai-active' : ''}${isWaiting ? ' ai-waiting' : ''}${isErrorAgent ? ' ai-error' : ''}${dragId === project.id ? ' dragging' : ''}`}
               onClick={() => navigate(`/project/${project.id}`)}
               onMouseEnter={() => setHoveredId(project.id)}
               onMouseLeave={() => setHoveredId(null)}
@@ -598,17 +635,34 @@ export default function ProjectsSidebar() {
               onDragStart={e => handleDragStart(e, project.id)}
               onDragOver={e => handleDragOver(e, project.id)}
               onDragEnd={handleDragEnd}
-              title={isCollapsed ? project.name : undefined}
+              title={isCollapsed ? `${project.name} — ${agentTitle}` : undefined}
+              aria-label={`${project.name}. ${agentTitle}. Workspace ${project.status || 'unknown'}.`}
             >
               <div className="sidebar-avatar-wrap">
                 <ProjectAvatar project={project} size={34} playing={hoveredId === project.id} />
                 <span className={`sidebar-status-dot status-${project.status}`} />
-                {aiWaiting && <span className="sidebar-ai-dot" />}
+                <span
+                  className={`sidebar-agent-dot agent-${agentClass}`}
+                  title={agentTitle}
+                  aria-label={agentTitle}
+                >
+                  {agentIcon}
+                </span>
               </div>
               {!isCollapsed && (
                 <div className="sidebar-project-meta">
-                  <span className="sidebar-project-name">{project.name}</span>
-                  <span className="sidebar-project-status">{project.status}</span>
+                  <span className="sidebar-project-title-row">
+                    <span className="sidebar-project-name">{project.name}</span>
+                    <span
+                      className={`sidebar-agent-chip agent-${agentClass}`}
+                      title={agentTitle}
+                      aria-label={agentTitle}
+                    >
+                      <span className="sidebar-agent-chip-icon" aria-hidden="true">{agentIcon}</span>
+                      <span className="sidebar-agent-chip-label">{agentLabel}</span>
+                    </span>
+                  </span>
+                  <span className="sidebar-project-status">{project.status} · {terminalHint}</span>
                 </div>
               )}
             </div>

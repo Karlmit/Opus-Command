@@ -19,6 +19,7 @@ const path = require('path');
 const ssh = require('./ssh.service');
 const agent = require('./unraid-agent.service');
 const lxcConfig = require('./unraid-lxc.config');
+const { PORT } = require('../config');
 
 function isAgentMode(cfg = lxcConfig.getConfig()) {
   return cfg.connectionMode === 'agent';
@@ -26,6 +27,8 @@ function isAgentMode(cfg = lxcConfig.getConfig()) {
 
 const HELPER_REMOTE_PATH = '/usr/local/bin/opus-lxc';
 const HELPER_LOCAL_PATH = path.join(__dirname, '..', 'workspace', 'opus-lxc.sh');
+const OPUS_AGENT_HOOK_PATH = path.join(__dirname, '..', 'workspace', 'opus-agent-hook.js');
+const CONFIGURE_AGENT_HOOKS_PATH = path.join(__dirname, '..', 'workspace', 'configure-agent-hooks.js');
 const NAME_PREFIX = 'opus-workspace-';
 
 // ── naming / paths ────────────────────────────────────────────────────────────
@@ -227,7 +230,15 @@ async function createWorkspace(project) {
 
 async function startWorkspace(project) {
   const { values } = await runHelper('start', ['--name', containerNameFor(project)], { timeoutMs: 60_000 });
-  return mapState(values.STATE);
+  const status = mapState(values.STATE);
+  if (status === 'running') {
+    try {
+      await ensureAgentStatusIntegration(project);
+    } catch (err) {
+      console.warn('[unraid-lxc] agent status integration refresh warning:', err.message);
+    }
+  }
+  return status;
 }
 
 async function stopWorkspace(project) {
@@ -237,7 +248,15 @@ async function stopWorkspace(project) {
 
 async function restartWorkspace(project) {
   const { values } = await runHelper('restart', ['--name', containerNameFor(project)], { timeoutMs: 90_000 });
-  return mapState(values.STATE);
+  const status = mapState(values.STATE);
+  if (status === 'running') {
+    try {
+      await ensureAgentStatusIntegration(project);
+    } catch (err) {
+      console.warn('[unraid-lxc] agent status integration refresh warning:', err.message);
+    }
+  }
+  return status;
 }
 
 // ── provisioning (template parity with the Docker backend) ────────────────────
@@ -331,6 +350,8 @@ function buildProvisionScript(project, { envVars } = {}) {
   const { getTerminalAgentToken } = require('./auth.service');
   const opusCliB64 = b64File(OPUS_CLI_PATH);
   const connectorsB64 = b64File(CONNECTORS_SKILL_PATH);
+  const agentHookB64 = b64File(OPUS_AGENT_HOOK_PATH);
+  const configureHooksB64 = b64File(CONFIGURE_AGENT_HOOKS_PATH);
   const agentB64 = b64File(TERMINAL_AGENT_PATH);
   const agentTokenB64 = b64(getTerminalAgentToken(project.id));
   const claudeB64 = b64(lxcInstructionsDoc('claude'));
@@ -416,6 +437,10 @@ fi
 # opus CLI (connector access) — refreshed each run
 ${opusCliB64 ? `printf '%s' '${opusCliB64}' | base64 -d > /root/bin/opus && chmod +x /root/bin/opus && cp /root/bin/opus /usr/local/bin/opus && chmod +x /usr/local/bin/opus` : 'true'}
 
+# Opus agent hook bridge — refreshed each run
+${agentHookB64 ? `printf '%s' '${agentHookB64}' | base64 -d > /usr/local/bin/opus-agent-hook && chmod +x /usr/local/bin/opus-agent-hook` : 'true'}
+${configureHooksB64 ? `printf '%s' '${configureHooksB64}' | base64 -d > /usr/local/bin/opus-configure-agent-hooks && chmod +x /usr/local/bin/opus-configure-agent-hooks` : 'true'}
+
 # managed Opus skill — refreshed each run
 ${connectorsB64 ? `printf '%s' '${connectorsB64}' | base64 -d > /workspace/.opus/skills/connectors.md` : 'true'}
 
@@ -451,6 +476,8 @@ command -v claude >/dev/null 2>&1 && command -v playwright-mcp >/dev/null 2>&1 &
 command -v claude >/dev/null 2>&1 && command -v markitdown-mcp >/dev/null 2>&1 && { claude mcp get markitdown >/dev/null 2>&1 || claude mcp add -s user markitdown -- markitdown-mcp >/dev/null 2>&1; } || true
 command -v codex >/dev/null 2>&1 && command -v playwright-mcp >/dev/null 2>&1 && { codex mcp get playwright >/dev/null 2>&1 || codex mcp add playwright -- playwright-mcp >/dev/null 2>&1; } || true
 command -v codex >/dev/null 2>&1 && command -v markitdown-mcp >/dev/null 2>&1 && { codex mcp get markitdown >/dev/null 2>&1 || codex mcp add markitdown -- markitdown-mcp >/dev/null 2>&1; } || true
+
+[ -x /usr/local/bin/opus-configure-agent-hooks ] && /usr/local/bin/opus-configure-agent-hooks || true
 
 # ── terminal-agent ────────────────────────────────────────────────────────────
 # The agent owns PTY sessions inside the container and is reached by Opus Command
@@ -500,8 +527,74 @@ echo "[opus] provisioning complete."
   );
 }
 
-async function updateWorkspace(project) {
+function buildAgentStatusIntegrationScript(project, { envVars } = {}) {
+  const { getWorkspaceEnvVars, getWorkspaceAccessToken, getTerminalAgentToken } = require('./auth.service');
+  const vars = Array.isArray(envVars) ? envVars : getWorkspaceEnvVars();
+  const agentHookB64 = b64File(OPUS_AGENT_HOOK_PATH);
+  const configureHooksB64 = b64File(CONFIGURE_AGENT_HOOKS_PATH);
+  const agentB64 = b64File(TERMINAL_AGENT_PATH);
+  const agentTokenB64 = b64(getTerminalAgentToken(project.id));
+  const commandUrl = process.env.OPUS_WORKSPACE_COMMAND_URL || `http://opus-command:${PORT}`;
+
+  const envLines = [
+    '# Opus Command — managed workspace environment (regenerated on update; do not edit)',
+    'export PATH="$HOME/bin:$HOME/.local/bin:$PATH"',
+    'export IS_SANDBOX=1',
+    `export OPUS_COMMAND_URL=${shSingleQuote(commandUrl)}`,
+    `export OPUS_WORKSPACE_TOKEN=${shSingleQuote(getWorkspaceAccessToken())}`,
+  ];
+  for (const { key, value } of vars) {
+    if (key) envLines.push(`export ${key}=${shSingleQuote(value)}`);
+  }
+  const envB64 = b64(envLines.join('\n') + '\n');
+
+  return (
+`set -u
+mkdir -p /root/.claude /root/.codex /.codex /usr/local/bin /etc/opus /opt/terminal-agent
+${agentHookB64 ? `printf '%s' '${agentHookB64}' | base64 -d > /usr/local/bin/opus-agent-hook && chmod +x /usr/local/bin/opus-agent-hook` : 'true'}
+${configureHooksB64 ? `printf '%s' '${configureHooksB64}' | base64 -d > /usr/local/bin/opus-configure-agent-hooks && chmod +x /usr/local/bin/opus-configure-agent-hooks` : 'true'}
+printf '%s' '${envB64}' | base64 -d > /etc/profile.d/opus-workspace.sh && chmod 0644 /etc/profile.d/opus-workspace.sh
+touch /root/.bashrc
+grep -q "Opus Command managed environment" /root/.bashrc 2>/dev/null || cat >> /root/.bashrc <<'EOFBASHRC'
+
+# Opus Command managed environment
+[ -f /etc/profile.d/opus-workspace.sh ] && . /etc/profile.d/opus-workspace.sh
+# End Opus Command managed environment
+EOFBASHRC
+[ -x /usr/local/bin/opus-configure-agent-hooks ] && /usr/local/bin/opus-configure-agent-hooks || true
+( umask 077; printf '%s' '${agentTokenB64}' | base64 -d > /etc/opus/terminal-agent.token )
+chmod 600 /etc/opus/terminal-agent.token
+${agentB64 ? `printf '%s' '${agentB64}' | base64 -d > /opt/terminal-agent/index.js` : 'true'}
+if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files opus-terminal-agent.service >/dev/null 2>&1; then
+  systemctl restart opus-terminal-agent >/dev/null 2>&1 || true
+fi
+echo "[opus] agent status integration refreshed."
+`
+  );
+}
+
+async function runProvisionScript(project, script, { timeoutMs = 600_000 } = {}) {
   const name = containerNameFor(project);
+  let code; let stdout; let stderr;
+  if (isAgentMode()) {
+    ({ code, stdout = '', stderr = '' } = await agent.rpc('lxc.provision', { name, script, timeoutSec: Math.ceil(timeoutMs / 1000) }, { timeoutMs: timeoutMs + 20_000 }));
+  } else {
+    const cmd = `lxc-attach -n ${shq(name)} -- bash -s`;
+    ({ code, stdout, stderr } = await ssh.execWithInput(cmd, script, { timeoutMs }));
+  }
+  if (code !== 0) {
+    throw new Error(`LXC provisioning failed (exit ${code}): ${(stderr || stdout || '').trim().slice(-400)}`);
+  }
+  return { log: `${stderr || ''}${stdout || ''}`.trim() };
+}
+
+async function ensureAgentStatusIntegration(project) {
+  const ready = await waitUntilAttachable(project);
+  if (!ready) throw new Error('container is not running/attachable');
+  return runProvisionScript(project, buildAgentStatusIntegrationScript(project), { timeoutMs: 90_000 });
+}
+
+async function updateWorkspace(project) {
   // Refresh the host helper too (SSH mode only — the plugin owns it in agent
   // mode): provisioning installs the terminal-agent, and reaching it afterwards
   // needs the helper's `status` to report the container IP (added alongside
@@ -511,19 +604,7 @@ async function updateWorkspace(project) {
   const ready = await waitUntilAttachable(project);
   if (!ready) throw new Error('container is not running/attachable — start it before updating');
   const script = buildProvisionScript(project);
-  let code; let stdout; let stderr;
-  if (isAgentMode()) {
-    // Script travels inside the TLS payload and is delivered over stdin into
-    // `lxc-attach -- bash -s` by the plugin — secrets never appear in argv.
-    ({ code, stdout = '', stderr = '' } = await agent.rpc('lxc.provision', { name, script, timeoutSec: 600 }, { timeoutMs: 620_000 }));
-  } else {
-    const cmd = `lxc-attach -n ${shq(name)} -- bash -s`;
-    ({ code, stdout, stderr } = await ssh.execWithInput(cmd, script, { timeoutMs: 600_000 }));
-  }
-  if (code !== 0) {
-    throw new Error(`LXC provisioning failed (exit ${code}): ${(stderr || stdout || '').trim().slice(-400)}`);
-  }
-  return { log: `${stderr || ''}${stdout || ''}`.trim() };
+  return runProvisionScript(project, script, { timeoutMs: 600_000 });
 }
 
 async function execWorkspace(project, command, { cwd = '/workspace', timeoutMs = 60_000 } = {}) {
@@ -618,6 +699,8 @@ async function repairTerminalAgent(project) {
     ready = await waitUntilAttachable(project);
     if (!ready) throw new Error('container is not running/attachable — start the workspace first');
   }
+
+  await ensureAgentStatusIntegration(project);
 
   // 3. Restart the agent. A missing unit means the agent was never installed
   //    (older workspace), so fall back to a full provision which installs it.

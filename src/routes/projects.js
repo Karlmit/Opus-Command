@@ -121,7 +121,7 @@ router.get('/', requireAuth, async (req, res) => {
 
     const projectsWithStatus = await Promise.all(rows.map(async p => {
       const status = await workspace.getStatus(p).catch(() => 'stopped');
-      const aiSummary = terminal.getProjectAISummary(p.id);
+      const aiSummary = terminal.getProjectAISummary(p.id, { workspaceStatus: status });
       return {
         id: p.id,
         name: p.name,
@@ -134,6 +134,7 @@ router.get('/', requireAuth, async (req, res) => {
         aiWaiting: aiSummary.aiWaiting,
         aiActive: aiSummary.aiActive,
         aiBusy: aiSummary.aiBusy,
+        agentStatus: aiSummary.agentStatus,
       };
     }));
 
@@ -246,6 +247,13 @@ router.post('/', requireAuth, async (req, res) => {
       aiWaiting: 0,
       aiActive: 0,
       aiBusy: 0,
+      agentStatus: {
+        status: 'ready',
+        label: 'Ready',
+        priority: 7,
+        counts: {},
+        sessions: [],
+      },
     });
   } catch (err) {
     console.error('[projects] Create error:', err);
@@ -289,7 +297,7 @@ router.get('/:id', requireAuth, async (req, res) => {
       .slice(-20)
       .reverse();
 
-    const aiSummary = terminal.getProjectAISummary(p.id);
+    const aiSummary = terminal.getProjectAISummary(p.id, { workspaceStatus: status });
 
     res.json({
       id: p.id,
@@ -308,6 +316,7 @@ router.get('/:id', requireAuth, async (req, res) => {
       aiActive: aiSummary.aiActive,
       aiWaiting: aiSummary.aiWaiting,
       aiBusy: aiSummary.aiBusy,
+      agentStatus: aiSummary.agentStatus,
       gitBranch: null,
       changedFiles: 0,
       activity,
