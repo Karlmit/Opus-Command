@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import './SyntaxHighlightedEditor.css';
 
 const LANGUAGE_BY_EXT = {
@@ -148,14 +148,35 @@ function highlightLine(line, language, lineIndex) {
   return nodes.length ? nodes : '\u00a0';
 }
 
-function HighlightedCode({ value, fileName }) {
+function getLineNumber(value, position) {
+  return value.slice(0, position).split('\n').length;
+}
+
+function getSelectedLines(value, selectionStart, selectionEnd) {
+  const start = Math.min(selectionStart, selectionEnd);
+  const end = Math.max(selectionStart, selectionEnd);
+  const firstLine = getLineNumber(value, start);
+  const lastLine = getLineNumber(value, end);
+  const lines = new Set();
+
+  for (let line = firstLine; line <= lastLine; line += 1) {
+    lines.add(line);
+  }
+
+  return lines;
+}
+
+function HighlightedCode({ value, fileName, selectedLines }) {
   const language = languageForFile(fileName);
   const lines = value.split('\n');
 
   return lines.map((line, index) => (
-    <span className="syntax-line" key={index}>
-      {highlightLine(line, language, index)}
-      {index < lines.length - 1 ? '\n' : ''}
+    <span
+      className={`syntax-line${selectedLines.has(index + 1) ? ' is-selected' : ''}`}
+      key={index}
+    >
+      <span className="syntax-line-number" aria-hidden="true">{index + 1}</span>
+      <span className="syntax-line-code">{highlightLine(line, language, index)}</span>
     </span>
   ));
 }
@@ -170,9 +191,17 @@ export default function SyntaxHighlightedEditor({
   spellCheck = false,
 }) {
   const highlightRef = useRef(null);
+  const [selectedLines, setSelectedLines] = useState(() => new Set([1]));
+  const textValue = value || '';
+  const lineCount = textValue.split('\n').length;
+  const lineNumberDigits = Math.max(2, String(lineCount).length);
   const highlighted = useMemo(() => (
-    <HighlightedCode value={value || ''} fileName={fileName} />
-  ), [value, fileName]);
+    <HighlightedCode value={textValue} fileName={fileName} selectedLines={selectedLines} />
+  ), [textValue, fileName, selectedLines]);
+
+  function updateSelectedLines(target) {
+    setSelectedLines(getSelectedLines(target.value || '', target.selectionStart || 0, target.selectionEnd || 0));
+  }
 
   function handleScroll(e) {
     const highlighter = highlightRef.current;
@@ -182,15 +211,26 @@ export default function SyntaxHighlightedEditor({
   }
 
   return (
-    <div className={`syntax-editor ${className}`}>
+    <div
+      className={`syntax-editor ${className}`}
+      style={{ '--syntax-line-number-digits': lineNumberDigits }}
+    >
       <pre ref={highlightRef} className="syntax-editor-highlight" aria-hidden="true">
         <code>{highlighted}</code>
       </pre>
       <textarea
         className={`syntax-editor-textarea ${textareaClassName}`}
-        value={value || ''}
-        onChange={onChange}
+        value={textValue}
+        onChange={e => {
+          updateSelectedLines(e.currentTarget);
+          onChange?.(e);
+        }}
         onKeyDown={onKeyDown}
+        onKeyUp={e => updateSelectedLines(e.currentTarget)}
+        onMouseUp={e => updateSelectedLines(e.currentTarget)}
+        onSelect={e => updateSelectedLines(e.currentTarget)}
+        onFocus={e => updateSelectedLines(e.currentTarget)}
+        onClick={e => updateSelectedLines(e.currentTarget)}
         onScroll={handleScroll}
         spellCheck={spellCheck}
         autoComplete="off"

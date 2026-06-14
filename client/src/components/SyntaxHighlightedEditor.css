@@ -4,6 +4,10 @@
   min-height: 0;
   overflow: hidden;
   background: var(--color-surface-elevated);
+  --syntax-editor-padding-y: var(--spacing-md);
+  --syntax-editor-padding-x: var(--spacing-md);
+  --syntax-line-number-gap: 14px;
+  --syntax-line-number-width: calc((var(--syntax-line-number-digits, 2) * 1ch) + var(--syntax-line-number-gap));
 }
 
 .syntax-editor-highlight,
@@ -15,7 +19,7 @@
   margin: 0;
   border: none;
   outline: none;
-  padding: var(--spacing-md);
+  padding: var(--syntax-editor-padding-y) var(--syntax-editor-padding-x);
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-regular);
@@ -34,13 +38,16 @@
 }
 
 .syntax-editor-highlight code {
+  display: block;
   font: inherit;
+  min-width: 100%;
 }
 
 .syntax-editor .syntax-editor-textarea {
   z-index: 1;
   resize: none;
   overflow: auto;
+  padding-left: calc(var(--syntax-editor-padding-x) + var(--syntax-line-number-width) + var(--syntax-line-number-gap));
   background: transparent;
   color: transparent;
   caret-color: var(--color-terminal-cursor);
@@ -57,7 +64,37 @@
 }
 
 .syntax-line {
+  display: grid;
+  grid-template-columns: var(--syntax-line-number-width) minmax(0, 1fr);
+  column-gap: var(--syntax-line-number-gap);
   min-height: 1lh;
+  padding: 0 var(--syntax-editor-padding-x);
+  margin: 0 calc(var(--syntax-editor-padding-x) * -1);
+}
+
+.syntax-line.is-selected {
+  background: color-mix(in srgb, var(--color-accent) 11%, transparent);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--color-accent) 58%, transparent);
+}
+
+.syntax-line-number {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  padding-right: var(--syntax-line-number-gap);
+  border-right: 1px solid var(--color-border);
+  color: var(--color-text-dim);
+  text-align: right;
+  user-select: none;
+}
+
+.syntax-line.is-selected .syntax-line-number {
+  color: var(--color-text-secondary);
+}
+
+.syntax-line-code {
+  min-width: 0;
+  color: var(--color-text-primary);
 }
 
 .syntax-comment { color: #7f8794; }
