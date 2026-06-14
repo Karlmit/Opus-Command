@@ -263,6 +263,8 @@ body.mobile-device .projects-sidebar { display: none; }
   height: 8px;
   border-radius: 50%;
   border: 2px solid var(--color-background);
+  transform: scale(1.2);
+  transform-origin: center;
 }
 .sidebar-status-dot.status-running  { background: var(--color-success); }
 .sidebar-status-dot.status-starting { background: var(--color-warning); animation: pulse 2s infinite; }
