@@ -15,7 +15,7 @@ const {
   normalizeServer,
 } = require('opus-connector-shared');
 
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
 // Protocol 2 unlocks scripts, file transfer, and job cancellation on the
 // server. The connector advertises it through capabilities.protocol.
 const CONNECTOR_PROTOCOL = 2;

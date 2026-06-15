@@ -24,7 +24,9 @@ detection, and feedback.
 - **Feedback:** agents can file feedback reports stored under the connector home.
 - **Auto-update:** the tray app checks GitHub releases, downloads the new
   installer, runs it silently, and relaunches.
-- **Start at login:** the installer registers a machine-wide Run key.
+- **Start at login (elevated):** the installer registers a machine-wide
+  scheduled task (`OpusConnector`, trigger `ONLOGON`, run level `HIGHEST`) so the
+  connector launches **as administrator** on every login without a UAC prompt.
 
 ## Install layout
 

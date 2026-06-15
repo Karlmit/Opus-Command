@@ -2,7 +2,7 @@ Unicode True
 ManifestDPIAware True
 
 !define PRODUCT_NAME "Opus Connector"
-!define PRODUCT_VERSION "0.2.0"
+!define PRODUCT_VERSION "0.3.0"
 !define PUBLISHER "Opus Command"
 !define APP_EXE "OpusConnector.exe"
 !define SOURCE_DIR "..\..\dist\OpusConnector-win32-x64"
@@ -61,12 +61,20 @@ Section "Install"
   WriteRegDWORD HKLM "${INSTALL_REG_KEY}" "NoModify" 1
   WriteRegDWORD HKLM "${INSTALL_REG_KEY}" "NoRepair" 1
 
-  ; Start the connector automatically at login so it stays paired and online.
-  WriteRegStr HKLM "${RUN_REG_KEY}" "OpusConnector" '"$INSTDIR\${APP_EXE}"'
+  ; Start the connector automatically at logon, elevated (as administrator), so
+  ; it stays paired and online with the privileges its jobs need. A scheduled
+  ; task with the highest run level (/RL HIGHEST) launches the app with admin
+  ; rights and no UAC prompt on every login — something the plain Run key can't
+  ; do. Remove any legacy Run-key autostart so we don't also launch an
+  ; unelevated copy.
+  DeleteRegValue HKLM "${RUN_REG_KEY}" "OpusConnector"
+  nsExec::ExecToLog 'schtasks /Create /TN "OpusConnector" /TR "\"$INSTDIR\${APP_EXE}\"" /SC ONLOGON /RL HIGHEST /F'
 
   ; A silent run (auto-update) skips the finish page, so relaunch the app here.
+  ; Launch via the scheduled task so the relaunch is elevated too, matching the
+  ; logon start.
   IfSilent 0 +2
-    Exec '"$INSTDIR\${APP_EXE}"'
+    nsExec::ExecToLog 'schtasks /Run /TN "OpusConnector"'
 SectionEnd
 
 Section "Uninstall"
@@ -76,6 +84,7 @@ Section "Uninstall"
   Delete "$DESKTOP\${PRODUCT_NAME}.lnk"
   Delete "$SMPROGRAMS\${PRODUCT_NAME}\${PRODUCT_NAME}.lnk"
   RMDir "$SMPROGRAMS\${PRODUCT_NAME}"
+  nsExec::ExecToLog 'schtasks /Delete /TN "OpusConnector" /F'
   DeleteRegValue HKLM "${RUN_REG_KEY}" "OpusConnector"
   DeleteRegKey HKLM "${INSTALL_REG_KEY}"
   RMDir /r "$INSTDIR"
