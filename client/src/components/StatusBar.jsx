@@ -24,6 +24,8 @@ export default function StatusBar() {
 
   const [version, setVersion] = useState(null);
   const [project, setProject] = useState(null);
+  const [ip, setIp] = useState(null);
+  const [copied, setCopied] = useState(false);
 
   // App version — once.
   useEffect(() => {
@@ -60,6 +62,32 @@ export default function StatusBar() {
 
     return () => { alive = false; clearInterval(poll); sock.off('project:ai-state', onAIState); };
   }, [projectId]);
+
+  // Workspace local IP — only meaningful while running; re-resolved on a slow
+  // poll because LXC is DHCP and the address can change across restarts.
+  useEffect(() => {
+    if (!projectId || project?.status !== 'running') { setIp(null); return; }
+    let alive = true;
+    async function loadIp() {
+      try {
+        const r = await fetch(`/api/projects/${projectId}/ip`);
+        const d = await r.json();
+        if (alive) setIp(d.ip || null);
+      } catch (_) { /* keep last known */ }
+    }
+    loadIp();
+    const poll = setInterval(loadIp, 15000);
+    return () => { alive = false; clearInterval(poll); };
+  }, [projectId, project?.status]);
+
+  async function copyIp() {
+    if (!ip) return;
+    try {
+      await navigator.clipboard.writeText(ip);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch (_) { /* clipboard unavailable */ }
+  }
 
   const status = projectId ? (project?.status || 'stopped') : null;
   const dotColor = STATUS_COLORS[status] || STATUS_COLORS.stopped;
@@ -103,6 +131,17 @@ export default function StatusBar() {
         )}
         {terminalCount > 0 && (
           <span className="status-bar-text">{terminalCount} terminal{terminalCount !== 1 ? 's' : ''}</span>
+        )}
+        {ip && (
+          <button
+            type="button"
+            className="status-bar-ip"
+            onClick={copyIp}
+            title="Click to copy workspace local IP"
+            aria-label={`Workspace local IP ${ip}. Click to copy.`}
+          >
+            {copied ? 'Copied' : ip}
+          </button>
         )}
         {version && (
           <span className="status-bar-version" aria-label={`App version ${version}`}>

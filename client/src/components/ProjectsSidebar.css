@@ -226,6 +226,21 @@ body.mobile-device .projects-sidebar { display: none; }
   margin: 1px 6px;
 }
 
+/* Collapsed (icons only): the name is gone, so the selection has to read at a
+   glance. Give the active item a thicker, fully-opaque accent ring around the
+   avatar plus a stronger left bar. */
+.projects-sidebar.collapsed .sidebar-project-item.active .project-avatar {
+  box-shadow:
+    0 0 0 2px var(--color-background),
+    0 0 0 4px var(--color-accent),
+    0 0 12px color-mix(in srgb, var(--color-accent) 60%, transparent);
+}
+.projects-sidebar.collapsed .sidebar-project-item.active::before {
+  width: 5px;
+  height: 72%;
+  left: 2px;
+}
+
 /* ── Avatar ────────────────────────────────────── */
 .project-avatar {
   border-radius: var(--radius-md);
@@ -263,7 +278,7 @@ body.mobile-device .projects-sidebar { display: none; }
   height: 8px;
   border-radius: 50%;
   border: 2px solid var(--color-background);
-  transform: scale(1.2);
+  transform: scale(1.56); /* 30% larger than the previous 1.2 — easier to read */
   transform-origin: center;
 }
 .sidebar-status-dot.status-running  { background: var(--color-success); }
