@@ -37,6 +37,14 @@ async function getStatus(project) {
   return docker.getContainerStatus(project.id);
 }
 
+// Resolve the workspace's local IP for display. LXC re-resolves live on every
+// call (DHCP — the address changes across restarts); Docker reads the container's
+// network address. Returns null if stopped or no address yet.
+async function getIp(project) {
+  if (isLxc(project)) return lxc.getContainerIp(project);
+  return docker.getContainerIp(project.id);
+}
+
 // ── create ────────────────────────────────────────────────────────────────────
 // Returns the set of fields the route should persist on the project row.
 
@@ -127,6 +135,7 @@ module.exports = {
   backendOf,
   isLxc,
   getStatus,
+  getIp,
   create,
   start,
   stop,

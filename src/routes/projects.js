@@ -729,6 +729,23 @@ router.get('/:id/logs', requireAuth, async (req, res) => {
   }
 });
 
+// GET /api/projects/:id/ip — resolve the workspace's local IP for display.
+// LXC re-resolves live on each call (DHCP can change the address across
+// restarts); Docker reads the container's network address. Returns ip: null
+// when the workspace is stopped or has no address yet.
+router.get('/:id/ip', requireAuth, async (req, res) => {
+  const projectId = parseInt(req.params.id);
+  try {
+    const db = getDB();
+    const project = db.select().from(projects).where(eq(projects.id, projectId)).all()[0];
+    if (!project) return res.status(404).json({ error: 'Project not found.' });
+    const ip = await workspace.getIp(project);
+    res.json({ ip: ip || null, backend: workspace.backendOf(project) });
+  } catch (err) {
+    res.status(500).json({ error: `Failed to resolve workspace IP: ${err.message}` });
+  }
+});
+
 // DELETE /api/projects/:id — delete project (keep files on disk)
 router.delete('/:id', requireAuth, async (req, res) => {
   const projectId = parseInt(req.params.id);

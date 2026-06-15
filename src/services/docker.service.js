@@ -490,6 +490,26 @@ async function getContainerBinds(projectId) {
   }
 }
 
+// Resolve the workspace container's IP on the Docker network. Prefer the
+// opus-internal network (the address opus-command actually uses to reach the
+// terminal-agent by name); fall back to the first network that has an address.
+// Returns null if the container is stopped or has no address yet.
+async function getContainerIp(projectId) {
+  try {
+    const info = await docker.getContainer(containerName(projectId)).inspect();
+    if (!info.State?.Running) return null;
+    const nets = info.NetworkSettings?.Networks || {};
+    const preferred = nets[INTERNAL_NETWORK]?.IPAddress;
+    if (preferred) return preferred;
+    for (const net of Object.values(nets)) {
+      if (net?.IPAddress) return net.IPAddress;
+    }
+    return info.NetworkSettings?.IPAddress || null;
+  } catch {
+    return null;
+  }
+}
+
 async function getContainerStatus(projectId) {
   try {
     const container = docker.getContainer(containerName(projectId));
@@ -671,6 +691,7 @@ module.exports = {
   resetEnvironment,
   removeWorkspace,
   getContainerStatus,
+  getContainerIp,
   getContainerBinds,
   getContainerLogs,
   streamContainerLogs,

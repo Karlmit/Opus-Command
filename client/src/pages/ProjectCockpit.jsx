@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useLayoutEffect, useMemo } from 'react';
+import { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { Terminal as XTerm } from '@xterm/xterm';
@@ -940,6 +940,8 @@ function WorkspacePanel({ projectId, project, csrfToken, addToast, onDelete, onP
   const [busy, setBusy] = useState(null);
   const [templates, setTemplates] = useState([]);
   const [templateBusy, setTemplateBusy] = useState(false);
+  const [ip, setIp] = useState(null);
+  const [ipLoading, setIpLoading] = useState(false);
 
   useEffect(() => {
     fetch('/api/projects/templates')
@@ -949,6 +951,28 @@ function WorkspacePanel({ projectId, project, csrfToken, addToast, onDelete, onP
   }, []);
 
   const isLxc = project?.backend === 'unraid_lxc';
+
+  // Resolve the workspace's local IP. LXC re-resolves live (DHCP can change it
+  // across restarts), so this is also exposed as a manual Refresh.
+  const loadIp = useCallback(async () => {
+    setIpLoading(true);
+    try {
+      const r = await fetch(`/api/projects/${projectId}/ip`);
+      const d = await r.json();
+      setIp(d.ip || null);
+    } catch {
+      setIp(null);
+    } finally {
+      setIpLoading(false);
+    }
+  }, [projectId]);
+
+  // Fetch on mount and whenever the workspace becomes running (the IP is only
+  // assigned while up, and a restart may hand out a new one).
+  useEffect(() => {
+    if (project?.status === 'running') loadIp();
+    else setIp(null);
+  }, [project?.status, loadIp]);
 
   async function runAction(action) {
     setBusy(action);
@@ -970,6 +994,8 @@ function WorkspacePanel({ projectId, project, csrfToken, addToast, onDelete, onP
         }
         else addToast(`${action.charAt(0).toUpperCase() + action.slice(1)} complete.`);
         if (d.status) onProjectUpdated?.({ status: d.status });
+        // A start/restart/repair may hand out a new IP (LXC is DHCP); refresh it.
+        if (action !== 'stop') loadIp();
       }
     } catch (e) { addToast(e.message, 'error'); }
     finally { setBusy(null); }
@@ -1052,6 +1078,17 @@ function WorkspacePanel({ projectId, project, csrfToken, addToast, onDelete, onP
         ) : (
           <div className="panel-hint">Folder: <code>/projects/{project?.folderPath}</code></div>
         )}
+        <div className="panel-hint ws-ip-row">
+          <span>Local IP: <code>{ipLoading ? '…' : (ip || '—')}</code></span>
+          <button
+            className="btn btn-ghost ws-ip-refresh"
+            onClick={loadIp}
+            disabled={ipLoading || project?.status !== 'running'}
+            title={isLxc ? 'LXC IP is DHCP and can change on restart — refresh to re-resolve' : 'Refresh the workspace IP'}
+          >
+            {ipLoading ? 'Refreshing…' : 'Refresh'}
+          </button>
+        </div>
       </div>
 
       <div className="panel-section">

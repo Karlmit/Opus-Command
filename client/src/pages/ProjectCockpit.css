@@ -1319,6 +1319,19 @@
 .status-error    .ws-status-dot { background: var(--color-error); }
 .ws-status-text { font-size: var(--font-size-sm); color: var(--color-text-primary); }
 
+.ws-ip-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+}
+.ws-ip-refresh {
+  height: 24px;
+  padding: 0 var(--spacing-sm);
+  font-size: var(--font-size-xs);
+  flex-shrink: 0;
+}
+
 .ws-template-select { width: 100%; }
 
 .ws-actions { display: flex; flex-wrap: wrap; gap: var(--spacing-xs); }
