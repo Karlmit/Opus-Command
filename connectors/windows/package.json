@@ -7,10 +7,10 @@
     "start": "node src/index.js",
     "start:gui": "electron .",
     "preflight": "node src/index.js --preflight",
-    "check": "node --check src/index.js && node --check src/electron-main.js && node --check src/preload.js && node --check scripts/build-manifest.js",
+    "check": "node --check src/index.js && node --check src/electron-main.js && node --check src/preload.js && node --check scripts/build-manifest.js && node --check scripts/build-exe.js",
     "build:ico": "node scripts/svg-to-ico.js",
     "build:console": "pkg src/index.js --targets node18-win-x64 --output ../../dist/OpusConnector-console.exe",
-    "build:exe": "npm run build:ico && electron-packager . OpusConnector --platform=win32 --arch=x64 --out=../../dist --overwrite --icon=assets/mark-dark.ico --ignore='node_modules/(electron|@electron|electron-packager|pkg|sharp|png-to-ico)'",
+    "build:exe": "node scripts/build-exe.js",
     "build:installer": "npm run build:exe && makensis installer.nsi",
     "build:manifest": "node scripts/build-manifest.js"
   },
