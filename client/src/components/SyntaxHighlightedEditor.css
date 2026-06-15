@@ -84,8 +84,12 @@
   padding-right: var(--syntax-line-number-gap);
   border-right: 1px solid var(--color-border);
   color: var(--color-text-dim);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: normal;
   text-align: right;
   user-select: none;
+  white-space: nowrap;
+  word-break: normal;
 }
 
 .syntax-line.is-selected .syntax-line-number {
@@ -95,6 +99,9 @@
 .syntax-line-code {
   min-width: 0;
   color: var(--color-text-primary);
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
+  word-break: normal;
 }
 
 .syntax-comment { color: #7f8794; }
