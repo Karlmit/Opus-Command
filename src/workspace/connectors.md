@@ -49,6 +49,19 @@ opus connector run linux -- bash 'node --version; python3 --version; docker --ve
 opus connector run linux -- bash 'mkdir -p "$OPUS_CONNECTOR_ARTIFACT_DIR"; echo ok > "$OPUS_CONNECTOR_ARTIFACT_DIR/result.txt"'
 ```
 
+For Windows connectors, the default shell is `powershell` (Windows PowerShell);
+use `pwsh` for PowerShell 7, `cmd` for batch, or `python`. Send whole scripts
+with `--script file.ps1` or piped `--stdin` — the connector runs them with the
+matching interpreter. Use forward-slash drive paths for file transfer.
+
+```bash
+opus connector run windows -- powershell "Get-Service | Where-Object Status -eq 'Running'"
+opus connector run windows --shell pwsh --script ./deploy.ps1
+cat ./test.ps1 | opus connector run windows --shell powershell --stdin
+opus connector put ./build.zip windows:C:/Temp/build.zip
+opus connector get windows:C:/Temp/result.log ./result.log
+```
+
 Connector job artifacts are returned to:
 
 ```text

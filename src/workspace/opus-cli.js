@@ -12,13 +12,15 @@ function usage() {
 Usage:
   opus connectors list
   opus connector run <connector-label-or-name> -- powershell "Get-ComputerInfo"
+  opus connector run <connector-label-or-name> -- pwsh "$PSVersionTable.PSVersion"
   opus connector run <connector-label-or-name> -- cmd "dir C:\\"
+  opus connector run <connector-label-or-name> --shell powershell --script deploy.ps1
+  cat deploy.ps1 | opus connector run <connector-label-or-name> --shell powershell --stdin
   opus connector run <connector-label-or-name> --shell bash --script build.sh
-  cat build.sh | opus connector run <connector-label-or-name> --shell bash --stdin
   opus connector jobs list
   opus connector jobs status <job-id>
   opus connector jobs cancel <job-id>
-  opus connector put <local-path> <connector>:/remote/path
+  opus connector put <local-path> <connector>:/remote/path        # windows: <connector>:C:/path/file
   opus connector get <connector>:/remote/path ./local-path
   opus connector artifacts get <job-id>
   opus connector feedback submit <connector> --title "Issue" --message "Details"
@@ -61,14 +63,22 @@ function connectorLabels(connector) {
 function capabilitySummary(connector) {
   const caps = connector.capabilities || {};
   const summary = [];
+  // Windows-specific shells (the Windows connector targets PowerShell).
+  if (caps.shells?.windowsPowershell?.available) summary.push('powershell');
+  if (caps.shells?.powershellCore?.available) summary.push('pwsh');
   if (caps.containers?.docker?.available) {
     summary.push(caps.containers.docker.accessible ? 'docker' : 'docker-no-access');
   }
   if (caps.containers?.dockerCompose?.available) summary.push('compose');
+  if (caps.containers?.wsl?.available) summary.push('wsl');
   if (caps.development?.git?.available) summary.push('git');
   if (caps.development?.node?.available) summary.push('node');
   if (caps.development?.npm?.available) summary.push('npm');
-  if (caps.development?.python3?.available) summary.push('python3');
+  // Linux reports python3; Windows reports python.
+  if (caps.development?.python3?.available || caps.development?.python?.available) summary.push('python');
+  if (caps.development?.dotnet?.available) summary.push('dotnet');
+  if (caps.packageManagers?.winget?.available) summary.push('winget');
+  if (caps.packageManagers?.chocolatey?.available) summary.push('choco');
   if (caps.browserTesting?.playwright?.available) summary.push('playwright');
   if (caps.android?.adb?.available) summary.push('adb');
   if (caps.hardware?.serialDevices?.available) summary.push('serial');
@@ -123,6 +133,16 @@ function parseConnectorPath(value) {
 
 function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+// Pick the right script extension so the connector runs stdin scripts with the
+// matching interpreter — PowerShell's -File requires a .ps1 extension.
+function scriptExtensionFor(shell) {
+  const normalized = String(shell || 'bash').toLowerCase();
+  if (normalized.includes('python')) return '.py';
+  if (normalized === 'powershell' || normalized === 'pwsh' || normalized.includes('powershell')) return '.ps1';
+  if (normalized === 'cmd' || normalized === 'command') return '.cmd';
+  return '.sh';
 }
 
 function parseRunArgs(args) {
@@ -194,7 +214,7 @@ async function runConnector(args) {
     const input = await readStdin();
     if (!options.command && !script) {
       script = {
-        name: `stdin.${String(options.shell || 'bash').toLowerCase().includes('python') ? 'py' : 'sh'}`,
+        name: `stdin${scriptExtensionFor(options.shell)}`,
         content: input,
       };
     } else {
