@@ -197,10 +197,20 @@ async function createSession(projectId, io) {
 // scrollback, mobile snapshots, and AI-state detection behave identically.
 function _ingestOutput(sessionId, entry, data, ioRef) {
   entry.lastOutputTime = Date.now();
-  _setSessionAgentStatus(sessionId, AGENT_STATUS.WORKING, ioRef, {
-    source: 'terminal_output',
-    idleAfterMs: AGENT_OUTPUT_ACTIVE_MS,
-  });
+  // Raw terminal output is a noisy status signal: TUI agents (Claude Code,
+  // Codex) repaint constantly — spinner, blinking caret, token counter, the box
+  // border — so "bytes arrived" does not mean "the agent is working", and a
+  // re-attach/resize repaint makes an idle agent look busy again. Once a session
+  // is governed by lifecycle hooks we trust those events exclusively; the
+  // output-based heuristics below would otherwise clobber precise statuses like
+  // Done / Waiting-for-input on the very next repaint. Heuristics remain the
+  // fallback for plain shells and agents without hooks installed.
+  if (!entry.hookGoverned) {
+    _setSessionAgentStatus(sessionId, AGENT_STATUS.WORKING, ioRef, {
+      source: 'terminal_output',
+      idleAfterMs: AGENT_OUTPUT_ACTIVE_MS,
+    });
+  }
   entry.buffer += data;
   if (entry.buffer.length > MAX_BUFFER) {
     entry.buffer = entry.buffer.slice(entry.buffer.length - MAX_BUFFER / 2);
@@ -211,7 +221,7 @@ function _ingestOutput(sessionId, entry, data, ioRef) {
     try { entry.headless.write(data); } catch (_) {}
     _scheduleSnapshot(sessionId);
   }
-  _detectAIState(sessionId, data, ioRef);
+  if (!entry.hookGoverned) _detectAIState(sessionId, data, ioRef);
 }
 
 // ── Proxy WebSocket management ───────────────────────────────────────────────
@@ -238,6 +248,9 @@ function _connectProxy(projectId, sessionId, io, host) {
     aiAgent: null,
     agentStatus: AGENT_STATUS.READY,
     agentStatusUpdatedAt: Date.now(),
+    // Flipped true the first time a lifecycle hook reports for this session.
+    // While true, raw PTY output no longer drives status (hooks are authoritative).
+    hookGoverned: false,
     inputBuffer: '',
     alive: false,
     lastOutputTime: Date.now(),
@@ -734,6 +747,9 @@ function _agentFromCommand(command) {
 function _detectAICommandInput(sessionId, data, io) {
   const proxy = activeProxies.get(sessionId);
   if (!proxy) return;
+  // Hook-governed sessions get precise UserPromptSubmit/Stop events; skip the
+  // input-typing heuristic so it can't flip status on its own.
+  if (proxy.hookGoverned) return;
 
   const chunk = String(data || '');
   if (proxy.aiState === 'waiting' && chunk.includes('\r')) {
@@ -921,6 +937,10 @@ function _setSessionAgentStatus(sessionId, status, io, options = {}) {
 // states to the UI. Map Claude/Codex/Gemini hook events to AgentStatus here.
 function applyAgentHookEvent(sessionId, eventName, io, metadata = {}) {
   const event = String(eventName || '');
+  // From now on, lifecycle hooks are the source of truth for this session and
+  // raw PTY output stops driving status (see _ingestOutput).
+  const hookProxy = activeProxies.get(sessionId);
+  if (hookProxy) hookProxy.hookGoverned = true;
   if (/^(SessionStart)$/i.test(event)) {
     return _setSessionAgentStatus(sessionId, AGENT_STATUS.READY, io, {
       source: event,
