@@ -1,0 +1,53 @@
+name: Build Windows Connector
+
+# Builds the Windows Opus Connector installer on every version tag and attaches
+# it (plus an auto-update manifest) to that tag's GitHub Release. The connector's
+# in-app auto-updater reads the manifest to discover and install new versions.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install NSIS
+        run: |
+          choco install nsis -y --no-progress
+          echo "C:\Program Files (x86)\NSIS" >> $env:GITHUB_PATH
+
+      - name: Install connector dependencies
+        working-directory: connectors/windows
+        run: npm install
+
+      - name: Syntax check
+        working-directory: connectors/windows
+        run: npm run check
+
+      - name: Build installer
+        working-directory: connectors/windows
+        run: npm run build:installer
+
+      - name: Build update manifest
+        working-directory: connectors/windows
+        run: npm run build:manifest
+
+      - name: Attach assets to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            dist/OpusConnector-Setup-*.exe
+            dist/opus-windows-connector.json

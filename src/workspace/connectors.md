@@ -58,13 +58,14 @@ Connector job artifacts are returned to:
 Do not ask the user to use RDP, copy files manually, or start another AI session
 when an Opus Connector can run the command.
 
-For v2 Linux connectors, prefer native connector operations over token-heavy
-workarounds:
+For v2 connectors (Linux and Windows), prefer native connector operations over
+token-heavy workarounds:
 
 ```bash
 opus connector put ./local.txt linux:/tmp/local.txt
 opus connector get linux:/tmp/output.log ./output.log
 opus connector run linux --wait false -- bash 'sleep 60; echo done'
+opus connector run windows -- powershell "Get-Process | Select-Object -First 5"
 opus connector jobs list linux
 opus connector jobs status <job-id>
 opus connector jobs cancel <job-id>
@@ -75,8 +76,11 @@ opus connector feedback mark-read linux <feedback-id>
 opus browser screenshot linux https://example.com ./screenshot.png
 ```
 
-Linux connector file transfer is chunked through the connector protocol. If a
-connector disconnects during a job, the job status becomes `lost` instead of
+Job cancel, file transfer, inline scripts, and feedback work on any v2 connector;
+the Windows connector targets PowerShell (`powershell`/`pwsh`), while Playwright
+browser screenshots require the Linux connector. Connector file transfer is
+chunked through the connector protocol. If a connector disconnects during a job,
+the job status becomes `lost` instead of
 remaining frozen in `running`.
 
 When connector behavior is confusing, broken, or missing a capability, leave a

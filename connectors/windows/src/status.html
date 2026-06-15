@@ -154,17 +154,97 @@
       .hidden {
         display: none;
       }
+
+      .row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .version {
+        color: #6b7689;
+        font-size: 12px;
+      }
+
+      .update {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        border: 1px solid #273040;
+        border-radius: 8px;
+        background: #171b23;
+        padding: 10px 14px;
+        font-size: 13px;
+      }
+
+      .update.available {
+        border-color: #2563eb;
+        background: #15233f;
+        color: #cfe0ff;
+      }
+
+      .caps {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 8px;
+      }
+
+      .cap {
+        border: 1px solid #273040;
+        border-radius: 6px;
+        background: #0f131a;
+        padding: 8px 10px;
+        font-size: 12px;
+      }
+
+      .cap b {
+        display: block;
+        color: #cbd5e1;
+        font-weight: 600;
+      }
+
+      .cap span {
+        color: #8f9aab;
+        overflow-wrap: anywhere;
+      }
+
+      .cap.ok b::before {
+        content: "● ";
+        color: #4ade80;
+      }
+
+      .cap.no b::before {
+        content: "○ ";
+        color: #64748b;
+      }
+
+      h2 {
+        margin: 4px 0;
+        font-size: 13px;
+        font-weight: 600;
+        color: #9ca8ba;
+      }
     </style>
   </head>
   <body>
     <main>
-      <header>
-        <img src="../assets/mark-dark.svg" alt="" />
-        <div>
-          <h1>Opus Connector</h1>
-          <div class="status"><span id="dot" class="dot"></span><span id="status">Starting</span></div>
+      <header class="row">
+        <div class="row" style="justify-content: flex-start;">
+          <img src="../assets/mark-dark.svg" alt="" />
+          <div>
+            <h1>Opus Connector</h1>
+            <div class="status"><span id="dot" class="dot"></span><span id="status">Starting</span></div>
+          </div>
         </div>
+        <div class="version" id="version"></div>
       </header>
+
+      <div class="update hidden" id="updateBanner">
+        <span id="updateText"></span>
+        <button id="checkUpdates" type="button">Check for updates</button>
+      </div>
 
       <section id="pairingSection">
         <form id="pairForm">
@@ -183,7 +263,7 @@
             </label>
             <label>
               Labels
-              <input id="labelsInput" name="labels" value="windows,vm" autocomplete="off" />
+              <input id="labelsInput" name="labels" value="windows,powershell" autocomplete="off" />
             </label>
           </div>
           <button id="pairButton" type="submit">Connect</button>
@@ -201,6 +281,11 @@
       </section>
 
       <button id="openHome">Open Connector Folder</button>
+
+      <section>
+        <h2>Capabilities</h2>
+        <div class="caps" id="caps"></div>
+      </section>
 
       <section>
         <pre id="logs"></pre>
@@ -224,7 +309,58 @@
         tokenInput: document.getElementById('tokenInput'),
         nameInput: document.getElementById('nameInput'),
         labelsInput: document.getElementById('labelsInput'),
+        version: document.getElementById('version'),
+        updateBanner: document.getElementById('updateBanner'),
+        updateText: document.getElementById('updateText'),
+        checkUpdates: document.getElementById('checkUpdates'),
+        caps: document.getElementById('caps'),
       };
+
+      function renderUpdate(update) {
+        if (!update) {
+          fields.updateBanner.classList.add('hidden');
+          return;
+        }
+        fields.updateBanner.classList.remove('hidden');
+        fields.updateBanner.classList.toggle('available', update.status === 'available' || update.status === 'downloading' || update.status === 'installing');
+        const map = {
+          idle: 'Updates check automatically.',
+          checking: 'Checking for updates…',
+          'up-to-date': 'You are on the latest version.',
+          available: `Update available: v${update.latestVersion}. Installing…`,
+          downloading: `Downloading update v${update.latestVersion}…`,
+          installing: `Installing v${update.latestVersion}. The app will relaunch.`,
+          error: `Update error: ${update.error || 'unknown'}`,
+        };
+        fields.updateText.textContent = map[update.status] || 'Updates check automatically.';
+        fields.checkUpdates.disabled = update.status === 'checking' || update.status === 'downloading' || update.status === 'installing';
+      }
+
+      function capCell(label, info) {
+        const ok = info && info.available;
+        const detail = info && info.version ? info.version : (ok ? 'available' : 'missing');
+        return `<div class="cap ${ok ? 'ok' : 'no'}"><b>${label}</b><span>${detail}</span></div>`;
+      }
+
+      function renderCaps(caps) {
+        if (!caps) {
+          fields.caps.innerHTML = '<div class="cap no"><b>Detecting…</b><span>Reading host capabilities</span></div>';
+          return;
+        }
+        const cells = [
+          capCell('Windows PowerShell', caps.shells?.windowsPowershell),
+          capCell('PowerShell 7', caps.shells?.powershellCore),
+          capCell('.NET SDK', caps.development?.dotnet),
+          capCell('Node.js', caps.development?.node),
+          capCell('Python', caps.development?.python),
+          capCell('Git', caps.development?.git),
+          capCell('Docker', caps.containers?.docker),
+          capCell('WSL', caps.containers?.wsl),
+          capCell('winget', caps.packageManagers?.winget),
+          capCell('Chocolatey', caps.packageManagers?.chocolatey),
+        ];
+        fields.caps.innerHTML = cells.join('');
+      }
 
       function statusText(state) {
         if (state.status === 'online') return 'Online';
@@ -243,11 +379,14 @@
         fields.connectorId.textContent = state.connectorId || '-';
         fields.home.textContent = state.home || '-';
         fields.logs.textContent = (state.logs || []).join('\n');
+        fields.version.textContent = state.version ? `v${state.version}` : '';
         fields.pairingSection.classList.toggle('hidden', state.paired && state.status !== 'error');
         fields.pairError.textContent = state.error || '';
         fields.pairError.classList.toggle('hidden', !state.error);
         if (state.server && !fields.serverInput.value) fields.serverInput.value = state.server;
         if (state.name && !fields.nameInput.value) fields.nameInput.value = state.name;
+        renderUpdate(state.update);
+        renderCaps(state.capabilities);
       }
 
       window.opusConnector.getState().then(render);
@@ -258,6 +397,9 @@
       });
       document.getElementById('openHome').addEventListener('click', () => {
         window.opusConnector.openHome();
+      });
+      fields.checkUpdates.addEventListener('click', () => {
+        window.opusConnector.checkUpdates().then(render).catch(() => {});
       });
       fields.pairForm.addEventListener('submit', async (event) => {
         event.preventDefault();

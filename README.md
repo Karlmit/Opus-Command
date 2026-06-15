@@ -202,7 +202,7 @@ Opus Command supports a pluggable workspace backend, chosen per project at creat
 #### Opus Connector
 The **Opus Connector** is a core part of Opus Command. It lets a remote machine — Windows or Linux — act as an execution environment for your workspaces. The connector dials outbound to Opus Command, then workspaces run jobs on it through the `opus` CLI. This extends a project's reach beyond its container: PowerShell on a Windows box, builds on a Linux server, hardware and local tooling on either.
 
-> **Linux and Windows targets are available today.** The **Linux connector is currently the most capable** — it supports async/background jobs, job management (list/status/cancel), bidirectional file transfer, multiple shells, dependency profiles, systemd/autostart service install, self-update, and browser screenshots via Playwright. The **Windows connector** focuses on the core pairing + run flow with an Electron GUI; richer features are being brought to parity. macOS and Android are on the roadmap.
+> **Linux and Windows targets are available today, at feature parity.** Both support async/background jobs, job management (list/status/cancel), bidirectional file transfer, multiple shells, inline script execution, connector feedback, capability detection, and auto-update. The **Windows connector** is built for PowerShell — it ships an Electron tray app, detects PowerShell / .NET / Node / Python / Docker / WSL, and auto-updates itself from GitHub releases. macOS and Android are on the roadmap.
 
 - Connectors pair outbound — no inbound ports to open on the target machine
 - Workspaces get connector access through the `opus` CLI, not by talking directly to connector machines
@@ -218,9 +218,13 @@ The **Opus Connector** is a core part of Opus Command. It lets a remote machine 
 - Async jobs (`--wait false`), job `list` / `status` / `cancel`, and bidirectional `put` / `get` file transfer
 - Browser screenshots when Playwright is available
 
-**Windows connector:**
+**Windows connector** (PowerShell-first, v2 protocol):
 - One-file NSIS installer for `C:\OpusConnector`; config, logs, and working data in `C:\ProgramData\OpusConnector`
-- Electron GUI pairing flow: paste the server URL and pairing token, click Connect, watch Online / Connecting / Error status
+- Electron tray app: paste the server URL and pairing token, click Connect, watch Online / Connecting / Error status, see detected capabilities
+- Shells: `powershell` (Windows PowerShell), `pwsh` (PowerShell 7), `cmd`, `python`, and direct executables
+- Inline script execution (`.ps1` / `.cmd` / `.py`), async jobs (`--wait false`), job `cancel` with process-tree kill, and bidirectional `put` / `get` file transfer
+- Capability detection (PowerShell, .NET, Node, npm, Python, Git, Docker, WSL, winget, Chocolatey, Playwright) reported to Opus Command
+- Auto-update: the tray app checks GitHub releases and installs new versions silently, then relaunches; starts automatically at login
 
 ```bash
 # Works against any paired connector — match by name or label
@@ -308,7 +312,7 @@ opus connector artifacts get <job-id>
 - **Multi-terminal split view** — side-by-side terminal panes
 - **Push notifications** — notify your phone when Claude Code is waiting for input, without needing the browser open
 - **Unraid LXC extras** — LXC snapshots/cloning and richer file access (root-SSH replacement shipped as the Opus Connect plugin)
-- **Additional Opus Connector targets** — macOS and Android, Windows feature parity with Linux, and richer artifact workflows
+- **Additional Opus Connector targets** — macOS and Android, plus richer artifact workflows (Linux and Windows are at parity today)
 - **Additional workspace templates** — community-contributed templates for Rust, Go, Java, etc.
 - **AI session timeline** — history of AI sessions per project with diffs at each checkpoint
 - **Web app preview** — embedded browser preview inside the cockpit for web projects
@@ -451,13 +455,14 @@ Filesystem, build tools, hardware, Android tooling, etc.
 
 | Platform | Status | Highlights |
 |----------|--------|-----------|
-| **Linux** | ✅ Available — **most feature-complete** | Async jobs + job list/status/cancel, bidirectional `put`/`get` file transfer, multiple shells (`bash`/`sh`/`python`/`pwsh`), one-file installer (terminal wizard, `--gui`, silent), local status UI, systemd/autostart service, self-update, Playwright browser screenshots |
-| **Windows** | ✅ Available | NSIS installer, Electron GUI pairing, PowerShell / CMD execution. Advanced job and file-transfer features are being brought to parity with Linux |
+| **Linux** | ✅ Available | Async jobs + job list/status/cancel, bidirectional `put`/`get` file transfer, multiple shells (`bash`/`sh`/`python`/`pwsh`), one-file installer (terminal wizard, `--gui`, silent), local status UI, systemd/autostart service, self-update, Playwright browser screenshots |
+| **Windows** | ✅ Available — at parity | Async jobs + job cancel (process-tree kill), bidirectional `put`/`get` file transfer, shells (`powershell`/`pwsh`/`cmd`/`python`), inline `.ps1`/`.cmd`/`.py` scripts, capability detection, NSIS installer, Electron tray app, start-at-login, GitHub-release auto-update |
 | **macOS / Android** | 🗺️ Roadmap | Planned connector targets |
 
-> The Linux connector currently has more features than the Windows connector.
-> Both share the same pairing model and `opus` CLI surface; the Linux build
-> simply exposes more of the connector protocol today.
+> The Linux and Windows connectors are at feature parity on the v2 connector
+> protocol and share the same pairing model and `opus` CLI surface. The Windows
+> connector is tuned for PowerShell testing; the Linux connector adds Playwright
+> screenshots and dependency-profile installers.
 
 ### Install and pair a Linux connector
 
@@ -482,16 +487,20 @@ a systemd service with `--install-service`.
 
 ### Install and pair a Windows connector
 
-1. Install `OpusConnector-Setup-0.1.3.exe` on the Windows machine.
+1. Install `OpusConnector-Setup-<version>.exe` on the Windows machine (published
+   as a release asset; build locally with `cd connectors/windows && npm run build:installer`).
 2. Open Opus Connector from the Start menu or `C:\OpusConnector\OpusConnector.exe`.
 3. In Opus Command, open Settings → Opus Connectors.
 4. Create a pairing token.
 5. Paste the server URL, pairing token, name, and labels into the connector GUI.
 6. Click Connect.
 
-The connector GUI shows the current status and recent logs. When it is paired
-successfully, it should show `Online`, and the Settings connector list should
-update within 10 seconds.
+The connector tray app shows current status, detected capabilities, and recent
+logs. When paired successfully it shows `Online`, and the Settings connector list
+updates within 10 seconds. The app installs itself into the per-machine startup
+(Run key) and checks GitHub releases for updates, installing new versions
+silently and relaunching. See [`connectors/windows/README.md`](connectors/windows/README.md)
+for build, auto-update, and PowerShell details.
 
 Windows install layout:
 
@@ -564,7 +573,7 @@ All data in `/app/data` is preserved across updates.
 
 ## Roadmap
 
-See [`ROADMAP.md`](ROADMAP.md) for the full feature status — what's done, what's planned for V1, and future **Opus Connector** targets such as macOS and Android, plus Windows feature parity with the Linux connector and richer artifact workflows.
+See [`ROADMAP.md`](ROADMAP.md) for the full feature status — what's done, what's planned for V1, and future **Opus Connector** targets such as macOS and Android plus richer artifact workflows.
 
 ## License
 

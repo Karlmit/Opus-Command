@@ -7,7 +7,7 @@ const { WebSocketServer } = require('ws');
 const { getSQLite } = require('../db');
 const { DATA_DIR, PROJECTS_DIR } = require('../config');
 
-const CONNECTOR_PROTOCOL_VERSION = 1;
+const CONNECTOR_PROTOCOL_VERSION = 2;
 const clients = new Map();
 const pendingJobs = new Map();
 const pendingRequests = new Map();
@@ -66,6 +66,25 @@ function parseCapabilities(value) {
   } catch (_) {
     return {};
   }
+}
+
+// Feature negotiation. Scripts, file transfer, and job cancellation depend on
+// the richer "v2" connector protocol. A v2 connector advertises
+// `capabilities.protocol >= 2`; the first-generation Linux connector shipped
+// these features before the marker existed, so it is grandfathered in.
+function connectorProtocol(row) {
+  if (!row) return 0;
+  const caps = typeof row.capabilities === 'string'
+    ? parseCapabilities(row.capabilities)
+    : normalizeCapabilities(row.capabilities);
+  const proto = Number(caps.protocol) || 0;
+  if (proto >= 2) return proto;
+  if (row.platform === 'linux') return 2;
+  return proto || 1;
+}
+
+function connectorSupportsV2(row) {
+  return connectorProtocol(row) >= 2;
 }
 
 function publicConnector(row) {
@@ -206,8 +225,8 @@ function createJob({ connectorId, userId, projectId, shell, command, cwd, env, a
     err.status = 404;
     throw err;
   }
-  if ((script?.content || typeof stdin === 'string') && connector.platform !== 'linux') {
-    const err = new Error('Script/stdin execution requires a v2 Linux connector.');
+  if ((script?.content || typeof stdin === 'string') && !connectorSupportsV2(connector)) {
+    const err = new Error('Script/stdin execution requires a v2 connector.');
     err.status = 400;
     throw err;
   }
@@ -291,9 +310,9 @@ function cancelJob(jobId) {
   if (['succeeded', 'failed', 'timeout', 'canceled', 'lost'].includes(row.status)) {
     return getJob(jobId);
   }
-  const connector = sqlite.prepare('SELECT platform FROM connectors WHERE id = ?').get(row.connector_id);
-  if (connector?.platform !== 'linux') {
-    const err = new Error('Job cancellation requires a v2 Linux connector.');
+  const connector = sqlite.prepare('SELECT platform, capabilities FROM connectors WHERE id = ?').get(row.connector_id);
+  if (!connectorSupportsV2(connector)) {
+    const err = new Error('Job cancellation requires a v2 connector.');
     err.status = 400;
     throw err;
   }
@@ -327,15 +346,15 @@ function sendConnectorRequest(connectorId, message, timeoutMs = 60 * 1000) {
   return promise;
 }
 
-function ensureV2LinuxConnector(connectorId, feature) {
-  const connector = getSQLite().prepare('SELECT platform FROM connectors WHERE id = ?').get(connectorId);
+function ensureV2Connector(connectorId, feature) {
+  const connector = getSQLite().prepare('SELECT platform, capabilities FROM connectors WHERE id = ?').get(connectorId);
   if (!connector) {
     const err = new Error('Connector not found.');
     err.status = 404;
     throw err;
   }
-  if (connector.platform !== 'linux') {
-    const err = new Error(`${feature} requires a v2 Linux connector.`);
+  if (!connectorSupportsV2(connector)) {
+    const err = new Error(`${feature} requires a v2 connector.`);
     err.status = 400;
     throw err;
   }
@@ -348,7 +367,7 @@ async function readConnectorFile(connectorId, filePath) {
     err.status = 400;
     throw err;
   }
-  ensureV2LinuxConnector(connectorId, 'File transfer');
+  ensureV2Connector(connectorId, 'File transfer');
   return readConnectorFileChunked(connectorId, filePath);
 }
 
@@ -358,7 +377,7 @@ function streamConnectorFile(connectorId, filePath, writable) {
     err.status = 400;
     throw err;
   }
-  ensureV2LinuxConnector(connectorId, 'File transfer');
+  ensureV2Connector(connectorId, 'File transfer');
   const client = clients.get(connectorId);
   if (!client || client.ws.readyState !== 1) {
     const err = new Error('Connector is offline.');
@@ -390,7 +409,7 @@ async function writeConnectorFile(connectorId, { filePath, contentBase64, mode }
     err.status = 400;
     throw err;
   }
-  ensureV2LinuxConnector(connectorId, 'File transfer');
+  ensureV2Connector(connectorId, 'File transfer');
   return writeConnectorFileChunked(connectorId, {
     filePath,
     data: Buffer.from(contentBase64 || '', 'base64'),
@@ -404,7 +423,7 @@ async function writeConnectorFileBytes(connectorId, { filePath, data, mode }) {
     err.status = 400;
     throw err;
   }
-  ensureV2LinuxConnector(connectorId, 'File transfer');
+  ensureV2Connector(connectorId, 'File transfer');
   return writeConnectorFileChunked(connectorId, {
     filePath,
     data: Buffer.isBuffer(data) ? data : Buffer.from(data || ''),
@@ -418,7 +437,7 @@ function streamUploadConnectorFile(connectorId, { filePath, readable, mode }) {
     err.status = 400;
     throw err;
   }
-  ensureV2LinuxConnector(connectorId, 'File transfer');
+  ensureV2Connector(connectorId, 'File transfer');
   const client = clients.get(connectorId);
   if (!client || client.ws.readyState !== 1) {
     const err = new Error('Connector is offline.');
@@ -469,7 +488,7 @@ function streamUploadConnectorFile(connectorId, { filePath, readable, mode }) {
 }
 
 function createFeedback(connectorId, report) {
-  ensureV2LinuxConnector(connectorId, 'Connector feedback');
+  ensureV2Connector(connectorId, 'Connector feedback');
   return sendConnectorRequest(connectorId, {
     type: 'feedback:create',
     report: report && typeof report === 'object' ? report : {},
@@ -477,7 +496,7 @@ function createFeedback(connectorId, report) {
 }
 
 function listFeedback(connectorId, { includeRead = true, limit = 100 } = {}) {
-  ensureV2LinuxConnector(connectorId, 'Connector feedback');
+  ensureV2Connector(connectorId, 'Connector feedback');
   return sendConnectorRequest(connectorId, {
     type: 'feedback:list',
     includeRead,
@@ -486,7 +505,7 @@ function listFeedback(connectorId, { includeRead = true, limit = 100 } = {}) {
 }
 
 function markFeedbackRead(connectorId, feedbackId, read = true) {
-  ensureV2LinuxConnector(connectorId, 'Connector feedback');
+  ensureV2Connector(connectorId, 'Connector feedback');
   return sendConnectorRequest(connectorId, {
     type: 'feedback:mark-read',
     feedbackId,
