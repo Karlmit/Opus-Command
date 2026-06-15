@@ -444,6 +444,7 @@ NESTED=$(find /workspace -mindepth 2 -maxdepth 2 -name .git 2>/dev/null | head -
 if [ "$WS_REPO" = /workspace ] || [ -z "$NESTED" ]; then
   touch /workspace/.gitignore
   grep -qxF ".planning/" /workspace/.gitignore 2>/dev/null || printf ".planning/\\n" >> /workspace/.gitignore
+  grep -qxF ".opus-pastes/" /workspace/.gitignore 2>/dev/null || printf ".opus-pastes/\\n" >> /workspace/.gitignore
 fi
 
 echo "[opus] apt update + base packages…"

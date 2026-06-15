@@ -181,7 +181,7 @@ function buildWorkspaceCmd(image, template) {
     // at /workspace inherits the rule.
     'WS_REPO=$(git -C /workspace rev-parse --show-toplevel 2>/dev/null || true)',
     'NESTED=$(find /workspace -mindepth 2 -maxdepth 2 -name .git 2>/dev/null | head -1)',
-    'if [ "$WS_REPO" = /workspace ] || [ -z "$NESTED" ]; then touch /workspace/.gitignore; grep -qxF ".planning/" /workspace/.gitignore 2>/dev/null || printf ".planning/\\n" >> /workspace/.gitignore; fi',
+    'if [ "$WS_REPO" = /workspace ] || [ -z "$NESTED" ]; then touch /workspace/.gitignore; grep -qxF ".planning/" /workspace/.gitignore 2>/dev/null || printf ".planning/\\n" >> /workspace/.gitignore; grep -qxF ".opus-pastes/" /workspace/.gitignore 2>/dev/null || printf ".opus-pastes/\\n" >> /workspace/.gitignore; fi',
     // Clean up the removed cdesktop integration from existing workspace home volumes.
     'pkill -f "cdesktop" 2>/dev/null || true',
     'npm uninstall -g cdesktop >/dev/null 2>&1 || true',
