@@ -341,6 +341,56 @@ ${SKILL_POINTER}`
  * ~/.claude/settings.json) so LXC workspaces behave like Docker ones. Run inside
  * the container via `lxc-attach -- bash -s`.
  */
+// Resolve the URL an LXC workspace uses to call back into Opus Command.
+// Docker workspaces resolve `opus-command` over the internal Docker network, but
+// an LXC reaches the backend over the LAN — so the `opus-command:PORT` fallback
+// can NEVER work there. When OPUS_WORKSPACE_COMMAND_URL is unset we still return
+// the fallback (so provisioning doesn't hard-fail), but warn loudly: the only
+// visible symptom otherwise is an unreliable agent-status indicator, because the
+// Claude/Codex lifecycle hooks silently fail to reach /api/agent-events.
+let _warnedMissingCommandUrl = false;
+function resolveWorkspaceCommandUrl() {
+  const configured = process.env.OPUS_WORKSPACE_COMMAND_URL;
+  if (configured) return configured;
+  if (!_warnedMissingCommandUrl) {
+    _warnedMissingCommandUrl = true;
+    console.warn(
+      `[opus-lxc] OPUS_WORKSPACE_COMMAND_URL is not set — falling back to ` +
+      `"http://opus-command:${PORT}", which LXC workspaces cannot resolve. ` +
+      `Claude/Codex agent-status hooks will not reach the backend and the ` +
+      `sidebar status indicator will be unreliable. Set OPUS_WORKSPACE_COMMAND_URL ` +
+      `to a LAN-reachable URL, e.g. http://<unraid-ip>:<published-port>.`
+    );
+  }
+  return `http://opus-command:${PORT}`;
+}
+
+// Single source of truth for the managed /etc/profile.d/opus-workspace.sh env.
+// Both the full-provision and the lighter agent-status refresh paths build the
+// file from this helper so they always emit an identical set of exports —
+// otherwise whichever script ran last would silently drop OPUS_COMMAND_URL /
+// OPUS_WORKSPACE_TOKEN and break agent-status hook delivery.
+function managedEnvLines(vars, { isAzure = false } = {}) {
+  const { getWorkspaceAccessToken } = require('./auth.service');
+  const envMap = {};
+  const lines = [
+    '# Opus Command — managed workspace environment (regenerated on update; do not edit)',
+    'export PATH="$HOME/bin:$HOME/.local/bin:$PATH"',
+    'export IS_SANDBOX=1',
+    `export OPUS_COMMAND_URL=${shSingleQuote(resolveWorkspaceCommandUrl())}`,
+    `export OPUS_WORKSPACE_TOKEN=${shSingleQuote(getWorkspaceAccessToken())}`,
+  ];
+  for (const { key, value } of vars) {
+    if (!key) continue;
+    envMap[key] = value;
+    lines.push(`export ${key}=${shSingleQuote(value)}`);
+  }
+  if (isAzure && envMap.ANTHROPIC_FOUNDRY_RESOURCE) {
+    lines.push('export CLAUDE_CODE_USE_FOUNDRY=1');
+  }
+  return lines;
+}
+
 function buildProvisionScript(project, { envVars } = {}) {
   const { getWorkspaceEnvVars } = require('./auth.service');
   const vars = Array.isArray(envVars) ? envVars : getWorkspaceEnvVars();
@@ -370,20 +420,7 @@ function buildProvisionScript(project, { envVars } = {}) {
   const settingsB64 = b64(settings);
 
   // Managed environment (sourced by all login shells, which the LXC terminal uses).
-  const envMap = {};
-  const envLines = [
-    '# Opus Command — managed workspace environment (regenerated on update; do not edit)',
-    'export PATH="$HOME/bin:$HOME/.local/bin:$PATH"',
-    'export IS_SANDBOX=1',
-  ];
-  for (const { key, value } of vars) {
-    if (!key) continue;
-    envMap[key] = value;
-    envLines.push(`export ${key}=${shSingleQuote(value)}`);
-  }
-  if (isAzure && envMap.ANTHROPIC_FOUNDRY_RESOURCE) {
-    envLines.push('export CLAUDE_CODE_USE_FOUNDRY=1');
-  }
+  const envLines = managedEnvLines(vars, { isAzure });
   const envB64 = b64(envLines.join('\n') + '\n');
 
   // settings.json: create if missing; for the work template also (re)write when an
@@ -528,24 +565,17 @@ echo "[opus] provisioning complete."
 }
 
 function buildAgentStatusIntegrationScript(project, { envVars } = {}) {
-  const { getWorkspaceEnvVars, getWorkspaceAccessToken, getTerminalAgentToken } = require('./auth.service');
+  const { getWorkspaceEnvVars, getTerminalAgentToken } = require('./auth.service');
   const vars = Array.isArray(envVars) ? envVars : getWorkspaceEnvVars();
   const agentHookB64 = b64File(OPUS_AGENT_HOOK_PATH);
   const configureHooksB64 = b64File(CONFIGURE_AGENT_HOOKS_PATH);
   const agentB64 = b64File(TERMINAL_AGENT_PATH);
   const agentTokenB64 = b64(getTerminalAgentToken(project.id));
-  const commandUrl = process.env.OPUS_WORKSPACE_COMMAND_URL || `http://opus-command:${PORT}`;
+  const isAzure = lxcTemplateFor(project) !== 'private';
 
-  const envLines = [
-    '# Opus Command — managed workspace environment (regenerated on update; do not edit)',
-    'export PATH="$HOME/bin:$HOME/.local/bin:$PATH"',
-    'export IS_SANDBOX=1',
-    `export OPUS_COMMAND_URL=${shSingleQuote(commandUrl)}`,
-    `export OPUS_WORKSPACE_TOKEN=${shSingleQuote(getWorkspaceAccessToken())}`,
-  ];
-  for (const { key, value } of vars) {
-    if (key) envLines.push(`export ${key}=${shSingleQuote(value)}`);
-  }
+  // Same managed env as the full-provision path (see managedEnvLines) so a status
+  // refresh never rewrites /etc/profile.d with a different set of exports.
+  const envLines = managedEnvLines(vars, { isAzure });
   const envB64 = b64(envLines.join('\n') + '\n');
 
   return (
