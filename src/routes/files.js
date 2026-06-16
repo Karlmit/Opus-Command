@@ -141,7 +141,7 @@ router.get('/read', requireAuth, (req, res) => {
   try {
     const stat = fs.statSync(filePath);
     const ext = path.extname(filePath).toLowerCase();
-    const imageExts = ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp'];
+    const imageExts = ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.ico'];
 
     if (imageExts.includes(ext)) {
       return res.sendFile(filePath);

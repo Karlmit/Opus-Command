@@ -2483,7 +2483,7 @@ export default function ProjectCockpit() {
 
   async function openFile(node) {
     const ext = node.name.split('.').pop()?.toLowerCase();
-    const images = ['png','jpg','jpeg','gif','svg','webp'];
+    const images = ['png','jpg','jpeg','gif','svg','webp','ico'];
     if (images.includes(ext)) {
       if (!fileTabs.find(t => t.path === node.path)) setFileTabs(p => [...p, { path: node.path, name: node.name, type: 'image' }]);
       setActiveTab(`file-${node.path}`); activeRef.current = `file-${node.path}`; return;
