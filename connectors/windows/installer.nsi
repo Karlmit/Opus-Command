@@ -2,7 +2,7 @@ Unicode True
 ManifestDPIAware True
 
 !define PRODUCT_NAME "Opus Connector"
-!define PRODUCT_VERSION "0.3.2"
+!define PRODUCT_VERSION "0.3.3"
 !define PUBLISHER "Opus Command"
 !define APP_EXE "OpusConnector.exe"
 !define SOURCE_DIR "..\..\dist\OpusConnector-win32-x64"
@@ -35,7 +35,12 @@ Section "Install"
   SetShellVarContext all
 
   ; Stop any running instance so a silent auto-update can replace locked files.
-  nsExec::ExecToLog 'taskkill /F /T /IM "${APP_EXE}"'
+  ; Kill by image name only (no /T): during an auto-update the app launches this
+  ; installer as a child process, so /T would walk the app's process tree and
+  ; terminate the installer itself mid-run — crashing the update. /F /IM already
+  ; kills every OpusConnector.exe process (Electron's helper processes share the
+  ; image name on Windows), which is all we need to unlock the install dir.
+  nsExec::ExecToLog 'taskkill /F /IM "${APP_EXE}"'
   Sleep 1500
 
   SetOutPath "$INSTDIR"
