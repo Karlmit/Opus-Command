@@ -9,7 +9,7 @@ const connector = require('./index');
 const DEFAULT_HOME = process.platform === 'win32'
   ? path.join(process.env.ProgramData || 'C:\\ProgramData', 'OpusConnector')
   : path.join(os.homedir(), '.opus-connector');
-const APP_ICON = path.join(__dirname, '..', 'assets', 'mark-dark.ico');
+const APP_ICON = path.join(__dirname, '..', 'assets', 'app-icon.ico');
 
 // Auto-update: the connector installer is published as a release asset on the
 // Opus Command GitHub repo, alongside a small JSON manifest describing the

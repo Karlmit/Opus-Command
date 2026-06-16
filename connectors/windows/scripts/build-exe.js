@@ -29,7 +29,7 @@ async function main() {
     arch: 'x64',
     out: distDir,
     overwrite: true,
-    icon: path.join(root, 'assets', 'mark-dark.ico'),
+    icon: path.join(root, 'assets', 'app-icon.ico'),
     ignore: IGNORE,
   });
   console.log(`Packaged ${appPaths.join(', ')}`);

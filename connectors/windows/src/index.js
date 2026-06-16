@@ -15,7 +15,11 @@ const {
   normalizeServer,
 } = require('opus-connector-shared');
 
-const VERSION = '0.3.0';
+// Derive the version from package.json (the single source of truth that also
+// drives the release installer name and the auto-update manifest). A hardcoded
+// constant here previously drifted from package.json and made the app report an
+// old version, triggering an endless auto-update loop.
+const VERSION = require('../package.json').version;
 // Protocol 2 unlocks scripts, file transfer, and job cancellation on the
 // server. The connector advertises it through capabilities.protocol.
 const CONNECTOR_PROTOCOL = 2;

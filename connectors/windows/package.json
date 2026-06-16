@@ -1,6 +1,6 @@
 {
   "name": "opus-windows-connector",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "main": "src/electron-main.js",
   "bin": "src/index.js",
   "scripts": {

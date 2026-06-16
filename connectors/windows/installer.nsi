@@ -2,7 +2,7 @@ Unicode True
 ManifestDPIAware True
 
 !define PRODUCT_NAME "Opus Connector"
-!define PRODUCT_VERSION "0.3.3"
+!define PRODUCT_VERSION "0.3.4"
 !define PUBLISHER "Opus Command"
 !define APP_EXE "OpusConnector.exe"
 !define SOURCE_DIR "..\..\dist\OpusConnector-win32-x64"
@@ -16,8 +16,8 @@ InstallDir "C:\OpusConnector"
 InstallDirRegKey HKLM "${INSTALL_REG_KEY}" "InstallLocation"
 RequestExecutionLevel admin
 
-!define MUI_ICON "assets\mark-dark.ico"
-!define MUI_UNICON "assets\mark-dark.ico"
+!define MUI_ICON "assets\app-icon.ico"
+!define MUI_UNICON "assets\app-icon.ico"
 !define MUI_ABORTWARNING
 !define MUI_FINISHPAGE_RUN "$INSTDIR\${APP_EXE}"
 
