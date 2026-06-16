@@ -77,12 +77,38 @@ function cryptoRandomHex(bytes) {
 // the Windows connector exists primarily to run and test PowerShell.
 // ---------------------------------------------------------------------------
 
+// Windows builds a process's PATH from the Machine + User registry values when
+// it launches, so a long-running connector keeps the PATH it started with and
+// never sees tools added to PATH afterwards (e.g. a fresh `adb` install) — no
+// amount of re-scanning helps while the stale PATH is in effect. Re-read the
+// live PATH from the registry so detection (which re-runs on every heartbeat)
+// and job execution pick up newly-installed tools without a connector restart.
+let livePath = process.env.Path || process.env.PATH || '';
+
+function refreshLivePath() {
+  if (process.platform !== 'win32') return livePath;
+  const result = spawnSync('powershell', [
+    '-NoProfile', '-NonInteractive', '-Command',
+    "[Environment]::ExpandEnvironmentVariables(([Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')))",
+  ], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+  const value = result.status === 0 ? String(result.stdout || '').trim() : '';
+  if (value) livePath = value;
+  return livePath;
+}
+
+function liveEnv(extra) {
+  // Override both casings: Windows env is case-insensitive but Node's env
+  // object is not, so a stale `Path` would otherwise shadow our `PATH`.
+  return { ...process.env, Path: livePath, PATH: livePath, ...(extra || {}) };
+}
+
 function capture(command, timeout = 5000) {
   // Run through cmd.exe so .cmd/.bat shims (npm, choco, ...) resolve correctly.
   const result = spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', command], {
     encoding: 'utf8',
     timeout,
     windowsHide: true,
+    env: liveEnv(),
   });
   if (result.status !== 0) return '';
   return String(result.stdout || '').trim();
@@ -93,6 +119,7 @@ function commandExists(command) {
     stdio: 'ignore',
     timeout: 5000,
     windowsHide: true,
+    env: liveEnv(),
   });
   return result.status === 0;
 }
@@ -112,11 +139,13 @@ function dockerAccessible() {
     encoding: 'utf8',
     timeout: 5000,
     windowsHide: true,
+    env: liveEnv(),
   });
   return result.status === 0 && !!String(result.stdout || '').trim();
 }
 
 function detectCapabilities() {
+  refreshLivePath();
   const has = commandExists;
   const psVersion = powershellVersion();
   const pwsh = pwshVersion();
@@ -515,13 +544,12 @@ function runJob(home, ws, job) {
       cwd,
       windowsHide: true,
       ...command.options,
-      env: {
-        ...process.env,
+      env: liveEnv({
         ...(runnableJob.env && typeof runnableJob.env === 'object' ? runnableJob.env : {}),
         OPUS_CONNECTOR_HOME: home,
         OPUS_CONNECTOR_JOB_ID: job.id,
         OPUS_CONNECTOR_ARTIFACT_DIR: artifactDir,
-      },
+      }),
     });
   } catch (err) {
     send(ws, { type: 'job:output', jobId: job.id, stream: 'stderr', data: `${err.message}\n` });
