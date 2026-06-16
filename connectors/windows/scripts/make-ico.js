@@ -5,14 +5,14 @@ const pngToIcoModule = require('png-to-ico');
 const pngToIco = pngToIcoModule.default || pngToIcoModule;
 
 const root = path.join(__dirname, '..');
-const svgPath = path.join(root, 'assets', 'mark-dark.svg');
+const srcPath = path.join(root, 'assets', 'mark-dark.png');
 const icoPath = path.join(root, 'assets', 'mark-dark.ico');
 const sizes = [16, 24, 32, 48, 64, 128, 256];
 
 async function main() {
-  const svg = fs.readFileSync(svgPath);
+  const src = fs.readFileSync(srcPath);
   const pngs = await Promise.all(sizes.map(size => (
-    sharp(svg)
+    sharp(src)
       .resize(size, size, { fit: 'contain' })
       .png()
       .toBuffer()

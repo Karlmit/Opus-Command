@@ -17,7 +17,7 @@ const IGNORE = /(^|[\\/])node_modules[\\/](electron|@electron|electron-packager|
 
 async function main() {
   // Regenerate the icon first.
-  execFileSync(process.execPath, [path.join(root, 'scripts', 'svg-to-ico.js')], {
+  execFileSync(process.execPath, [path.join(root, 'scripts', 'make-ico.js')], {
     stdio: 'inherit',
     cwd: root,
   });

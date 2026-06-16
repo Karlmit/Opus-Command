@@ -1,6 +1,6 @@
 {
   "name": "opus-windows-connector",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "main": "src/electron-main.js",
   "bin": "src/index.js",
   "scripts": {
@@ -8,7 +8,7 @@
     "start:gui": "electron .",
     "preflight": "node src/index.js --preflight",
     "check": "node --check src/index.js && node --check src/electron-main.js && node --check src/preload.js && node --check scripts/build-manifest.js && node --check scripts/build-exe.js",
-    "build:ico": "node scripts/svg-to-ico.js",
+    "build:ico": "node scripts/make-ico.js",
     "build:console": "pkg src/index.js --targets node18-win-x64 --output ../../dist/OpusConnector-console.exe",
     "build:exe": "node scripts/build-exe.js",
     "build:installer": "npm run build:exe && makensis installer.nsi",
