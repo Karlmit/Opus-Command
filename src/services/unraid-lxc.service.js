@@ -445,6 +445,9 @@ if [ "$WS_REPO" = /workspace ] || [ -z "$NESTED" ]; then
   touch /workspace/.gitignore
   grep -qxF ".planning/" /workspace/.gitignore 2>/dev/null || printf ".planning/\\n" >> /workspace/.gitignore
   grep -qxF ".opus-pastes/" /workspace/.gitignore 2>/dev/null || printf ".opus-pastes/\\n" >> /workspace/.gitignore
+  grep -qxF ".claude/" /workspace/.gitignore 2>/dev/null || printf ".claude/\\n" >> /workspace/.gitignore
+  grep -qxF ".opus/" /workspace/.gitignore 2>/dev/null || printf ".opus/\\n" >> /workspace/.gitignore
+  grep -qxF ".agents/" /workspace/.gitignore 2>/dev/null || printf ".agents/\\n" >> /workspace/.gitignore
 fi
 
 echo "[opus] apt update + base packages…"

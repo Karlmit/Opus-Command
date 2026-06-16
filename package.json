@@ -1,6 +1,6 @@
 {
   "name": "opus-command",
-  "version": "0.28.5",
+  "version": "0.28.6",
   "description": "Self-hosted Docker web app and AI project cockpit",
   "main": "src/index.js",
   "scripts": {
