@@ -580,6 +580,150 @@ function GitHubSection({ csrfToken, addToast }) {
   );
 }
 
+const WORKSPACE_INSTRUCTION_TABS = [
+  { id: 'claude', label: 'CLAUDE.md' },
+  { id: 'agents', label: 'AGENTS.md' },
+];
+
+function WorkspaceInstructionsSection({ csrfToken, addToast }) {
+  const [active, setActive] = useState('claude');
+  const [templates, setTemplates] = useState({
+    claude: { value: '', customized: false },
+    agents: { value: '', customized: false },
+  });
+  const [drafts, setDrafts] = useState({ claude: '', agents: '' });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetch('/api/settings/workspace-instructions')
+      .then(r => r.json())
+      .then(data => {
+        if (cancelled) return;
+        const next = {
+          claude: data.templates?.claude || { value: '', customized: false },
+          agents: data.templates?.agents || { value: '', customized: false },
+        };
+        setTemplates(next);
+        setDrafts({ claude: next.claude.value || '', agents: next.agents.value || '' });
+        setError('');
+      })
+      .catch(() => {
+        if (!cancelled) setError('Unable to load workspace instruction templates.');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  async function save(kind) {
+    setSaving(kind);
+    setError('');
+    try {
+      const res = await fetch(`/api/settings/workspace-instructions/${kind}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ value: drafts[kind] }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Save failed.');
+      setTemplates(t => ({
+        ...t,
+        [kind]: { ...t[kind], value: drafts[kind], customized: true },
+      }));
+      addToast(`${WORKSPACE_INSTRUCTION_TABS.find(t => t.id === kind)?.label || 'Template'} saved.`);
+    } catch (err) {
+      setError(err.message || 'Unable to save workspace instruction template.');
+    } finally {
+      setSaving('');
+    }
+  }
+
+  async function reset(kind) {
+    setSaving(kind);
+    setError('');
+    try {
+      const res = await fetch(`/api/settings/workspace-instructions/${kind}`, {
+        method: 'DELETE',
+        headers: { 'X-CSRF-Token': csrfToken },
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Reset failed.');
+      setTemplates(t => ({
+        ...t,
+        [kind]: { ...t[kind], value: data.value || '', customized: false },
+      }));
+      setDrafts(d => ({ ...d, [kind]: data.value || '' }));
+      addToast(`${WORKSPACE_INSTRUCTION_TABS.find(t => t.id === kind)?.label || 'Template'} reset.`);
+    } catch (err) {
+      setError(err.message || 'Unable to reset workspace instruction template.');
+    } finally {
+      setSaving('');
+    }
+  }
+
+  const current = templates[active] || { value: '', customized: false };
+  const dirty = drafts[active] !== current.value;
+
+  return (
+    <div className="settings-section workspace-instructions-section">
+      <div className="workspace-instructions-header">
+        <div>
+          <h2 className="settings-section-title">WORKSPACE INSTRUCTIONS</h2>
+          <p className="panel-hint">
+            Used when Opus creates missing <code>CLAUDE.md</code>, <code>AGENTS.md</code>, and Claude home instructions in a workspace. Existing files remain user-owned.
+          </p>
+        </div>
+        {current.customized && <span className="workspace-instructions-badge">Customized</span>}
+      </div>
+
+      <div className="workspace-instruction-tabs" role="tablist" aria-label="Workspace instruction files">
+        {WORKSPACE_INSTRUCTION_TABS.map(tab => (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            aria-selected={active === tab.id}
+            className={`workspace-instruction-tab${active === tab.id ? ' active' : ''}`}
+            onClick={() => setActive(tab.id)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {loading ? (
+        <p className="panel-hint">Loading…</p>
+      ) : (
+        <>
+          <textarea
+            className="input workspace-instruction-editor"
+            spellCheck={false}
+            value={drafts[active]}
+            onChange={e => setDrafts(d => ({ ...d, [active]: e.target.value }))}
+            aria-label={`${WORKSPACE_INSTRUCTION_TABS.find(t => t.id === active)?.label || 'Workspace instruction'} template`}
+          />
+          <div className="workspace-instructions-actions">
+            <button type="button" className="btn btn-primary" onClick={() => save(active)} disabled={saving === active || !dirty}>
+              {saving === active ? 'Saving…' : 'Save Template'}
+            </button>
+            <button type="button" className="btn btn-ghost" onClick={() => reset(active)} disabled={saving === active || (!current.customized && !dirty)}>
+              Reset to Default
+            </button>
+            {dirty && <span className="panel-hint">Unsaved changes</span>}
+          </div>
+        </>
+      )}
+
+      {error && <p className="error-message">{error}</p>}
+    </div>
+  );
+}
+
 function ConnectorsSection({ csrfToken, addToast }) {
   const [connectors, setConnectors] = useState([]);
   const [pairingToken, setPairingToken] = useState(null);
@@ -1110,7 +1254,7 @@ export default function Settings() {
           ))}
         </div>
       </div>
-      <div className="settings-content">
+      <div className={`settings-content${tab === 'workspace' ? ' workspace-settings-content' : ''}`}>
         {tab === 'general' && (
           <>
             <AppearanceSection csrfToken={csrfToken} />
@@ -1126,7 +1270,10 @@ export default function Settings() {
           </>
         )}
         {tab === 'workspace' && (
-          <UnraidLxcSection csrfToken={csrfToken} addToast={addToast} />
+          <>
+            <WorkspaceInstructionsSection csrfToken={csrfToken} addToast={addToast} />
+            <UnraidLxcSection csrfToken={csrfToken} addToast={addToast} />
+          </>
         )}
         {tab === 'account' && (
           <AccountSection csrfToken={csrfToken} addToast={addToast} />

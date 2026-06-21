@@ -16,7 +16,11 @@ _bmad
 _bmad-output
 docs
 Logos
-workspace-images
+workspace-images/*
+!workspace-images/claude-code
+workspace-images/claude-code/*
+!workspace-images/claude-code/CLAUDE.md
+!workspace-images/claude-code/AGENTS.md
 .github
 README.md
 ROADMAP.md

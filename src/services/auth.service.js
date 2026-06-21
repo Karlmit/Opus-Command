@@ -1,5 +1,7 @@
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const { getDB, getSQLite } = require('../db');
 const { users, settings } = require('../db/schema');
 const { eq } = require('drizzle-orm');
@@ -53,6 +55,53 @@ function setSetting(key, value) {
   db.insert(settings).values({ key, value })
     .onConflictDoUpdate({ target: settings.key, set: { value } })
     .run();
+}
+
+function deleteSetting(key) {
+  const db = getDB();
+  db.delete(settings).where(eq(settings.key, key)).run();
+}
+
+const WORKSPACE_INSTRUCTION_FILES = {
+  claude: 'CLAUDE.md',
+  agents: 'AGENTS.md',
+};
+
+function workspaceInstructionKey(kind) {
+  return `workspace_instruction_template_${kind}`;
+}
+
+function getDefaultWorkspaceInstructionTemplate(kind) {
+  const file = WORKSPACE_INSTRUCTION_FILES[kind];
+  if (!file) return '';
+  const candidates = [
+    path.join(__dirname, 'workspace-defaults', file),
+    path.join(__dirname, '..', 'workspace', `default-${file}`),
+    path.join(__dirname, '..', '..', 'workspace-images', 'claude-code', file),
+  ];
+  for (const candidate of candidates) {
+    try {
+      return fs.readFileSync(candidate, 'utf8');
+    } catch {}
+  }
+  return '';
+}
+
+function getWorkspaceInstructionTemplate(kind, fallback) {
+  const stored = getSetting(workspaceInstructionKey(kind));
+  if (stored !== null) return stored;
+  if (fallback !== undefined) return fallback;
+  return getDefaultWorkspaceInstructionTemplate(kind);
+}
+
+function setWorkspaceInstructionTemplate(kind, value) {
+  if (!WORKSPACE_INSTRUCTION_FILES[kind]) throw new Error('Invalid instruction template.');
+  setSetting(workspaceInstructionKey(kind), String(value == null ? '' : value));
+}
+
+function resetWorkspaceInstructionTemplate(kind) {
+  if (!WORKSPACE_INSTRUCTION_FILES[kind]) throw new Error('Invalid instruction template.');
+  deleteSetting(workspaceInstructionKey(kind));
 }
 
 function getWorkspaceEnvVars() {
@@ -128,7 +177,12 @@ module.exports = {
   changePassword,
   getSetting,
   setSetting,
+  deleteSetting,
   getWorkspaceEnvVars,
+  getDefaultWorkspaceInstructionTemplate,
+  getWorkspaceInstructionTemplate,
+  setWorkspaceInstructionTemplate,
+  resetWorkspaceInstructionTemplate,
   getWorkspaceAccessToken,
   getTerminalAgentToken,
   rotateTerminalAgentToken,

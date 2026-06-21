@@ -60,6 +60,11 @@
   max-width: 600px;
 }
 
+.settings-content.workspace-settings-content {
+  width: 100%;
+  max-width: 960px;
+}
+
 @media (max-width: 599px) {
   .settings-content {
     padding: var(--spacing-md);
@@ -278,6 +283,84 @@
 
 .font-mono {
   font-family: var(--font-mono);
+}
+
+.workspace-instructions-section {
+  gap: var(--spacing-md);
+}
+
+.workspace-instructions-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+}
+
+.workspace-instructions-header .panel-hint {
+  margin-top: var(--spacing-xs);
+  max-width: 68ch;
+}
+
+.workspace-instructions-badge {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+.workspace-instruction-tabs {
+  display: inline-flex;
+  align-self: flex-start;
+  gap: var(--spacing-xs);
+  padding: 3px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-elevated);
+}
+
+.workspace-instruction-tab {
+  height: 28px;
+  padding: 0 var(--spacing-sm);
+  border: 1px solid transparent;
+  border-radius: calc(var(--radius-md) - 2px);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  transition: background var(--motion-hover), color var(--motion-hover), border-color var(--motion-hover);
+}
+
+.workspace-instruction-tab:hover {
+  color: var(--color-text-secondary);
+}
+
+.workspace-instruction-tab.active {
+  background: var(--color-surface-overlay);
+  border-color: var(--color-border);
+  color: var(--color-text-primary);
+}
+
+.workspace-instruction-editor {
+  min-height: 360px;
+  height: min(52vh, 560px);
+  padding: var(--spacing-md);
+  resize: vertical;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  line-height: var(--leading-normal);
+  white-space: pre;
+  overflow: auto;
+}
+
+.workspace-instructions-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
 }
 
 .connectors-section {

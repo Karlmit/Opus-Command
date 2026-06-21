@@ -141,6 +141,7 @@ async function getWorkspaceImage(template) {
 // Shared startup Cmd — used by createWorkspaceContainer AND recreateContainer
 // so every container (new, recreated, rebuilt, reset) runs the same init script.
 function buildWorkspaceCmd(image, template) {
+  const { getWorkspaceInstructionTemplate } = require('./auth.service');
   const workspaceTemplate = getWorkspaceTemplate(template);
   const opusCliPath = path.join(__dirname, '..', 'workspace', 'opus-cli.js');
   const opusCliBase64 = fs.existsSync(opusCliPath)
@@ -158,6 +159,8 @@ function buildWorkspaceCmd(image, template) {
   const connectorSkillBase64 = fs.existsSync(connectorSkillPath)
     ? Buffer.from(fs.readFileSync(connectorSkillPath, 'utf8')).toString('base64')
     : '';
+  const claudeInstructionBase64 = Buffer.from(getWorkspaceInstructionTemplate('claude'), 'utf8').toString('base64');
+  const agentsInstructionBase64 = Buffer.from(getWorkspaceInstructionTemplate('agents'), 'utf8').toString('base64');
   const gitGuidanceBase64 = Buffer.from(OPUS_GIT_GUIDANCE, 'utf8').toString('base64');
   const workClaudeSettings = JSON.stringify({
     model: 'sonnet',
@@ -198,9 +201,9 @@ function buildWorkspaceCmd(image, template) {
     connectorSkillBase64
       ? `printf '%s' '${connectorSkillBase64}' | base64 -d > /workspace/.opus/skills/connectors.md`
       : '[ -f /etc/opus-command/skills/connectors.md ] && cp /etc/opus-command/skills/connectors.md /workspace/.opus/skills/connectors.md 2>/dev/null || true',
-    '[ -f ~/.claude/CLAUDE.md ] || cp /etc/opus-command/CLAUDE.md ~/.claude/CLAUDE.md 2>/dev/null || true',
-    '[ -f /workspace/CLAUDE.md ] || cp /etc/opus-command/CLAUDE.md /workspace/CLAUDE.md 2>/dev/null || true',
-    '[ -f /workspace/AGENTS.md ] || cp /etc/opus-command/AGENTS.md /workspace/AGENTS.md 2>/dev/null || true',
+    `[ -f ~/.claude/CLAUDE.md ] || printf '%s' '${claudeInstructionBase64}' | base64 -d > ~/.claude/CLAUDE.md`,
+    `[ -f /workspace/CLAUDE.md ] || printf '%s' '${claudeInstructionBase64}' | base64 -d > /workspace/CLAUDE.md`,
+    `[ -f /workspace/AGENTS.md ] || printf '%s' '${agentsInstructionBase64}' | base64 -d > /workspace/AGENTS.md`,
     `grep -q ".opus/skills/connectors.md" ~/.claude/CLAUDE.md 2>/dev/null || printf '${opusSkillPointer}' >> ~/.claude/CLAUDE.md`,
     `grep -q ".opus/skills/connectors.md" /workspace/CLAUDE.md 2>/dev/null || printf '${opusSkillPointer}' >> /workspace/CLAUDE.md`,
     `grep -q ".opus/skills/connectors.md" /workspace/AGENTS.md 2>/dev/null || printf '${opusSkillPointer}' >> /workspace/AGENTS.md`,

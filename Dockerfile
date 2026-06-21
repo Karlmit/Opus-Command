@@ -21,6 +21,8 @@ WORKDIR /app
 COPY --from=server-deps /build/node_modules ./node_modules
 COPY --from=client-builder /build/public ./public
 COPY src/ ./src/
+COPY workspace-images/claude-code/CLAUDE.md ./src/workspace/default-CLAUDE.md
+COPY workspace-images/claude-code/AGENTS.md ./src/workspace/default-AGENTS.md
 COPY drizzle/ ./drizzle/
 COPY package.json ./
 

@@ -392,7 +392,7 @@ function managedEnvLines(vars, { isAzure = false } = {}) {
 }
 
 function buildProvisionScript(project, { envVars } = {}) {
-  const { getWorkspaceEnvVars } = require('./auth.service');
+  const { getWorkspaceEnvVars, getWorkspaceInstructionTemplate } = require('./auth.service');
   const vars = Array.isArray(envVars) ? envVars : getWorkspaceEnvVars();
   const template = lxcTemplateFor(project);
   const isAzure = template !== 'private';
@@ -404,8 +404,8 @@ function buildProvisionScript(project, { envVars } = {}) {
   const configureHooksB64 = b64File(CONFIGURE_AGENT_HOOKS_PATH);
   const agentB64 = b64File(TERMINAL_AGENT_PATH);
   const agentTokenB64 = b64(getTerminalAgentToken(project.id));
-  const claudeB64 = b64(lxcInstructionsDoc('claude'));
-  const agentsB64 = b64(lxcInstructionsDoc('agents'));
+  const claudeB64 = b64(getWorkspaceInstructionTemplate('claude', lxcInstructionsDoc('claude')));
+  const agentsB64 = b64(getWorkspaceInstructionTemplate('agents', lxcInstructionsDoc('agents')));
   const gitGuidanceB64 = b64(GIT_GUIDANCE);
 
   const settings = isAzure

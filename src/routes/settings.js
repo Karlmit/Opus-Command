@@ -1,7 +1,14 @@
 const express = require('express');
 const router = express.Router();
 const { requireAuth } = require('../middleware/auth');
-const { getSetting, setSetting } = require('../services/auth.service');
+const {
+  getSetting,
+  setSetting,
+  getDefaultWorkspaceInstructionTemplate,
+  getWorkspaceInstructionTemplate,
+  setWorkspaceInstructionTemplate,
+  resetWorkspaceInstructionTemplate,
+} = require('../services/auth.service');
 const { APP_VERSION } = require('../config');
 const https = require('https');
 
@@ -95,6 +102,52 @@ router.post('/workspace-env', requireAuth, (req, res) => {
   const merged = Object.entries(map).map(([key, value]) => ({ key, value }));
   setSetting('workspace_env_vars', JSON.stringify(merged));
   res.json({ success: true, count: merged.length });
+});
+
+// ── Workspace instruction templates (CLAUDE.md / AGENTS.md) ────────────────
+
+const WORKSPACE_INSTRUCTION_KINDS = new Set(['claude', 'agents']);
+const MAX_INSTRUCTION_TEMPLATE_BYTES = 256 * 1024;
+
+function validateInstructionKind(kind) {
+  return WORKSPACE_INSTRUCTION_KINDS.has(kind);
+}
+
+router.get('/workspace-instructions', requireAuth, (req, res) => {
+  const templates = {};
+  for (const kind of WORKSPACE_INSTRUCTION_KINDS) {
+    const value = getWorkspaceInstructionTemplate(kind);
+    templates[kind] = {
+      value,
+      customized: getSetting(`workspace_instruction_template_${kind}`) !== null,
+    };
+  }
+  res.json({ templates });
+});
+
+router.post('/workspace-instructions/:kind', requireAuth, (req, res) => {
+  const { kind } = req.params;
+  if (!validateInstructionKind(kind)) return res.status(404).json({ error: 'Unknown instruction template.' });
+
+  const value = String(req.body?.value == null ? '' : req.body.value);
+  if (Buffer.byteLength(value, 'utf8') > MAX_INSTRUCTION_TEMPLATE_BYTES) {
+    return res.status(413).json({ error: 'Instruction template is too large.' });
+  }
+
+  setWorkspaceInstructionTemplate(kind, value);
+  res.json({ success: true, kind, customized: true });
+});
+
+router.delete('/workspace-instructions/:kind', requireAuth, (req, res) => {
+  const { kind } = req.params;
+  if (!validateInstructionKind(kind)) return res.status(404).json({ error: 'Unknown instruction template.' });
+  resetWorkspaceInstructionTemplate(kind);
+  res.json({
+    success: true,
+    kind,
+    value: getDefaultWorkspaceInstructionTemplate(kind),
+    customized: false,
+  });
 });
 
 router.get('/version', requireAuth, (req, res) => {
