@@ -675,10 +675,25 @@ function WorkspaceInstructionsSection({ csrfToken, addToast }) {
         <div>
           <h2 className="settings-section-title">WORKSPACE INSTRUCTIONS</h2>
           <p className="panel-hint">
-            Used when Opus creates missing <code>CLAUDE.md</code>, <code>AGENTS.md</code>, and Claude home instructions in a workspace. Existing files remain user-owned.
+            Edit the default instruction files Opus writes into new workspaces.
           </p>
         </div>
         {current.customized && <span className="workspace-instructions-badge">Customized</span>}
+      </div>
+
+      <div className="workspace-instructions-explainer">
+        <div>
+          <span className="workspace-instructions-explainer-label">When it applies</span>
+          <p>Opus uses these templates only when a workspace is created, recreated, rebuilt, reset, or updated and the target instruction file is missing.</p>
+        </div>
+        <div>
+          <span className="workspace-instructions-explainer-label">Where it writes</span>
+          <p><code>CLAUDE.md</code> seeds <code>/workspace/CLAUDE.md</code> and <code>~/.claude/CLAUDE.md</code>. <code>AGENTS.md</code> seeds <code>/workspace/AGENTS.md</code>.</p>
+        </div>
+        <div>
+          <span className="workspace-instructions-explainer-label">What stays safe</span>
+          <p>Opus does not overwrite existing instruction files. It may still append managed Opus skill and Git guidance if those blocks are missing.</p>
+        </div>
       </div>
 
       <div className="workspace-instruction-tabs" role="tablist" aria-label="Workspace instruction files">
