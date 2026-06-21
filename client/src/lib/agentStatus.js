@@ -34,6 +34,14 @@ const STATUS_ICONS = {
   unknown: '?',
 };
 
+const VISIBLE_PROJECT_AGENT_STATUSES = new Set([
+  'working',
+  'running_tool',
+  'waiting_for_input',
+  'waiting_for_approval',
+  'error',
+]);
+
 export function normalizeAgentStatus(status) {
   return Object.prototype.hasOwnProperty.call(AGENT_STATUS_LABELS, status)
     ? status
@@ -55,6 +63,13 @@ export function getProjectAgentStatus(project) {
   if ((project?.aiActive || project?.aiBusy || 0) > 0) return 'working';
   if ((project?.terminalCount || 0) > 0) return 'ready';
   return 'ready';
+}
+
+export function shouldShowProjectAgentStatus(project) {
+  if (!project || (project.status && project.status !== 'running' && project.status !== 'starting')) {
+    return false;
+  }
+  return VISIBLE_PROJECT_AGENT_STATUSES.has(getProjectAgentStatus(project));
 }
 
 export function agentStatusClass(status) {

@@ -9,6 +9,7 @@ import {
   getAgentStatusIcon,
   getAgentStatusLabel,
   getProjectAgentStatus,
+  shouldShowProjectAgentStatus,
 } from '../lib/agentStatus';
 import './ProjectsSidebar.css';
 
@@ -617,17 +618,24 @@ export default function ProjectsSidebar() {
           const agentLabel = getAgentStatusLabel(agentStatus);
           const agentIcon = getAgentStatusIcon(agentStatus);
           const agentTitle = `AI status: ${agentLabel}`;
+          const showAgentStatus = shouldShowProjectAgentStatus(project);
           const isWaiting = agentStatus === 'waiting_for_input' || agentStatus === 'waiting_for_approval';
           const isActiveAgent = agentStatus === 'working' || agentStatus === 'running_tool';
           const isErrorAgent = agentStatus === 'error';
           const terminalHint = project.terminalCount > 0
             ? `${project.terminalCount} terminal${project.terminalCount === 1 ? '' : 's'}`
             : 'No terminals';
+          const titleText = showAgentStatus
+            ? `${project.name} — ${agentTitle}`
+            : project.name;
+          const ariaLabel = showAgentStatus
+            ? `${project.name}. ${agentTitle}. Workspace ${project.status || 'unknown'}.`
+            : `${project.name}. Workspace ${project.status || 'unknown'}.`;
           return (
             <div key={project.id}
               data-id={project.id}
               draggable
-              className={`sidebar-project-item agent-${agentClass}${isActive ? ' active' : ''}${isActiveAgent ? ' ai-active' : ''}${isWaiting ? ' ai-waiting' : ''}${isErrorAgent ? ' ai-error' : ''}${dragId === project.id ? ' dragging' : ''}`}
+              className={`sidebar-project-item${showAgentStatus ? ` agent-${agentClass}` : ''}${isActive ? ' active' : ''}${showAgentStatus && isActiveAgent ? ' ai-active' : ''}${showAgentStatus && isWaiting ? ' ai-waiting' : ''}${showAgentStatus && isErrorAgent ? ' ai-error' : ''}${dragId === project.id ? ' dragging' : ''}`}
               onClick={() => navigate(`/project/${project.id}`)}
               onMouseEnter={() => setHoveredId(project.id)}
               onMouseLeave={() => setHoveredId(null)}
@@ -635,32 +643,36 @@ export default function ProjectsSidebar() {
               onDragStart={e => handleDragStart(e, project.id)}
               onDragOver={e => handleDragOver(e, project.id)}
               onDragEnd={handleDragEnd}
-              title={isCollapsed ? `${project.name} — ${agentTitle}` : undefined}
-              aria-label={`${project.name}. ${agentTitle}. Workspace ${project.status || 'unknown'}.`}
+              title={isCollapsed ? titleText : undefined}
+              aria-label={ariaLabel}
             >
               <div className="sidebar-avatar-wrap">
                 <ProjectAvatar project={project} size={34} playing={hoveredId === project.id} />
                 <span className={`sidebar-status-dot status-${project.status}`} />
-                <span
-                  className={`sidebar-agent-dot agent-${agentClass}`}
-                  title={agentTitle}
-                  aria-label={agentTitle}
-                >
-                  {agentIcon}
-                </span>
+                {showAgentStatus && (
+                  <span
+                    className={`sidebar-agent-dot agent-${agentClass}`}
+                    title={agentTitle}
+                    aria-label={agentTitle}
+                  >
+                    {agentIcon}
+                  </span>
+                )}
               </div>
               {!isCollapsed && (
                 <div className="sidebar-project-meta">
                   <span className="sidebar-project-title-row">
                     <span className="sidebar-project-name">{project.name}</span>
-                    <span
-                      className={`sidebar-agent-chip agent-${agentClass}`}
-                      title={agentTitle}
-                      aria-label={agentTitle}
-                    >
-                      <span className="sidebar-agent-chip-icon" aria-hidden="true">{agentIcon}</span>
-                      <span className="sidebar-agent-chip-label">{agentLabel}</span>
-                    </span>
+                    {showAgentStatus && (
+                      <span
+                        className={`sidebar-agent-chip agent-${agentClass}`}
+                        title={agentTitle}
+                        aria-label={agentTitle}
+                      >
+                        <span className="sidebar-agent-chip-icon" aria-hidden="true">{agentIcon}</span>
+                        <span className="sidebar-agent-chip-label">{agentLabel}</span>
+                      </span>
+                    )}
                   </span>
                   <span className="sidebar-project-status">{project.status} · {terminalHint}</span>
                 </div>
