@@ -453,7 +453,15 @@ export default function ProjectsSidebar() {
   }, []);
 
   useEffect(() => {
+    load();
+  }, [location.pathname]);
+
+  useEffect(() => {
     const sock = getNotificationSocket();
+
+    function onConnect() {
+      load();
+    }
 
     function onProjectAIState({ projectId, terminalCount, aiActive, aiWaiting, aiBusy, agentStatus }) {
       setProjects(prev => prev.map(project => (
@@ -471,9 +479,11 @@ export default function ProjectsSidebar() {
       )));
     }
 
+    sock.on('connect', onConnect);
     sock.on('project:ai-state', onProjectAIState);
     sock.on('project:agent-status', onProjectAgentStatus);
     return () => {
+      sock.off('connect', onConnect);
       sock.off('project:ai-state', onProjectAIState);
       sock.off('project:agent-status', onProjectAgentStatus);
     };

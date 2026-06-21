@@ -956,7 +956,6 @@ function applyAgentHookEvent(sessionId, eventName, io, metadata = {}) {
   if (/^(PostToolUse|UserPromptSubmit|BeforeAgent|BeforeModel)$/i.test(event)) {
     return _setSessionAgentStatus(sessionId, AGENT_STATUS.WORKING, io, {
       source: event,
-      idleAfterMs: AGENT_OUTPUT_ACTIVE_MS,
       metadata,
     });
   }
