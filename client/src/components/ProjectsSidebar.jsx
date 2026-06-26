@@ -20,6 +20,8 @@ const DEFAULT_WIDTH   = 210;
 const MAX_WIDTH       = 360;
 const GROUP_COLLAPSE_KEY = 'sidebar-collapsed-project-groups';
 const GROUP_ORDER_KEY = 'sidebar-project-group-order';
+const GROUP_APPEARANCE_KEY = 'sidebar-project-group-appearance';
+const FAVORITE_PROJECTS_KEY = 'sidebar-favorite-projects';
 
 /* ── Avatar helpers ─────────────────────────────── */
 const COLORS = ['#6366f1','#8b5cf6','#ec4899','#ef4444','#f59e0b','#22c55e','#06b6d4','#3b82f6','#64748b','#92400e'];
@@ -343,7 +345,7 @@ function AvatarPickerForm({ project, csrfToken, onSaved, onClose }) {
 }
 
 /* ── Context menu ───────────────────────────────── */
-function ProjectContextMenu({ project, position, lifecycleBusy, onClose, onOpenAvatar, onOpenGroup, onSetGroup, onLifecycle, navigate }) {
+function ProjectContextMenu({ project, position, lifecycleBusy, isFavorite, onClose, onOpenAvatar, onOpenGroup, onSetGroup, onToggleFavorite, onLifecycle, navigate }) {
   const ref = useRef(null);
   const [pos, setPos] = useState({ left: position.x, top: position.y });
   useEffect(() => {
@@ -379,6 +381,10 @@ function ProjectContextMenu({ project, position, lifecycleBusy, onClose, onOpenA
       <button role="menuitem" onClick={() => go(`/project/${project.id}`)}>Open</button>
       <button role="menuitem" onClick={() => go(`/project/${project.id}?tab=settings`)}>Workspace &amp; Logs</button>
       <button role="menuitem" onClick={() => go(`/project/${project.id}?tab=git`)}>Git</button>
+      <div className="context-separator" />
+      <button role="menuitem" onClick={() => { onToggleFavorite(project); onClose(); }}>
+        {isFavorite ? 'Unfavorite Project' : 'Favorite Project'}
+      </button>
       <div className="context-separator" />
       <button role="menuitem" onClick={() => runLifecycle('start')} disabled={isBusy || isRunning}>
         {isBusy && !isRunning ? 'Starting…' : 'Start Workspace'}
@@ -541,6 +547,86 @@ function GroupPickerForm({ project, groups, saving, onClose, onSave }) {
   );
 }
 
+function GroupAppearanceForm({ group, appearance, onClose, onSave, onReset }) {
+  const [color, setColor] = useState(appearance?.color || '#3b82f6');
+  const [opacity, setOpacity] = useState(
+    Number.isFinite(appearance?.opacity) ? Math.round(appearance.opacity * 100) : 22
+  );
+
+  function submit(e) {
+    e.preventDefault();
+    onSave(group.name, { color, opacity: Math.max(0, Math.min(100, opacity)) / 100 });
+  }
+
+  return (
+    <form onSubmit={submit} className="popover-form group-appearance-form">
+      <div className="popover-header">
+        <span className="popover-title">Folder Appearance</span>
+        <button type="button" className="popover-close" onClick={onClose} aria-label="Close">×</button>
+      </div>
+
+      <div className="group-appearance-preview"
+           style={{
+             '--folder-color': color,
+             '--folder-opacity': `${opacity}%`,
+             '--folder-border-opacity': `${Math.min(100, opacity + 18)}%`,
+           }}>
+        <GroupAvatarMosaic projects={group.projects} />
+        <span className="group-appearance-name">{group.name}</span>
+        <span className="group-picker-option-count">{group.projects.length}</span>
+      </div>
+
+      <div className="form-group">
+        <label className="form-label" htmlFor="folder-color">Color</label>
+        <div className="group-color-row">
+          <input
+            id="folder-color"
+            type="color"
+            className="group-color-input"
+            value={color}
+            onChange={e => setColor(e.target.value)}
+          />
+          <input
+            className="input group-color-text"
+            value={color}
+            onChange={e => setColor(e.target.value)}
+            pattern="^#[0-9a-fA-F]{6}$"
+          />
+        </div>
+      </div>
+
+      <div className="form-group">
+        <label className="form-label" htmlFor="folder-opacity">Opacity</label>
+        <div className="group-opacity-row">
+          <input
+            id="folder-opacity"
+            type="range"
+            min="0"
+            max="100"
+            value={opacity}
+            onChange={e => setOpacity(Number(e.target.value))}
+          />
+          <input
+            className="input group-opacity-input"
+            type="number"
+            min="0"
+            max="100"
+            value={opacity}
+            onChange={e => setOpacity(Number(e.target.value))}
+          />
+          <span className="group-opacity-unit">%</span>
+        </div>
+      </div>
+
+      <div className="popover-footer">
+        <button type="button" className="btn btn-ghost" onClick={() => onReset(group.name)}>Reset</button>
+        <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+        <button type="submit" className="btn btn-primary">Save</button>
+      </div>
+    </form>
+  );
+}
+
 /* ── Main sidebar ───────────────────────────────── */
 export default function ProjectsSidebar() {
   const { id: activeId } = useParams();
@@ -561,6 +647,14 @@ export default function ProjectsSidebar() {
     try { return JSON.parse(localStorage.getItem(GROUP_ORDER_KEY) || '[]'); }
     catch { return []; }
   });
+  const [groupAppearance, setGroupAppearance] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(GROUP_APPEARANCE_KEY) || '{}'); }
+    catch { return {}; }
+  });
+  const [favoriteProjectIds, setFavoriteProjectIds] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(FAVORITE_PROJECTS_KEY) || '[]').map(String); }
+    catch { return []; }
+  });
 
   // Drag-to-reorder state
   const [dragId, setDragId]   = useState(null);
@@ -572,6 +666,7 @@ export default function ProjectsSidebar() {
   const [newProjectAnchor, setNewProjectAnchor] = useState(null); // HTMLElement | null
   const [avatarTarget, setAvatarTarget]         = useState(null); // { project, anchor }
   const [groupTarget, setGroupTarget]           = useState(null);
+  const [appearanceTarget, setAppearanceTarget] = useState(null);
   const [groupSaving, setGroupSaving]           = useState(false);
 
   const newBtnRef = useRef(null);
@@ -752,6 +847,36 @@ export default function ProjectsSidebar() {
     setGroupDragName(null);
   }
 
+  function saveGroupAppearance(name, nextAppearance) {
+    setGroupAppearance(prev => {
+      const next = { ...prev, [name]: nextAppearance };
+      localStorage.setItem(GROUP_APPEARANCE_KEY, JSON.stringify(next));
+      return next;
+    });
+    setAppearanceTarget(null);
+  }
+
+  function resetGroupAppearance(name) {
+    setGroupAppearance(prev => {
+      const next = { ...prev };
+      delete next[name];
+      localStorage.setItem(GROUP_APPEARANCE_KEY, JSON.stringify(next));
+      return next;
+    });
+    setAppearanceTarget(null);
+  }
+
+  function toggleFavoriteProject(project) {
+    const projectId = String(project.id);
+    setFavoriteProjectIds(prev => {
+      const next = prev.includes(projectId)
+        ? prev.filter(id => id !== projectId)
+        : [...prev, projectId];
+      localStorage.setItem(FAVORITE_PROJECTS_KEY, JSON.stringify(next));
+      return next;
+    });
+  }
+
   function handleCreated(p) { setProjects(prev => [...prev, p]); navigate(`/project/${p.id}`); }
   function handleAvatarSaved(pid, avatar) { setProjects(prev => prev.map(p => p.id === pid ? { ...p, avatar } : p)); }
   function handleContext(e, project) { e.preventDefault(); e.stopPropagation(); setContext({ project, x: e.clientX, y: e.clientY }); }
@@ -820,8 +945,11 @@ export default function ProjectsSidebar() {
   }
 
   const [hoveredId, setHoveredId] = useState(null);
+  const favoriteIdSet = new Set(favoriteProjectIds);
+  const favoriteProjects = projects.filter(project => favoriteIdSet.has(String(project.id)));
   const { groups: rawGroups, ungrouped } = buildProjectGroups(projects);
   const groups = orderProjectGroups(rawGroups, groupOrder);
+  const groupPickerGroups = groups;
 
   function renderProject(project) {
     const isActive = String(project.id) === String(activeId);
@@ -898,14 +1026,26 @@ export default function ProjectsSidebar() {
   function renderGroup(group) {
     const collapsed = collapsedGroups.has(group.name);
     const hasActiveProject = group.projects.some(project => String(project.id) === String(activeId));
+    const appearance = groupAppearance[group.name];
+    const opacityPercent = Math.round((Number.isFinite(appearance?.opacity) ? appearance.opacity : 0) * 100);
     return (
       <div
         className={`sidebar-project-group${hasActiveProject ? ' active' : ''}${groupDragName === group.name ? ' dragging' : ''}${collapsed ? ' collapsed' : ''}`}
         key={group.name}
+        style={{
+          '--folder-color': appearance?.color || '#3b82f6',
+          '--folder-opacity': `${opacityPercent}%`,
+          '--folder-border-opacity': `${Math.min(100, opacityPercent + (appearance ? 18 : 0))}%`,
+        }}
         draggable
         onDragStart={e => handleGroupDragStart(e, group.name)}
         onDragOver={e => handleGroupDragOver(e, group.name)}
         onDragEnd={handleGroupDragEnd}
+        onContextMenu={e => {
+          e.preventDefault();
+          e.stopPropagation();
+          setAppearanceTarget(group);
+        }}
       >
         <button
           className="sidebar-group-header"
@@ -954,6 +1094,17 @@ export default function ProjectsSidebar() {
 
       <div className="sidebar-projects">
         {projects.length === 0 && !isCollapsed && <p className="sidebar-empty">No projects yet</p>}
+        {favoriteProjects.length > 0 && (
+          <div className="sidebar-favorites">
+            {!isCollapsed && (
+              <div className="sidebar-favorites-label">
+                <span>Favorites</span>
+                <span className="sidebar-group-count">{favoriteProjects.length}</span>
+              </div>
+            )}
+            {favoriteProjects.map(renderProject)}
+          </div>
+        )}
         {groups.map(renderGroup)}
         {ungrouped.map(renderProject)}
       </div>
@@ -1011,10 +1162,23 @@ export default function ProjectsSidebar() {
         <SidebarPopover onClose={() => setGroupTarget(null)} width={390}>
           <GroupPickerForm
             project={groupTarget}
-            groups={groups}
+            groups={groupPickerGroups}
             saving={groupSaving}
             onSave={setProjectGroup}
             onClose={() => setGroupTarget(null)}
+          />
+        </SidebarPopover>
+      )}
+
+      {/* Folder appearance picker */}
+      {appearanceTarget && (
+        <SidebarPopover onClose={() => setAppearanceTarget(null)} width={390}>
+          <GroupAppearanceForm
+            group={appearanceTarget}
+            appearance={groupAppearance[appearanceTarget.name]}
+            onSave={saveGroupAppearance}
+            onReset={resetGroupAppearance}
+            onClose={() => setAppearanceTarget(null)}
           />
         </SidebarPopover>
       )}
@@ -1025,10 +1189,12 @@ export default function ProjectsSidebar() {
           project={contextMenu.project}
           position={{ x: contextMenu.x, y: contextMenu.y }}
           lifecycleBusy={lifecycleBusy}
+          isFavorite={favoriteIdSet.has(String(contextMenu.project.id))}
           onClose={() => setContext(null)}
           onOpenAvatar={() => setAvatarTarget({ project: contextMenu.project })}
           onOpenGroup={project => setGroupTarget(project)}
           onSetGroup={setProjectGroup}
+          onToggleFavorite={toggleFavoriteProject}
           onLifecycle={runProjectLifecycle}
           navigate={navigate}
         />
