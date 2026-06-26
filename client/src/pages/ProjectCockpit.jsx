@@ -2713,6 +2713,15 @@ export default function ProjectCockpit() {
     ?? termTabs[0]?.id
     ?? null;
 
+  function pasteAgentCommand(command) {
+    if (!activeTermId) {
+      addToast('Open a terminal first.', 'error');
+      return;
+    }
+    activateTerm(activeTermId);
+    getSocket().emit('terminal:input', { sessionId: activeTermId, data: command });
+  }
+
   function renderActiveFileEditor() {
     if (!activeFileTab) return null;
 
@@ -2890,6 +2899,20 @@ export default function ProjectCockpit() {
             </div>
           ))}
           <button className="cockpit-new-term" onClick={() => createTerminal()}>+ Terminal</button>
+          <button
+            className="cockpit-agent-paste"
+            onClick={() => pasteAgentCommand('codex --dangerously-bypass-approvals-and-sandbox')}
+            title="Paste Codex launch command"
+          >
+            + Codex
+          </button>
+          <button
+            className="cockpit-agent-paste"
+            onClick={() => pasteAgentCommand('IS_SANDBOX=1  claude --dangerously-skip-permissions')}
+            title="Paste Claude launch command"
+          >
+            + Claude
+          </button>
           <div
             className="cockpit-tab files-tab"
             role="tab"
