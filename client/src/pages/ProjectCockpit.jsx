@@ -1710,6 +1710,7 @@ export default function ProjectCockpit() {
   const [showDelete, setShowDelete] = useState(false);
   const [treeCollapsed, setTreeCollapsed] = useState(false);
   const [hoveredTreeProject, setHoveredTreeProject] = useState(false);
+  const [commandMenu, setCommandMenu] = useState(null); // { x, y }
   const [fileContextMenu, setFileContextMenu] = useState(null); // { node, x, y }
   const [renameDialog, setRenameDialog] = useState(null); // { node, value }
   const [markedNode, setMarkedNode] = useState(null); // anchor for range/keyboard ops
@@ -1883,6 +1884,20 @@ export default function ProjectCockpit() {
       document.removeEventListener('keydown', closeOnEscape);
     };
   }, [!!fileContextMenu]);
+
+  useEffect(() => {
+    if (!commandMenu) return;
+    function closeMenu() { setCommandMenu(null); }
+    function closeOnEscape(e) {
+      if (e.key === 'Escape') closeMenu();
+    }
+    document.addEventListener('click', closeMenu);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('click', closeMenu);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [!!commandMenu]);
 
   // Handle ?tab= from context menu (desktop right-click)
   useEffect(() => {
@@ -2935,23 +2950,23 @@ export default function ProjectCockpit() {
             </div>
           ))}
           <button className="cockpit-new-term" onClick={() => createTerminal()}>+ Terminal</button>
-          <select
-            className="cockpit-command-select"
-            value=""
-            onChange={e => {
-              const command = terminalCommands.find(cmd => cmd.id === e.target.value);
-              if (command) pasteTerminalCommand(command);
-              e.currentTarget.value = '';
+          <button
+            type="button"
+            className={`cockpit-command-trigger${commandMenu ? ' open' : ''}`}
+            onClick={e => {
+              e.stopPropagation();
+              const rect = e.currentTarget.getBoundingClientRect();
+              setCommandMenu(open => open ? null : { x: rect.left, y: rect.bottom + 4 });
             }}
             aria-label="Command"
+            aria-haspopup="menu"
+            aria-expanded={!!commandMenu}
             title="Paste a saved command into the active terminal"
             disabled={!terminalCommands.length}
           >
-            <option value="">Command</option>
-            {terminalCommands.map(command => (
-              <option key={command.id} value={command.id}>{command.displayName}</option>
-            ))}
-          </select>
+            <span>Command</span>
+            <span className="cockpit-command-chevron" aria-hidden="true">⌄</span>
+          </button>
           <div
             className="cockpit-tab files-tab"
             role="tab"
@@ -3173,6 +3188,34 @@ export default function ProjectCockpit() {
         </ContextMenuPortal>
         );
       })()}
+
+      {commandMenu && (
+        <ContextMenuPortal
+          x={commandMenu.x}
+          y={commandMenu.y}
+          className="context-menu command-menu"
+          onClick={e => e.stopPropagation()}
+          onContextMenu={e => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+        >
+          <div className="command-menu-label">Command</div>
+          {terminalCommands.map(command => (
+            <button
+              key={command.id}
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                pasteTerminalCommand(command);
+                setCommandMenu(null);
+              }}
+            >
+              <span className="command-menu-name">{command.displayName}</span>
+            </button>
+          ))}
+        </ContextMenuPortal>
+      )}
 
       {renameDialog && (
         <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && setRenameDialog(null)}>

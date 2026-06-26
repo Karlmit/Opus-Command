@@ -514,10 +514,14 @@
 }
 .cockpit-new-term:hover { color: var(--color-accent); border-color: var(--color-accent); }
 
-.cockpit-command-select {
+.cockpit-command-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   height: 26px;
   min-width: 118px;
-  padding: 0 28px 0 9px;
+  padding: 0 9px;
   background: color-mix(in srgb, var(--color-surface) 35%, transparent);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
@@ -532,16 +536,51 @@
     background var(--motion-hover),
     border-color var(--motion-hover);
 }
-.cockpit-command-select:hover,
-.cockpit-command-select:focus-visible {
+.cockpit-command-trigger:hover,
+.cockpit-command-trigger:focus-visible,
+.cockpit-command-trigger.open {
   color: var(--color-text-primary);
   background: color-mix(in srgb, var(--color-accent) 12%, transparent);
   border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
 }
 
-.cockpit-command-select:disabled {
+.cockpit-command-trigger:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 28%, transparent);
+}
+
+.cockpit-command-trigger:disabled {
   cursor: not-allowed;
   opacity: 0.55;
+}
+
+.cockpit-command-chevron {
+  color: currentColor;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.command-menu {
+  min-width: 232px;
+  padding: 4px;
+}
+
+.command-menu-label {
+  padding: 7px 10px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+.command-menu button {
+  min-height: 34px;
+  border-radius: var(--radius-sm);
+}
+
+.command-menu-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tab-divider {
