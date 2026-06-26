@@ -342,7 +342,7 @@ function AvatarPickerForm({ project, csrfToken, onSaved, onClose }) {
 }
 
 /* ── Context menu ───────────────────────────────── */
-function ProjectContextMenu({ project, position, lifecycleBusy, onClose, onOpenAvatar, onSetGroup, onLifecycle, navigate }) {
+function ProjectContextMenu({ project, position, lifecycleBusy, onClose, onOpenAvatar, onOpenGroup, onSetGroup, onLifecycle, navigate }) {
   const ref = useRef(null);
   const [pos, setPos] = useState({ left: position.x, top: position.y });
   useEffect(() => {
@@ -387,7 +387,7 @@ function ProjectContextMenu({ project, position, lifecycleBusy, onClose, onOpenA
       </button>
       <div className="context-separator" />
       <button role="menuitem" onClick={() => { onOpenAvatar(); onClose(); }}>Change Avatar</button>
-      <button role="menuitem" onClick={() => { onSetGroup(project); onClose(); }}>
+      <button role="menuitem" onClick={() => { onOpenGroup(project); onClose(); }}>
         {project.groupName ? 'Change Group…' : 'Add to Group…'}
       </button>
       {project.groupName && (
@@ -425,6 +425,97 @@ function buildProjectGroups(projects) {
   return { groups, ungrouped };
 }
 
+function FolderIcon({ open = false }) {
+  return (
+    <svg className="sidebar-folder-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {open ? (
+        <>
+          <path d="M3 8.5h6l2 2h10l-2 8.5H4.5a2 2 0 0 1-2-2.4L4 10.1a2 2 0 0 1 2-1.6Z" />
+          <path d="M3.5 9V6.5a2 2 0 0 1 2-2H9l2 2h5.5a2 2 0 0 1 2 2v2" />
+        </>
+      ) : (
+        <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+      )}
+    </svg>
+  );
+}
+
+function GroupPickerForm({ project, groups, saving, onClose, onSave }) {
+  const [groupName, setGroupName] = useState(project.groupName || '');
+  const trimmed = groupName.trim();
+  const existingGroups = groups
+    .map(group => group.name)
+    .filter(name => name && name !== project.groupName);
+
+  function submit(e) {
+    e.preventDefault();
+    onSave(project, trimmed);
+  }
+
+  return (
+    <form onSubmit={submit} className="popover-form group-picker-form">
+      <div className="popover-header">
+        <span className="popover-title">Project Group</span>
+        <button type="button" className="popover-close" onClick={onClose} aria-label="Close">×</button>
+      </div>
+
+      <div className="group-picker-project">
+        <ProjectAvatar project={project} size={34} playing />
+        <span className="group-picker-project-name">{project.name}</span>
+      </div>
+
+      {groups.length > 0 && (
+        <div className="group-picker-section">
+          <span className="group-picker-section-title">Existing Groups</span>
+          <div className="group-picker-list">
+            {groups.map(group => {
+              const active = group.name === project.groupName;
+              return (
+                <button
+                  key={group.name}
+                  type="button"
+                  className={`group-picker-option${active ? ' active' : ''}`}
+                  onClick={() => onSave(project, group.name)}
+                  disabled={saving || active}
+                >
+                  <FolderIcon open />
+                  <span className="group-picker-option-name">{group.name}</span>
+                  <span className="group-picker-option-count">{group.projects.length}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <div className="form-group">
+        <label className="form-label" htmlFor="project-group-name">New Group</label>
+        <input
+          id="project-group-name"
+          className="input"
+          value={groupName}
+          onChange={e => setGroupName(e.target.value)}
+          placeholder={existingGroups[0] || 'Frontend'}
+          autoFocus
+        />
+        <p className="form-hint">Use the same name to place projects in the same folder.</p>
+      </div>
+
+      <div className="popover-footer">
+        {project.groupName && (
+          <button type="button" className="btn btn-ghost" onClick={() => onSave(project, '')} disabled={saving}>
+            Remove
+          </button>
+        )}
+        <button type="button" className="btn btn-ghost" onClick={onClose} disabled={saving}>Cancel</button>
+        <button type="submit" className="btn btn-primary" disabled={saving || !trimmed}>
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
 /* ── Main sidebar ───────────────────────────────── */
 export default function ProjectsSidebar() {
   const { id: activeId } = useParams();
@@ -450,6 +541,8 @@ export default function ProjectsSidebar() {
   // Popovers — store anchor element refs so SidebarPopover can position itself
   const [newProjectAnchor, setNewProjectAnchor] = useState(null); // HTMLElement | null
   const [avatarTarget, setAvatarTarget]         = useState(null); // { project, anchor }
+  const [groupTarget, setGroupTarget]           = useState(null);
+  const [groupSaving, setGroupSaving]           = useState(false);
 
   const newBtnRef = useRef(null);
 
@@ -608,13 +701,9 @@ export default function ProjectsSidebar() {
     });
   }
 
-  async function setProjectGroup(project, groupNameOverride) {
-    const nextGroupName = groupNameOverride !== undefined
-      ? groupNameOverride
-      : window.prompt('Project group name. Leave empty to remove from group.', project.groupName || '');
-    if (nextGroupName === null) return;
-
+  async function setProjectGroup(project, nextGroupName) {
     const groupName = String(nextGroupName || '').trim();
+    setGroupSaving(true);
     try {
       const r = await fetch(`/api/projects/${project.id}`, {
         method: 'PATCH',
@@ -627,8 +716,11 @@ export default function ProjectsSidebar() {
         return;
       }
       setProjects(prev => prev.map(p => p.id === project.id ? { ...p, groupName } : p));
+      setGroupTarget(null);
     } catch (e) {
       addToast(e.message || 'Could not update group.', 'error');
+    } finally {
+      setGroupSaving(false);
     }
   }
 
@@ -775,10 +867,15 @@ export default function ProjectsSidebar() {
                 <div className="sidebar-project-group" key={group.name}>
                   <button className="sidebar-group-header" onClick={() => toggleGroup(group.name)} aria-expanded={!collapsed}>
                     <span className="sidebar-group-chevron">{collapsed ? '›' : '⌄'}</span>
+                    <FolderIcon open={!collapsed} />
                     <span className="sidebar-group-name">{group.name}</span>
                     <span className="sidebar-group-count">{group.projects.length}</span>
                   </button>
-                  {!collapsed && group.projects.map(renderProject)}
+                  {!collapsed && (
+                    <div className="sidebar-group-projects">
+                      {group.projects.map(renderProject)}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -835,6 +932,19 @@ export default function ProjectsSidebar() {
         </SidebarPopover>
       )}
 
+      {/* Project group picker */}
+      {groupTarget && (
+        <SidebarPopover onClose={() => setGroupTarget(null)} width={390}>
+          <GroupPickerForm
+            project={groupTarget}
+            groups={groups}
+            saving={groupSaving}
+            onSave={setProjectGroup}
+            onClose={() => setGroupTarget(null)}
+          />
+        </SidebarPopover>
+      )}
+
       {/* Right-click context menu */}
       {contextMenu && (
         <ProjectContextMenu
@@ -843,6 +953,7 @@ export default function ProjectsSidebar() {
           lifecycleBusy={lifecycleBusy}
           onClose={() => setContext(null)}
           onOpenAvatar={() => setAvatarTarget({ project: contextMenu.project })}
+          onOpenGroup={project => setGroupTarget(project)}
           onSetGroup={setProjectGroup}
           onLifecycle={runProjectLifecycle}
           navigate={navigate}
