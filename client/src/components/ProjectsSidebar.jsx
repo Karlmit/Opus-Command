@@ -19,6 +19,7 @@ const COLLAPSE_THRESH = 110;
 const DEFAULT_WIDTH   = 210;
 const MAX_WIDTH       = 360;
 const GROUP_COLLAPSE_KEY = 'sidebar-collapsed-project-groups';
+const GROUP_ORDER_KEY = 'sidebar-project-group-order';
 
 /* ── Avatar helpers ─────────────────────────────── */
 const COLORS = ['#6366f1','#8b5cf6','#ec4899','#ef4444','#f59e0b','#22c55e','#06b6d4','#3b82f6','#64748b','#92400e'];
@@ -425,6 +426,17 @@ function buildProjectGroups(projects) {
   return { groups, ungrouped };
 }
 
+function orderProjectGroups(groups, groupOrder) {
+  const order = Array.isArray(groupOrder) ? groupOrder : [];
+  const orderIndex = new Map(order.map((name, index) => [name, index]));
+  return [...groups].sort((a, b) => {
+    const ai = orderIndex.has(a.name) ? orderIndex.get(a.name) : Number.MAX_SAFE_INTEGER;
+    const bi = orderIndex.has(b.name) ? orderIndex.get(b.name) : Number.MAX_SAFE_INTEGER;
+    if (ai !== bi) return ai - bi;
+    return groups.indexOf(a) - groups.indexOf(b);
+  });
+}
+
 function FolderIcon({ open = false }) {
   return (
     <svg className="sidebar-folder-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -437,6 +449,19 @@ function FolderIcon({ open = false }) {
         <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
       )}
     </svg>
+  );
+}
+
+function GroupAvatarMosaic({ projects }) {
+  const visible = projects.slice(0, 4);
+  if (visible.length === 0) return <FolderIcon />;
+
+  return (
+    <span className={`sidebar-group-avatar-mosaic count-${visible.length}`} aria-hidden="true">
+      {visible.map(project => (
+        <ProjectAvatar key={project.id} project={project} size={16} playing={false} />
+      ))}
+    </span>
   );
 }
 
@@ -532,9 +557,14 @@ export default function ProjectsSidebar() {
     try { return new Set(JSON.parse(localStorage.getItem(GROUP_COLLAPSE_KEY) || '[]')); }
     catch { return new Set(); }
   });
+  const [groupOrder, setGroupOrder] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(GROUP_ORDER_KEY) || '[]'); }
+    catch { return []; }
+  });
 
   // Drag-to-reorder state
   const [dragId, setDragId]   = useState(null);
+  const [groupDragName, setGroupDragName] = useState(null);
   const draggingRef = useRef(false);   // pause polling while a drag is in progress
   const projectsRef = useRef(projects); // always-fresh order for persistence on drop
 
@@ -654,6 +684,7 @@ export default function ProjectsSidebar() {
 
   /* ── Drag to reorder ─────────────────────────── */
   function handleDragStart(e, id) {
+    e.stopPropagation();
     setDragId(id);
     draggingRef.current = true;
     e.dataTransfer.effectAllowed = 'move';
@@ -686,6 +717,39 @@ export default function ProjectsSidebar() {
         body: JSON.stringify({ order: ordered.map(p => p.id) }),
       });
     } catch (_) {}
+  }
+
+  function handleGroupDragStart(e, name) {
+    e.stopPropagation();
+    setGroupDragName(name);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', name);
+  }
+
+  function handleGroupDragOver(e, overName) {
+    if (!groupDragName || groupDragName === overName) return;
+    e.stopPropagation();
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+
+    const currentNames = groups.map(group => group.name);
+    const orderedNames = [
+      ...groupOrder.filter(name => currentNames.includes(name)),
+      ...currentNames.filter(name => !groupOrder.includes(name)),
+    ];
+    const from = orderedNames.indexOf(groupDragName);
+    const to = orderedNames.indexOf(overName);
+    if (from === -1 || to === -1 || from === to) return;
+
+    const next = [...orderedNames];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    setGroupOrder(next);
+    localStorage.setItem(GROUP_ORDER_KEY, JSON.stringify(next));
+  }
+
+  function handleGroupDragEnd() {
+    setGroupDragName(null);
   }
 
   function handleCreated(p) { setProjects(prev => [...prev, p]); navigate(`/project/${p.id}`); }
@@ -756,7 +820,8 @@ export default function ProjectsSidebar() {
   }
 
   const [hoveredId, setHoveredId] = useState(null);
-  const { groups, ungrouped } = buildProjectGroups(projects);
+  const { groups: rawGroups, ungrouped } = buildProjectGroups(projects);
+  const groups = orderProjectGroups(rawGroups, groupOrder);
 
   function renderProject(project) {
     const isActive = String(project.id) === String(activeId);
@@ -834,7 +899,14 @@ export default function ProjectsSidebar() {
     const collapsed = collapsedGroups.has(group.name);
     const hasActiveProject = group.projects.some(project => String(project.id) === String(activeId));
     return (
-      <div className={`sidebar-project-group${hasActiveProject ? ' active' : ''}`} key={group.name}>
+      <div
+        className={`sidebar-project-group${hasActiveProject ? ' active' : ''}${groupDragName === group.name ? ' dragging' : ''}${collapsed ? ' collapsed' : ''}`}
+        key={group.name}
+        draggable
+        onDragStart={e => handleGroupDragStart(e, group.name)}
+        onDragOver={e => handleGroupDragOver(e, group.name)}
+        onDragEnd={handleGroupDragEnd}
+      >
         <button
           className="sidebar-group-header"
           onClick={() => toggleGroup(group.name)}
@@ -842,15 +914,15 @@ export default function ProjectsSidebar() {
           title={isCollapsed ? `${group.name} (${group.projects.length})` : undefined}
         >
           <span className="sidebar-group-chevron">{collapsed ? '›' : '⌄'}</span>
-          <FolderIcon open={!collapsed} />
+          <GroupAvatarMosaic projects={group.projects} />
           <span className="sidebar-group-name">{group.name}</span>
           <span className="sidebar-group-count">{group.projects.length}</span>
         </button>
-        {!collapsed && (
-          <div className="sidebar-group-projects">
+        <div className="sidebar-group-projects" aria-hidden={collapsed}>
+          <div className="sidebar-group-projects-inner">
             {group.projects.map(renderProject)}
           </div>
-        )}
+        </div>
       </div>
     );
   }
