@@ -14,6 +14,51 @@ const https = require('https');
 
 const GITHUB_REPO = 'Karlmit/Opus-Command';
 
+const DEFAULT_TERMINAL_COMMANDS = [
+  {
+    id: 'codex',
+    displayName: 'Codex',
+    description: 'Launch Codex CLI with Opus-managed sandbox and approval bypass flags.',
+    commands: ['codex --dangerously-bypass-approvals-and-sandbox'],
+  },
+  {
+    id: 'claude',
+    displayName: 'Claude',
+    description: 'Launch Claude Code with Opus-managed permission bypass flags.',
+    commands: ['IS_SANDBOX=1 claude --dangerously-skip-permissions'],
+  },
+];
+
+function normalizeTerminalCommand(raw, index = 0) {
+  const id = String(raw?.id || `command-${Date.now()}-${index}`)
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]/g, '-')
+    .slice(0, 80) || `command-${index}`;
+  const displayName = String(raw?.displayName || raw?.name || '').trim().slice(0, 80);
+  const description = String(raw?.description || '').trim().slice(0, 2000);
+  const commands = Array.isArray(raw?.commands)
+    ? raw.commands
+      .map(cmd => String(cmd || '').trim())
+      .filter(Boolean)
+      .slice(0, 20)
+    : [];
+  return { id, displayName, description, commands };
+}
+
+function getTerminalCommands() {
+  const raw = getSetting('terminal_commands');
+  if (!raw) return DEFAULT_TERMINAL_COMMANDS;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return DEFAULT_TERMINAL_COMMANDS;
+    return parsed
+      .map(normalizeTerminalCommand)
+      .filter(cmd => cmd.displayName && cmd.commands.length);
+  } catch {
+    return DEFAULT_TERMINAL_COMMANDS;
+  }
+}
+
 // Pick the highest semantic version from a list of tag/release names
 // (e.g. ["v0.23.1", "v0.22.1", "v0.9.0"] → "0.23.1"). Numeric per-component
 // compare so 0.23.x correctly outranks 0.9.x; the leading "v" is stripped and
@@ -68,6 +113,30 @@ router.post('/sound', requireAuth, (req, res) => {
   setSetting('sound_enabled', String(!!enabled));
   if (sound) setSetting('sound_choice', sound);
   res.json({ success: true });
+});
+
+router.get('/terminal-commands', requireAuth, (req, res) => {
+  res.json({ commands: getTerminalCommands() });
+});
+
+router.post('/terminal-commands', requireAuth, (req, res) => {
+  const { commands } = req.body;
+  if (!Array.isArray(commands)) return res.status(400).json({ error: 'commands must be an array.' });
+
+  const seen = new Set();
+  const normalized = commands
+    .map(normalizeTerminalCommand)
+    .filter(cmd => cmd.displayName && cmd.commands.length)
+    .map((cmd, index) => {
+      let id = cmd.id || `command-${index}`;
+      while (seen.has(id)) id = `${id}-${index}`;
+      seen.add(id);
+      return { ...cmd, id };
+    })
+    .slice(0, 50);
+
+  setSetting('terminal_commands', JSON.stringify(normalized));
+  res.json({ success: true, commands: normalized });
 });
 
 // ── Workspace environment variables (injected into all workspace containers) ──

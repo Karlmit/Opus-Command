@@ -514,9 +514,10 @@
 }
 .cockpit-new-term:hover { color: var(--color-accent); border-color: var(--color-accent); }
 
-.cockpit-agent-paste {
+.cockpit-command-select {
   height: 26px;
-  padding: 0 9px;
+  min-width: 118px;
+  padding: 0 28px 0 9px;
   background: color-mix(in srgb, var(--color-surface) 35%, transparent);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
@@ -525,15 +526,22 @@
   font-size: var(--font-size-xs);
   white-space: nowrap;
   flex-shrink: 0;
+  outline: none;
   transition:
     color var(--motion-hover),
     background var(--motion-hover),
     border-color var(--motion-hover);
 }
-.cockpit-agent-paste:hover {
+.cockpit-command-select:hover,
+.cockpit-command-select:focus-visible {
   color: var(--color-text-primary);
   background: color-mix(in srgb, var(--color-accent) 12%, transparent);
   border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
+}
+
+.cockpit-command-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .tab-divider {

@@ -13,6 +13,26 @@ const SOUNDS = [
   { id: 'ding', label: 'Ding' },
 ];
 
+const DEFAULT_TERMINAL_COMMANDS = [
+  {
+    id: 'codex',
+    displayName: 'Codex',
+    description: 'Launch Codex CLI with Opus-managed sandbox and approval bypass flags.',
+    commands: ['codex --dangerously-bypass-approvals-and-sandbox'],
+  },
+  {
+    id: 'claude',
+    displayName: 'Claude',
+    description: 'Launch Claude Code with Opus-managed permission bypass flags.',
+    commands: ['IS_SANDBOX=1 claude --dangerously-skip-permissions'],
+  },
+];
+
+function newTerminalCommand() {
+  const id = (globalThis.crypto?.randomUUID?.() || `command-${Date.now()}`).replace(/[^a-zA-Z0-9_-]/g, '-');
+  return { id, displayName: 'New Command', description: '', commands: [''] };
+}
+
 // Simple beep/tone using Web Audio API
 function playSound(type) {
   try {
@@ -576,6 +596,218 @@ function GitHubSection({ csrfToken, addToast }) {
       >
         {saving ? 'Saving…' : 'Save Token'}
       </button>
+    </div>
+  );
+}
+
+function TerminalCommandsSection({ csrfToken, addToast }) {
+  const [commands, setCommands] = useState(DEFAULT_TERMINAL_COMMANDS);
+  const [selectedId, setSelectedId] = useState(DEFAULT_TERMINAL_COMMANDS[0].id);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const selected = commands.find(command => command.id === selectedId) || commands[0] || null;
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetch('/api/settings/terminal-commands')
+      .then(r => r.json())
+      .then(data => {
+        if (cancelled) return;
+        const next = Array.isArray(data.commands) ? data.commands : DEFAULT_TERMINAL_COMMANDS;
+        setCommands(next);
+        setSelectedId(next[0]?.id || '');
+        setDirty(false);
+      })
+      .catch(() => {
+        if (!cancelled) addToast('Could not load terminal commands.', 'error');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  function updateCommand(id, changes) {
+    setCommands(prev => prev.map(command => command.id === id ? { ...command, ...changes } : command));
+    setDirty(true);
+  }
+
+  function addCommand() {
+    const command = newTerminalCommand();
+    setCommands(prev => [...prev, command]);
+    setSelectedId(command.id);
+    setDirty(true);
+  }
+
+  function removeCommand(id) {
+    setCommands(prev => {
+      const next = prev.filter(command => command.id !== id);
+      if (selectedId === id) setSelectedId(next[0]?.id || '');
+      return next;
+    });
+    setDirty(true);
+  }
+
+  function updateCommandLine(index, value) {
+    if (!selected) return;
+    const next = [...selected.commands];
+    next[index] = value;
+    updateCommand(selected.id, { commands: next });
+  }
+
+  function addCommandLine() {
+    if (!selected) return;
+    updateCommand(selected.id, { commands: [...selected.commands, ''] });
+  }
+
+  function removeCommandLine(index) {
+    if (!selected) return;
+    const next = selected.commands.filter((_, i) => i !== index);
+    updateCommand(selected.id, { commands: next.length ? next : [''] });
+  }
+
+  async function save() {
+    setSaving(true);
+    try {
+      const payload = commands
+        .map(command => ({
+          ...command,
+          displayName: command.displayName.trim(),
+          description: command.description.trim(),
+          commands: command.commands.map(line => line.trim()).filter(Boolean),
+        }))
+        .filter(command => command.displayName && command.commands.length);
+      const res = await fetch('/api/settings/terminal-commands', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ commands: payload }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Save failed.');
+      const next = data.commands || payload;
+      setCommands(next);
+      setSelectedId(next.find(command => command.id === selectedId)?.id || next[0]?.id || '');
+      setDirty(false);
+      addToast('Command dropdown saved.');
+    } catch (err) {
+      addToast(err.message || 'Save failed.', 'error');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const mergedPreview = selected
+    ? selected.commands.map(line => line.trim()).filter(Boolean).join(' && ')
+    : '';
+
+  return (
+    <div className="settings-section terminal-commands-section">
+      <div className="terminal-commands-header">
+        <div>
+          <h2 className="settings-section-title">TERMINAL COMMAND DROPDOWN</h2>
+          <p className="panel-hint">
+            These commands appear beside + Terminal. Multiple command lines are pasted as one Bash command joined with <code>&amp;&amp;</code>.
+          </p>
+        </div>
+        <button type="button" className="btn btn-ghost" onClick={addCommand}>Add Command</button>
+      </div>
+
+      {loading ? (
+        <p className="panel-hint">Loading…</p>
+      ) : (
+        <div className="terminal-command-manager">
+          <div className="terminal-command-list" role="listbox" aria-label="Saved terminal commands">
+            {commands.length === 0 ? (
+              <p className="panel-hint">No commands yet.</p>
+            ) : commands.map(command => (
+              <button
+                key={command.id}
+                type="button"
+                role="option"
+                aria-selected={selectedId === command.id}
+                className={`terminal-command-list-item${selectedId === command.id ? ' active' : ''}`}
+                onClick={() => setSelectedId(command.id)}
+              >
+                <span>{command.displayName || 'Untitled Command'}</span>
+                <small>{command.commands.filter(Boolean).length} line{command.commands.filter(Boolean).length === 1 ? '' : 's'}</small>
+              </button>
+            ))}
+          </div>
+
+          {selected ? (
+            <div className="terminal-command-editor">
+              <div className="terminal-command-editor-head">
+                <div className="form-group">
+                  <label className="form-label">Display name</label>
+                  <input
+                    className="input"
+                    value={selected.displayName}
+                    onChange={e => updateCommand(selected.id, { displayName: e.target.value })}
+                    placeholder="Install Codex plugin"
+                  />
+                </div>
+                <button type="button" className="btn btn-ghost" onClick={() => removeCommand(selected.id)}>Remove</button>
+              </div>
+
+              <details className="terminal-command-info">
+                <summary>More info</summary>
+                <textarea
+                  className="input terminal-command-description"
+                  value={selected.description}
+                  onChange={e => updateCommand(selected.id, { description: e.target.value })}
+                  placeholder="Notes, links, plugin docs, or why this command exists."
+                />
+              </details>
+
+              <div className="terminal-command-lines">
+                <div className="terminal-command-lines-head">
+                  <label className="form-label">Commands</label>
+                  <button type="button" className="btn btn-ghost" onClick={addCommandLine}>Add Line</button>
+                </div>
+                {selected.commands.map((line, index) => (
+                  <div key={`${selected.id}-${index}`} className="terminal-command-line">
+                    <span className="terminal-command-line-index">{index + 1}</span>
+                    <input
+                      className="input font-mono"
+                      value={line}
+                      onChange={e => updateCommandLine(index, e.target.value)}
+                      placeholder="npm install -g ..."
+                    />
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      onClick={() => removeCommandLine(index)}
+                      disabled={selected.commands.length === 1}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {mergedPreview && (
+                <div className="terminal-command-preview">
+                  <span>Preview</span>
+                  <code>{mergedPreview}</code>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="terminal-command-empty">
+              <p className="panel-hint">Add a command to start building the dropdown.</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="terminal-command-actions">
+        <button type="button" className="btn btn-primary" onClick={save} disabled={saving || !dirty}>
+          {saving ? 'Saving…' : 'Save Commands'}
+        </button>
+        {dirty && <span className="panel-hint">Unsaved changes</span>}
+      </div>
     </div>
   );
 }
@@ -1269,7 +1501,7 @@ export default function Settings() {
           ))}
         </div>
       </div>
-      <div className={`settings-content${tab === 'workspace' ? ' workspace-settings-content' : ''}`}>
+      <div className={`settings-content${tab === 'workspace' || tab === 'integrations' ? ' workspace-settings-content' : ''}`}>
         {tab === 'general' && (
           <>
             <AppearanceSection csrfToken={csrfToken} />
@@ -1281,6 +1513,7 @@ export default function Settings() {
           <>
             <GitHubSection csrfToken={csrfToken} addToast={addToast} />
             <ClaudeSection csrfToken={csrfToken} addToast={addToast} />
+            <TerminalCommandsSection csrfToken={csrfToken} addToast={addToast} />
             <ConnectorsSection csrfToken={csrfToken} addToast={addToast} />
           </>
         )}

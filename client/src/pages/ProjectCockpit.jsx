@@ -46,6 +46,21 @@ const FILE_COLORS = {
   gif: '#b088f0', svg: '#ffb13b', webp: '#b088f0',
 };
 
+const DEFAULT_TERMINAL_COMMANDS = [
+  {
+    id: 'codex',
+    displayName: 'Codex',
+    description: 'Launch Codex CLI with Opus-managed sandbox and approval bypass flags.',
+    commands: ['codex --dangerously-bypass-approvals-and-sandbox'],
+  },
+  {
+    id: 'claude',
+    displayName: 'Claude',
+    description: 'Launch Claude Code with Opus-managed permission bypass flags.',
+    commands: ['IS_SANDBOX=1 claude --dangerously-skip-permissions'],
+  },
+];
+
 /* Context menu rendered to document.body so it escapes the file-tree's
    backdrop-filter / overflow:hidden, and clamped to stay on-screen. */
 function ContextMenuPortal({ x, y, className, children, ...rest }) {
@@ -1673,6 +1688,7 @@ export default function ProjectCockpit() {
   const [tree, setTree]           = useState([]);
   const [planningTree, setPlanningTree] = useState([]);
   const [termTabs, setTermTabs]   = useState([]);
+  const [terminalCommands, setTerminalCommands] = useState(DEFAULT_TERMINAL_COMMANDS);
   const [fileTabs, setFileTabs]   = useState([]);
   const [fileContent, setFileContent] = useState({});
   const [dirtyFiles, setDirty]    = useState({});
@@ -1838,6 +1854,21 @@ export default function ProjectCockpit() {
     if (!renameDialog) return;
     requestAnimationFrame(() => renameInputRef.current?.select());
   }, [renameDialog?.node.path]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/settings/terminal-commands')
+      .then(r => r.json())
+      .then(data => {
+        if (cancelled) return;
+        const commands = Array.isArray(data.commands) ? data.commands : [];
+        setTerminalCommands(commands.filter(cmd => cmd.displayName && Array.isArray(cmd.commands) && cmd.commands.length));
+      })
+      .catch(() => {
+        if (!cancelled) setTerminalCommands(DEFAULT_TERMINAL_COMMANDS);
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (!fileContextMenu) return;
@@ -2713,13 +2744,22 @@ export default function ProjectCockpit() {
     ?? termTabs[0]?.id
     ?? null;
 
-  function pasteAgentCommand(command) {
+  function mergeTerminalCommand(command) {
+    return (command?.commands || [])
+      .map(line => String(line || '').trim())
+      .filter(Boolean)
+      .join(' && ');
+  }
+
+  function pasteTerminalCommand(command) {
+    const merged = mergeTerminalCommand(command);
+    if (!merged) return;
     if (!activeTermId) {
       addToast('Open a terminal first.', 'error');
       return;
     }
     activateTerm(activeTermId);
-    getSocket().emit('terminal:input', { sessionId: activeTermId, data: command });
+    getSocket().emit('terminal:input', { sessionId: activeTermId, data: merged });
   }
 
   function renderActiveFileEditor() {
@@ -2895,20 +2935,23 @@ export default function ProjectCockpit() {
             </div>
           ))}
           <button className="cockpit-new-term" onClick={() => createTerminal()}>+ Terminal</button>
-          <button
-            className="cockpit-agent-paste"
-            onClick={() => pasteAgentCommand('codex --dangerously-bypass-approvals-and-sandbox')}
-            title="Paste Codex launch command"
+          <select
+            className="cockpit-command-select"
+            value=""
+            onChange={e => {
+              const command = terminalCommands.find(cmd => cmd.id === e.target.value);
+              if (command) pasteTerminalCommand(command);
+              e.currentTarget.value = '';
+            }}
+            aria-label="Command"
+            title="Paste a saved command into the active terminal"
+            disabled={!terminalCommands.length}
           >
-            + Codex
-          </button>
-          <button
-            className="cockpit-agent-paste"
-            onClick={() => pasteAgentCommand('IS_SANDBOX=1  claude --dangerously-skip-permissions')}
-            title="Paste Claude launch command"
-          >
-            + Claude
-          </button>
+            <option value="">Command</option>
+            {terminalCommands.map(command => (
+              <option key={command.id} value={command.id}>{command.displayName}</option>
+            ))}
+          </select>
           <div
             className="cockpit-tab files-tab"
             role="tab"
