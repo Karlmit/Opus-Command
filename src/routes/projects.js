@@ -129,6 +129,7 @@ router.get('/', requireAuth, async (req, res) => {
         template: p.template,
         backend: workspace.backendOf(p),
         avatar: p.avatar || '',
+        groupName: p.groupName || '',
         status,
         terminalCount: aiSummary.terminalCount,
         aiWaiting: aiSummary.aiWaiting,
@@ -305,6 +306,8 @@ router.get('/:id', requireAuth, async (req, res) => {
       folderPath: p.folderPath,
       template: p.template,
       backend: workspace.backendOf(p),
+      avatar: p.avatar || '',
+      groupName: p.groupName || '',
       lxcContainerName: p.lxcContainerName || null,
       lxcProjectPath: p.lxcProjectPath || null,
       lastStartedAt: p.lastStartedAt || null,
@@ -326,7 +329,7 @@ router.get('/:id', requireAuth, async (req, res) => {
   }
 });
 
-// PATCH /api/projects/:id — update name, avatar, or workspace template
+// PATCH /api/projects/:id — update name, avatar, group, or workspace template
 router.patch('/:id', requireAuth, (req, res) => {
   const projectId = parseInt(req.params.id);
   try {
@@ -334,10 +337,11 @@ router.patch('/:id', requireAuth, (req, res) => {
     const rows = db.select().from(projects).where(eq(projects.id, projectId)).all();
     if (!rows.length) return res.status(404).json({ error: 'Project not found.' });
 
-    const { name, avatar, template } = req.body;
+    const { name, avatar, template, groupName } = req.body;
     const updates = {};
     if (name !== undefined) updates.name = name.trim();
     if (avatar !== undefined) updates.avatar = avatar;
+    if (groupName !== undefined) updates.groupName = String(groupName || '').trim().slice(0, 64);
     if (template !== undefined) {
       const templateId = docker.normalizeTemplate(template);
       if (templateId !== template) return res.status(400).json({ error: 'Invalid workspace template.' });

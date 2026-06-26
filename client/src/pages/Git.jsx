@@ -364,6 +364,22 @@ function RepoIcon() {
   );
 }
 
+function remoteToGithubUrl(remoteUrl) {
+  if (!remoteUrl) return '';
+
+  const scpLike = remoteUrl.match(/^git@github\.com:([^/]+\/[^/]+?)(?:\.git)?$/i);
+  if (scpLike) return `https://github.com/${scpLike[1]}`;
+
+  try {
+    const url = new URL(remoteUrl);
+    if (url.hostname.toLowerCase() !== 'github.com') return '';
+    const path = url.pathname.replace(/^\/+/, '').replace(/\.git$/i, '');
+    return path ? `https://github.com/${path}` : '';
+  } catch {
+    return '';
+  }
+}
+
 /* Repository picker — shown in the toolbar when /workspace holds more than one
    Git repo. A single repo renders as a static label so the user always knows
    which working tree the menu acts on; two or more become a dropdown. */
@@ -670,6 +686,7 @@ export default function GitPage() {
   const unstagedFiles = (status.files || []).filter(f => !staged.has(f.path));
   const stagedFiles = (status.files || []).filter(f => staged.has(f.path));
   const anyOp = fetching || pulling || pushing;
+  const githubUrl = remoteToGithubUrl(remote?.remoteUrl);
 
   return (
     <div className="gk-page">
@@ -678,6 +695,22 @@ export default function GitPage() {
       <div className="gk-toolbar">
         <div className="gk-toolbar-left">
           <RepoPicker repos={repos} active={activeRepo} onSelect={handleSelectRepo} />
+          {githubUrl && (
+            <a
+              className="gk-github-link"
+              href={githubUrl}
+              target="_blank"
+              rel="noreferrer"
+              title="Open GitHub repository"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                <path d="M15 3h6v6" />
+                <path d="M10 14 21 3" />
+              </svg>
+              <span>GitHub</span>
+            </a>
+          )}
           <div className="gk-branch-pill">
             <BranchIcon />
             <span className="gk-branch-name">{status.branch}</span>

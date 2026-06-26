@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS projects (
   volumes TEXT DEFAULT '[]',
   status TEXT DEFAULT 'stopped',
   avatar TEXT DEFAULT '',
+  group_name TEXT DEFAULT '',
   sort_order INTEGER DEFAULT 0,
   workspace_backend TEXT DEFAULT 'docker',
   lxc_container_name TEXT,
@@ -162,6 +163,7 @@ function initDB() {
   sqlite.exec(SCHEMA_SQL);
   // Add avatar column to existing installations
   try { sqlite.exec("ALTER TABLE projects ADD COLUMN avatar TEXT DEFAULT ''"); } catch (_) {}
+  try { sqlite.exec("ALTER TABLE projects ADD COLUMN group_name TEXT DEFAULT ''"); } catch (_) {}
   try {
     sqlite.exec("ALTER TABLE projects ADD COLUMN sort_order INTEGER DEFAULT 0");
     // Backfill existing rows so their order is stable (oldest first).

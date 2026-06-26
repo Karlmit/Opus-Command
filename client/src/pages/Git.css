@@ -131,6 +131,30 @@
   white-space: nowrap;
 }
 
+.gk-github-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 9px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-surface-elevated) 74%, transparent);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  text-decoration: none;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: color var(--motion-hover), background var(--motion-hover), border-color var(--motion-hover);
+}
+
+.gk-github-link:hover {
+  color: var(--color-text-primary);
+  background: var(--color-surface-elevated);
+  border-color: var(--color-border-strong);
+}
+
 /* Remote strip */
 .gk-remote-strip {
   display: flex;

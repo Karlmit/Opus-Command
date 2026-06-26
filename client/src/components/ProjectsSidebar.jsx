@@ -18,6 +18,7 @@ const MIN_WIDTH       = 52;
 const COLLAPSE_THRESH = 110;
 const DEFAULT_WIDTH   = 210;
 const MAX_WIDTH       = 360;
+const GROUP_COLLAPSE_KEY = 'sidebar-collapsed-project-groups';
 
 /* ── Avatar helpers ─────────────────────────────── */
 const COLORS = ['#6366f1','#8b5cf6','#ec4899','#ef4444','#f59e0b','#22c55e','#06b6d4','#3b82f6','#64748b','#92400e'];
@@ -341,7 +342,7 @@ function AvatarPickerForm({ project, csrfToken, onSaved, onClose }) {
 }
 
 /* ── Context menu ───────────────────────────────── */
-function ProjectContextMenu({ project, position, lifecycleBusy, onClose, onOpenAvatar, onLifecycle, navigate }) {
+function ProjectContextMenu({ project, position, lifecycleBusy, onClose, onOpenAvatar, onSetGroup, onLifecycle, navigate }) {
   const ref = useRef(null);
   const [pos, setPos] = useState({ left: position.x, top: position.y });
   useEffect(() => {
@@ -386,9 +387,42 @@ function ProjectContextMenu({ project, position, lifecycleBusy, onClose, onOpenA
       </button>
       <div className="context-separator" />
       <button role="menuitem" onClick={() => { onOpenAvatar(); onClose(); }}>Change Avatar</button>
+      <button role="menuitem" onClick={() => { onSetGroup(project); onClose(); }}>
+        {project.groupName ? 'Change Group…' : 'Add to Group…'}
+      </button>
+      {project.groupName && (
+        <button role="menuitem" onClick={() => { onSetGroup(project, ''); onClose(); }}>Remove from Group</button>
+      )}
     </div>,
     document.body
   );
+}
+
+function shouldShowWorkspaceStatus(status) {
+  return !['stopped', 'not_installed', 'offline'].includes(String(status || '').toLowerCase());
+}
+
+function buildProjectGroups(projects) {
+  const groups = [];
+  const byName = new Map();
+  const ungrouped = [];
+
+  projects.forEach(project => {
+    const groupName = String(project.groupName || '').trim();
+    if (!groupName) {
+      ungrouped.push(project);
+      return;
+    }
+
+    if (!byName.has(groupName)) {
+      const group = { name: groupName, projects: [] };
+      byName.set(groupName, group);
+      groups.push(group);
+    }
+    byName.get(groupName).projects.push(project);
+  });
+
+  return { groups, ungrouped };
 }
 
 /* ── Main sidebar ───────────────────────────────── */
@@ -403,6 +437,10 @@ export default function ProjectsSidebar() {
   const [projects, setProjects]   = useState([]);
   const [contextMenu, setContext] = useState(null);
   const [lifecycleBusy, setLifecycleBusy] = useState(null);
+  const [collapsedGroups, setCollapsedGroups] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem(GROUP_COLLAPSE_KEY) || '[]')); }
+    catch { return new Set(); }
+  });
 
   // Drag-to-reorder state
   const [dragId, setDragId]   = useState(null);
@@ -560,6 +598,39 @@ export default function ProjectsSidebar() {
   function handleCreated(p) { setProjects(prev => [...prev, p]); navigate(`/project/${p.id}`); }
   function handleAvatarSaved(pid, avatar) { setProjects(prev => prev.map(p => p.id === pid ? { ...p, avatar } : p)); }
   function handleContext(e, project) { e.preventDefault(); e.stopPropagation(); setContext({ project, x: e.clientX, y: e.clientY }); }
+  function toggleGroup(name) {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      localStorage.setItem(GROUP_COLLAPSE_KEY, JSON.stringify([...next]));
+      return next;
+    });
+  }
+
+  async function setProjectGroup(project, groupNameOverride) {
+    const nextGroupName = groupNameOverride !== undefined
+      ? groupNameOverride
+      : window.prompt('Project group name. Leave empty to remove from group.', project.groupName || '');
+    if (nextGroupName === null) return;
+
+    const groupName = String(nextGroupName || '').trim();
+    try {
+      const r = await fetch(`/api/projects/${project.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ groupName }),
+      });
+      const d = await r.json();
+      if (!r.ok || !d.success) {
+        addToast(d.error || 'Could not update group.', 'error');
+        return;
+      }
+      setProjects(prev => prev.map(p => p.id === project.id ? { ...p, groupName } : p));
+    } catch (e) {
+      addToast(e.message || 'Could not update group.', 'error');
+    }
+  }
 
   async function runProjectLifecycle(project, action) {
     setLifecycleBusy(project.id);
@@ -593,6 +664,79 @@ export default function ProjectsSidebar() {
   }
 
   const [hoveredId, setHoveredId] = useState(null);
+  const { groups, ungrouped } = buildProjectGroups(projects);
+
+  function renderProject(project) {
+    const isActive = String(project.id) === String(activeId);
+    const agentStatus = getProjectAgentStatus(project);
+    const agentClass = agentStatusClass(agentStatus);
+    const agentLabel = getAgentStatusLabel(agentStatus);
+    const agentIcon = getAgentStatusIcon(agentStatus);
+    const agentTitle = `AI status: ${agentLabel}`;
+    const showAgentStatus = shouldShowProjectAgentStatus(project);
+    const showWorkspaceStatus = shouldShowWorkspaceStatus(project.status);
+    const isWaiting = agentStatus === 'waiting_for_input' || agentStatus === 'waiting_for_approval';
+    const isActiveAgent = agentStatus === 'working' || agentStatus === 'running_tool';
+    const isErrorAgent = agentStatus === 'error';
+    const terminalHint = project.terminalCount > 0
+      ? `${project.terminalCount} terminal${project.terminalCount === 1 ? '' : 's'}`
+      : 'No terminals';
+    const titleText = showAgentStatus
+      ? `${project.name} — ${agentTitle}`
+      : project.name;
+    const ariaLabel = showAgentStatus
+      ? `${project.name}. ${agentTitle}. Workspace ${project.status || 'unknown'}.`
+      : `${project.name}. Workspace ${project.status || 'unknown'}.`;
+
+    return (
+      <div key={project.id}
+        data-id={project.id}
+        draggable
+        className={`sidebar-project-item${showAgentStatus ? ` agent-${agentClass}` : ''}${isActive ? ' active' : ''}${showAgentStatus && isActiveAgent ? ' ai-active' : ''}${showAgentStatus && isWaiting ? ' ai-waiting' : ''}${showAgentStatus && isErrorAgent ? ' ai-error' : ''}${dragId === project.id ? ' dragging' : ''}`}
+        onClick={() => navigate(`/project/${project.id}`)}
+        onMouseEnter={() => setHoveredId(project.id)}
+        onMouseLeave={() => setHoveredId(null)}
+        onContextMenu={e => handleContext(e, project)}
+        onDragStart={e => handleDragStart(e, project.id)}
+        onDragOver={e => handleDragOver(e, project.id)}
+        onDragEnd={handleDragEnd}
+        title={isCollapsed ? titleText : undefined}
+        aria-label={ariaLabel}
+      >
+        <div className="sidebar-avatar-wrap">
+          <ProjectAvatar project={project} size={34} playing={hoveredId === project.id} />
+          {showWorkspaceStatus && <span className={`sidebar-status-dot status-${project.status}`} />}
+          {showAgentStatus && (
+            <span
+              className={`sidebar-agent-dot agent-${agentClass}`}
+              title={agentTitle}
+              aria-label={agentTitle}
+            >
+              {agentIcon}
+            </span>
+          )}
+        </div>
+        {!isCollapsed && (
+          <div className="sidebar-project-meta">
+            <span className="sidebar-project-title-row">
+              <span className="sidebar-project-name">{project.name}</span>
+              {showAgentStatus && (
+                <span
+                  className={`sidebar-agent-chip agent-${agentClass}`}
+                  title={agentTitle}
+                  aria-label={agentTitle}
+                >
+                  <span className="sidebar-agent-chip-icon" aria-hidden="true">{agentIcon}</span>
+                  <span className="sidebar-agent-chip-label">{agentLabel}</span>
+                </span>
+              )}
+            </span>
+            <span className="sidebar-project-status">{project.status} · {terminalHint}</span>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   /* ── Render ──────────────────────────────────── */
   return (
@@ -621,75 +765,26 @@ export default function ProjectsSidebar() {
 
       <div className="sidebar-projects">
         {projects.length === 0 && !isCollapsed && <p className="sidebar-empty">No projects yet</p>}
-        {projects.map(project => {
-          const isActive = String(project.id) === String(activeId);
-          const agentStatus = getProjectAgentStatus(project);
-          const agentClass = agentStatusClass(agentStatus);
-          const agentLabel = getAgentStatusLabel(agentStatus);
-          const agentIcon = getAgentStatusIcon(agentStatus);
-          const agentTitle = `AI status: ${agentLabel}`;
-          const showAgentStatus = shouldShowProjectAgentStatus(project);
-          const isWaiting = agentStatus === 'waiting_for_input' || agentStatus === 'waiting_for_approval';
-          const isActiveAgent = agentStatus === 'working' || agentStatus === 'running_tool';
-          const isErrorAgent = agentStatus === 'error';
-          const terminalHint = project.terminalCount > 0
-            ? `${project.terminalCount} terminal${project.terminalCount === 1 ? '' : 's'}`
-            : 'No terminals';
-          const titleText = showAgentStatus
-            ? `${project.name} — ${agentTitle}`
-            : project.name;
-          const ariaLabel = showAgentStatus
-            ? `${project.name}. ${agentTitle}. Workspace ${project.status || 'unknown'}.`
-            : `${project.name}. Workspace ${project.status || 'unknown'}.`;
-          return (
-            <div key={project.id}
-              data-id={project.id}
-              draggable
-              className={`sidebar-project-item${showAgentStatus ? ` agent-${agentClass}` : ''}${isActive ? ' active' : ''}${showAgentStatus && isActiveAgent ? ' ai-active' : ''}${showAgentStatus && isWaiting ? ' ai-waiting' : ''}${showAgentStatus && isErrorAgent ? ' ai-error' : ''}${dragId === project.id ? ' dragging' : ''}`}
-              onClick={() => navigate(`/project/${project.id}`)}
-              onMouseEnter={() => setHoveredId(project.id)}
-              onMouseLeave={() => setHoveredId(null)}
-              onContextMenu={e => handleContext(e, project)}
-              onDragStart={e => handleDragStart(e, project.id)}
-              onDragOver={e => handleDragOver(e, project.id)}
-              onDragEnd={handleDragEnd}
-              title={isCollapsed ? titleText : undefined}
-              aria-label={ariaLabel}
-            >
-              <div className="sidebar-avatar-wrap">
-                <ProjectAvatar project={project} size={34} playing={hoveredId === project.id} />
-                <span className={`sidebar-status-dot status-${project.status}`} />
-                {showAgentStatus && (
-                  <span
-                    className={`sidebar-agent-dot agent-${agentClass}`}
-                    title={agentTitle}
-                    aria-label={agentTitle}
-                  >
-                    {agentIcon}
-                  </span>
-                )}
-              </div>
-              {!isCollapsed && (
-                <div className="sidebar-project-meta">
-                  <span className="sidebar-project-title-row">
-                    <span className="sidebar-project-name">{project.name}</span>
-                    {showAgentStatus && (
-                      <span
-                        className={`sidebar-agent-chip agent-${agentClass}`}
-                        title={agentTitle}
-                        aria-label={agentTitle}
-                      >
-                        <span className="sidebar-agent-chip-icon" aria-hidden="true">{agentIcon}</span>
-                        <span className="sidebar-agent-chip-label">{agentLabel}</span>
-                      </span>
-                    )}
-                  </span>
-                  <span className="sidebar-project-status">{project.status} · {terminalHint}</span>
+        {isCollapsed ? (
+          projects.map(renderProject)
+        ) : (
+          <>
+            {groups.map(group => {
+              const collapsed = collapsedGroups.has(group.name);
+              return (
+                <div className="sidebar-project-group" key={group.name}>
+                  <button className="sidebar-group-header" onClick={() => toggleGroup(group.name)} aria-expanded={!collapsed}>
+                    <span className="sidebar-group-chevron">{collapsed ? '›' : '⌄'}</span>
+                    <span className="sidebar-group-name">{group.name}</span>
+                    <span className="sidebar-group-count">{group.projects.length}</span>
+                  </button>
+                  {!collapsed && group.projects.map(renderProject)}
                 </div>
-              )}
-            </div>
-          );
-        })}
+              );
+            })}
+            {ungrouped.map(renderProject)}
+          </>
+        )}
       </div>
 
       <div className="sidebar-spacer" />
@@ -748,6 +843,7 @@ export default function ProjectsSidebar() {
           lifecycleBusy={lifecycleBusy}
           onClose={() => setContext(null)}
           onOpenAvatar={() => setAvatarTarget({ project: contextMenu.project })}
+          onSetGroup={setProjectGroup}
           onLifecycle={runProjectLifecycle}
           navigate={navigate}
         />

@@ -25,6 +25,7 @@ const projects = sqliteTable('projects', {
   volumes: text('volumes').default('[]'),
   status: text('status').default('stopped'),
   avatar: text('avatar').default(''),
+  groupName: text('group_name').default(''),
   sortOrder: integer('sort_order').default(0),
   // Workspace backend — 'docker' (default) or 'unraid_lxc'. Docker workspaces
   // remain the portable default; unraid_lxc is the optional SSH-managed backend.

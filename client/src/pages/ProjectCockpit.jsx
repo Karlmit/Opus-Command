@@ -1693,9 +1693,9 @@ export default function ProjectCockpit() {
   const [deleting, setDeleting]   = useState(false);
   const [showDelete, setShowDelete] = useState(false);
   const [treeCollapsed, setTreeCollapsed] = useState(false);
+  const [hoveredTreeProject, setHoveredTreeProject] = useState(false);
   const [fileContextMenu, setFileContextMenu] = useState(null); // { node, x, y }
   const [renameDialog, setRenameDialog] = useState(null); // { node, value }
-  const [footerHovered, setFooterHovered] = useState(false);
   const [markedNode, setMarkedNode] = useState(null); // anchor for range/keyboard ops
   const [selectedPaths, setSelectedPaths] = useState(() => new Set()); // multi-selection
   const [expandedPaths, setExpandedPaths] = useState(() => new Set());
@@ -2773,7 +2773,14 @@ export default function ProjectCockpit() {
         style={treeCollapsed ? undefined : { width: treeWidth, minWidth: treeWidth }}
       >
         <div className="filetree-header">
-          {!treeCollapsed && <span className="filetree-title">FILES</span>}
+          {!treeCollapsed && (
+            <div className="filetree-project"
+                 onMouseEnter={() => setHoveredTreeProject(true)}
+                 onMouseLeave={() => setHoveredTreeProject(false)}>
+              {project && <ProjectAvatar project={project} size={24} playing={hoveredTreeProject} />}
+              <span className="filetree-project-name">{project?.name}</span>
+            </div>
+          )}
           <div className="filetree-actions">
             <button className="ft-btn ft-collapse-btn" title={treeCollapsed ? 'Expand files' : 'Collapse files'} onClick={() => setTreeCollapsed(c => !c)}>
               {treeCollapsed ? '›' : '‹'}
@@ -2871,17 +2878,6 @@ export default function ProjectCockpit() {
             aria-label="Resize file tree"
           />
         )}
-        <div className="cockpit-project-footer"
-             onMouseEnter={() => setFooterHovered(true)}
-             onMouseLeave={() => setFooterHovered(false)}>
-          {project && (
-            <div className="cockpit-avatar-wrap">
-              <ProjectAvatar project={project} size={22} playing={footerHovered} />
-              <span className={`cockpit-status-dot status-${project.status}`} />
-            </div>
-          )}
-          <span className="cockpit-project-name">{project?.name}</span>
-        </div>
       </div>
 
       {/* Main */}
