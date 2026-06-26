@@ -830,6 +830,31 @@ export default function ProjectsSidebar() {
     );
   }
 
+  function renderGroup(group) {
+    const collapsed = collapsedGroups.has(group.name);
+    const hasActiveProject = group.projects.some(project => String(project.id) === String(activeId));
+    return (
+      <div className={`sidebar-project-group${hasActiveProject ? ' active' : ''}`} key={group.name}>
+        <button
+          className="sidebar-group-header"
+          onClick={() => toggleGroup(group.name)}
+          aria-expanded={!collapsed}
+          title={isCollapsed ? `${group.name} (${group.projects.length})` : undefined}
+        >
+          <span className="sidebar-group-chevron">{collapsed ? '›' : '⌄'}</span>
+          <FolderIcon open={!collapsed} />
+          <span className="sidebar-group-name">{group.name}</span>
+          <span className="sidebar-group-count">{group.projects.length}</span>
+        </button>
+        {!collapsed && (
+          <div className="sidebar-group-projects">
+            {group.projects.map(renderProject)}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   /* ── Render ──────────────────────────────────── */
   return (
     <nav className={`projects-sidebar${isCollapsed ? ' collapsed' : ''}`}
@@ -857,31 +882,8 @@ export default function ProjectsSidebar() {
 
       <div className="sidebar-projects">
         {projects.length === 0 && !isCollapsed && <p className="sidebar-empty">No projects yet</p>}
-        {isCollapsed ? (
-          projects.map(renderProject)
-        ) : (
-          <>
-            {groups.map(group => {
-              const collapsed = collapsedGroups.has(group.name);
-              return (
-                <div className="sidebar-project-group" key={group.name}>
-                  <button className="sidebar-group-header" onClick={() => toggleGroup(group.name)} aria-expanded={!collapsed}>
-                    <span className="sidebar-group-chevron">{collapsed ? '›' : '⌄'}</span>
-                    <FolderIcon open={!collapsed} />
-                    <span className="sidebar-group-name">{group.name}</span>
-                    <span className="sidebar-group-count">{group.projects.length}</span>
-                  </button>
-                  {!collapsed && (
-                    <div className="sidebar-group-projects">
-                      {group.projects.map(renderProject)}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-            {ungrouped.map(renderProject)}
-          </>
-        )}
+        {groups.map(renderGroup)}
+        {ungrouped.map(renderProject)}
       </div>
 
       <div className="sidebar-spacer" />
