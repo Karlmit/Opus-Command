@@ -2,8 +2,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const https = require('https');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const { app, BrowserWindow, Menu, Tray, ipcMain, shell, dialog } = require('electron');
+const shared = require('opus-connector-shared');
 const connector = require('./index');
 
 const DEFAULT_HOME = process.platform === 'win32'
@@ -36,24 +37,17 @@ function connectorHome() {
   return process.env.OPUS_CONNECTOR_HOME || DEFAULT_HOME;
 }
 
-function configPath() {
-  return path.join(connectorHome(), 'config', 'connector.json');
-}
-
-function logPath() {
-  return path.join(connectorHome(), 'logs', 'connector.log');
-}
-
 function appendStartupLog(message) {
   try {
-    fs.mkdirSync(path.dirname(logPath()), { recursive: true });
-    fs.appendFileSync(logPath(), `[${new Date().toISOString()}] ${message}\n`);
+    const file = shared.logPath(connectorHome());
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.appendFileSync(file, `[${new Date().toISOString()}] ${message}\n`);
   } catch (_) {}
 }
 
 function readConfig() {
   try {
-    return JSON.parse(fs.readFileSync(configPath(), 'utf8'));
+    return shared.readConfig(connectorHome());
   } catch (_) {
     return null;
   }
@@ -61,11 +55,75 @@ function readConfig() {
 
 function refreshCapabilities() {
   try {
-    cachedCapabilities = connector.detectCapabilities();
+    cachedCapabilities = connector.cachedCapabilities();
   } catch (err) {
     appendStartupLog(`[error] Capability detection failed: ${err.message}`);
   }
   return cachedCapabilities;
+}
+
+// ---------------------------------------------------------------------------
+// Start with Windows. The installer registers a scheduled task named
+// "OpusConnector" (ONLOGON, highest run level) so the app starts elevated at
+// logon. The toggle enables/disables that task rather than adding a second
+// autostart mechanism. schtasks /Change needs the same elevation the task was
+// created with; when the app runs unelevated the failure is surfaced to the
+// user instead of silently ignored.
+// ---------------------------------------------------------------------------
+const AUTOSTART_TASK = 'OpusConnector';
+const AUTOSTART_TTL_MS = 30 * 1000;
+let _autostartCache = null;
+let _autostartCacheAt = 0;
+
+// state() runs on every log line, so the schtasks query is cached; pass
+// fresh=true after a toggle (or from the tray) to re-read immediately.
+function autostartState({ fresh = false } = {}) {
+  if (process.platform !== 'win32') return { supported: false, enabled: false };
+  if (!fresh && _autostartCache && Date.now() - _autostartCacheAt < AUTOSTART_TTL_MS) {
+    return _autostartCache;
+  }
+  const result = spawnSync('schtasks', ['/Query', '/TN', AUTOSTART_TASK, '/XML'], {
+    encoding: 'utf8',
+    timeout: 5000,
+    windowsHide: true,
+  });
+  // The XML export is locale-independent; a missing <Enabled> element means enabled.
+  const enabled = !/<Enabled>\s*false\s*<\/Enabled>/i.test(result.stdout || '');
+  _autostartCache = result.status === 0
+    ? { supported: true, enabled }
+    : { supported: false, enabled: false };
+  _autostartCacheAt = Date.now();
+  return _autostartCache;
+}
+
+function setAutostart(enabled) {
+  const result = spawnSync('schtasks', ['/Change', '/TN', AUTOSTART_TASK, enabled ? '/ENABLE' : '/DISABLE'], {
+    encoding: 'utf8',
+    timeout: 5000,
+    windowsHide: true,
+  });
+  if (result.status !== 0) {
+    const detail = String(result.stderr || result.stdout || '').trim();
+    throw new Error(detail || 'Could not change the OpusConnector scheduled task (administrator rights are required).');
+  }
+  return autostartState({ fresh: true });
+}
+
+function toggleAutostartInteractive() {
+  const before = autostartState({ fresh: true });
+  try {
+    const after = setAutostart(!before.enabled);
+    pushLog(after.enabled ? 'Start with Windows enabled.' : 'Start with Windows disabled.');
+  } catch (err) {
+    pushLog(`[error] ${err.message}`);
+    dialog.showMessageBox(window, {
+      type: 'error',
+      message: 'Could not change "Start with Windows".',
+      detail: `${err.message}\n\nRun Opus Connector as administrator (or start it from its scheduled task) and try again.`,
+    });
+  }
+  refreshTrayMenu();
+  pushState();
 }
 
 function setStatus(status, error = '') {
@@ -110,6 +168,7 @@ function state() {
     version: connector.VERSION,
     capabilities: cachedCapabilities,
     update: updateInfo,
+    autostart: autostartState(),
     logs: logLines,
   };
 }
@@ -298,13 +357,20 @@ function createWindow() {
   });
 }
 
-function createTray() {
-  tray = new Tray(APP_ICON);
-  tray.setToolTip('Opus Connector');
-  tray.setContextMenu(Menu.buildFromTemplate([
+function buildTrayMenu() {
+  const autostart = autostartState();
+  return Menu.buildFromTemplate([
     { label: 'Open Opus Connector', click: createWindow },
     { label: 'Open Connector Folder', click: () => shell.openPath(connectorHome()) },
     { label: 'Check for Updates…', click: () => checkForUpdates({ interactive: true }) },
+    { type: 'separator' },
+    {
+      label: 'Start with Windows',
+      type: 'checkbox',
+      checked: autostart.enabled,
+      enabled: autostart.supported,
+      click: toggleAutostartInteractive,
+    },
     { type: 'separator' },
     {
       label: 'Quit',
@@ -314,7 +380,17 @@ function createTray() {
         app.quit();
       },
     },
-  ]));
+  ]);
+}
+
+function refreshTrayMenu() {
+  if (tray) tray.setContextMenu(buildTrayMenu());
+}
+
+function createTray() {
+  tray = new Tray(APP_ICON);
+  tray.setToolTip('Opus Connector');
+  tray.setContextMenu(buildTrayMenu());
   tray.on('click', createWindow);
 }
 
@@ -334,6 +410,31 @@ function patchConsole() {
 ipcMain.handle('connector:get-state', () => state());
 ipcMain.handle('connector:open-home', () => shell.openPath(connectorHome()));
 ipcMain.handle('connector:check-updates', () => checkForUpdates({ interactive: true }));
+ipcMain.handle('connector:get-autostart', () => autostartState({ fresh: true }));
+ipcMain.handle('connector:set-autostart', (_event, enabled) => {
+  try {
+    const result = setAutostart(!!enabled);
+    refreshTrayMenu();
+    pushState();
+    return { ok: true, autostart: result };
+  } catch (err) {
+    return { ok: false, error: err.message || String(err), autostart: autostartState() };
+  }
+});
+ipcMain.handle('connector:feedback-list', () => {
+  try {
+    return { ok: true, reports: connector.listFeedback(connectorHome(), { includeRead: true, limit: 50 }) };
+  } catch (err) {
+    return { ok: false, error: err.message || String(err), reports: [] };
+  }
+});
+ipcMain.handle('connector:feedback-mark-read', (_event, feedbackId, read = true) => {
+  try {
+    return { ok: true, report: connector.markFeedbackRead(connectorHome(), feedbackId, read !== false) };
+  } catch (err) {
+    return { ok: false, error: err.message || String(err) };
+  }
+});
 ipcMain.handle('connector:pair', async (_event, payload) => {
   try {
     const args = [

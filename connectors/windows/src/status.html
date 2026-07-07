@@ -226,6 +226,80 @@
         font-weight: 600;
         color: #9ca8ba;
       }
+
+      .toggle-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        font-size: 13px;
+      }
+
+      .toggle-row .hint {
+        color: #8f9aab;
+        font-size: 12px;
+      }
+
+      input[type="checkbox"] {
+        width: 16px;
+        height: 16px;
+        accent-color: #2563eb;
+      }
+
+      .fb-item {
+        border: 1px solid #273040;
+        border-radius: 6px;
+        background: #0f131a;
+        padding: 10px 12px;
+        margin-top: 8px;
+        font-size: 12px;
+      }
+
+      .fb-item.unread {
+        border-color: #2563eb;
+      }
+
+      .fb-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .fb-title {
+        color: #e2e8f0;
+        font-weight: 600;
+        overflow-wrap: anywhere;
+      }
+
+      .fb-meta {
+        color: #8f9aab;
+        white-space: nowrap;
+      }
+
+      .fb-message {
+        margin: 6px 0 0;
+        color: #b8c2d0;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        max-height: 120px;
+        overflow: auto;
+      }
+
+      .fb-actions {
+        margin-top: 8px;
+      }
+
+      .fb-actions button {
+        padding: 4px 10px;
+        font-size: 12px;
+      }
+
+      .fb-empty {
+        color: #8f9aab;
+        font-size: 12px;
+        margin: 6px 0 0;
+      }
     </style>
   </head>
   <body>
@@ -280,11 +354,29 @@
         </dl>
       </section>
 
+      <section>
+        <div class="toggle-row">
+          <label class="toggle-row" style="gap: 8px;">
+            <input type="checkbox" id="autostartToggle" />
+            Start with Windows
+          </label>
+          <span class="hint" id="autostartHint"></span>
+        </div>
+      </section>
+
       <button id="openHome">Open Connector Folder</button>
 
       <section>
         <h2>Capabilities</h2>
         <div class="caps" id="caps"></div>
+      </section>
+
+      <section>
+        <div class="row">
+          <h2>Agent Feedback <span id="fbCount"></span></h2>
+          <button id="fbRefresh" type="button">Refresh</button>
+        </div>
+        <div id="fbList"></div>
       </section>
 
       <section>
@@ -314,6 +406,11 @@
         updateText: document.getElementById('updateText'),
         checkUpdates: document.getElementById('checkUpdates'),
         caps: document.getElementById('caps'),
+        autostartToggle: document.getElementById('autostartToggle'),
+        autostartHint: document.getElementById('autostartHint'),
+        fbList: document.getElementById('fbList'),
+        fbCount: document.getElementById('fbCount'),
+        fbRefresh: document.getElementById('fbRefresh'),
       };
 
       function renderUpdate(update) {
@@ -359,6 +456,7 @@
           capCell('winget', caps.packageManagers?.winget),
           capCell('Chocolatey', caps.packageManagers?.chocolatey),
           capCell('ADB / Android', caps.android?.adb),
+          capCell('Playwright', caps.browserTesting?.playwright),
         ];
         fields.caps.innerHTML = cells.join('');
       }
@@ -370,6 +468,50 @@
         if (state.status === 'error') return 'Error';
         if (state.status === 'not_paired') return 'Not paired';
         return state.paired ? 'Running' : 'Not paired';
+      }
+
+      function renderAutostart(autostart) {
+        if (!autostart) return;
+        fields.autostartToggle.checked = !!autostart.enabled;
+        fields.autostartToggle.disabled = !autostart.supported;
+        fields.autostartHint.textContent = autostart.supported
+          ? 'Runs the connector at logon via its scheduled task.'
+          : 'Scheduled task not found — reinstall to restore autostart.';
+      }
+
+      function escapeHtml(value) {
+        return String(value ?? '')
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;')
+          .replaceAll('"', '&quot;');
+      }
+
+      function renderFeedback(reports) {
+        const list = Array.isArray(reports) ? reports : [];
+        const unread = list.filter(r => !r.readAt).length;
+        fields.fbCount.textContent = list.length ? `(${unread} unread / ${list.length})` : '';
+        if (!list.length) {
+          fields.fbList.innerHTML = '<p class="fb-empty">No reports yet. AI agents can file issues and improvement ideas here with <code>opus connector feedback submit</code>.</p>';
+          return;
+        }
+        fields.fbList.innerHTML = list.map(r => `
+          <div class="fb-item ${r.readAt ? '' : 'unread'}">
+            <div class="fb-head">
+              <span class="fb-title">${escapeHtml(r.title)}</span>
+              <span class="fb-meta">${escapeHtml(r.severity || 'info')} · ${escapeHtml((r.createdAt || '').slice(0, 16).replace('T', ' '))}</span>
+            </div>
+            ${r.message ? `<p class="fb-message">${escapeHtml(r.message)}</p>` : ''}
+            ${r.readAt ? '' : `<div class="fb-actions"><button type="button" data-fb-read="${escapeHtml(r.id)}">Mark read</button></div>`}
+          </div>
+        `).join('');
+      }
+
+      async function refreshFeedback() {
+        try {
+          const result = await window.opusConnector.listFeedback();
+          renderFeedback(result.reports);
+        } catch (_) {}
       }
 
       function render(state) {
@@ -388,6 +530,7 @@
         if (state.name && !fields.nameInput.value) fields.nameInput.value = state.name;
         renderUpdate(state.update);
         renderCaps(state.capabilities);
+        renderAutostart(state.autostart);
       }
 
       window.opusConnector.getState().then(render);
@@ -399,6 +542,22 @@
       document.getElementById('openHome').addEventListener('click', () => {
         window.opusConnector.openHome();
       });
+      fields.autostartToggle.addEventListener('change', async () => {
+        fields.autostartToggle.disabled = true;
+        const result = await window.opusConnector.setAutostart(fields.autostartToggle.checked);
+        renderAutostart(result.autostart);
+        if (!result.ok) fields.autostartHint.textContent = result.error || 'Could not change autostart.';
+      });
+      fields.fbRefresh.addEventListener('click', refreshFeedback);
+      fields.fbList.addEventListener('click', async (event) => {
+        const id = event.target?.dataset?.fbRead;
+        if (!id) return;
+        event.target.disabled = true;
+        await window.opusConnector.markFeedbackRead(id, true);
+        refreshFeedback();
+      });
+      refreshFeedback();
+      setInterval(refreshFeedback, 60000);
       fields.checkUpdates.addEventListener('click', () => {
         window.opusConnector.checkUpdates().then(render).catch(() => {});
       });

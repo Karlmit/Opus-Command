@@ -84,8 +84,9 @@ opus connector jobs status <job-id>
 opus connector jobs cancel <job-id>
 opus connector artifacts get <job-id>
 opus connector feedback submit linux --title "Issue summary" --message "What failed and what would help"
-opus connector feedback list linux
-opus connector feedback mark-read linux <feedback-id>
+opus connector feedback submit windows --title "Issue summary" --message "What failed and what would help"
+opus connector feedback list windows
+opus connector feedback mark-read windows <feedback-id>
 opus browser screenshot linux https://example.com ./screenshot.png
 ```
 
@@ -98,6 +99,8 @@ remaining frozen in `running`.
 
 When connector behavior is confusing, broken, or missing a capability, leave a
 feedback report on the connector device instead of relying only on chat context.
-Keep reports specific: include the command attempted, observed output, expected
-behavior, and any suggested improvement. Feedback reports are stored on the
-connector host and can be listed later with `opus connector feedback list`.
+This works the same for Linux and Windows connectors. Keep reports specific:
+include the command attempted, observed output, expected behavior, and any
+suggested improvement. Feedback reports are stored on the connector host and can
+be listed later with `opus connector feedback list`; on Windows they also appear
+in the Opus Connector tray app under "Agent Feedback".

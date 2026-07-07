@@ -148,6 +148,19 @@ function dockerAccessible() {
   return result.status === 0 && !!String(result.stdout || '').trim();
 }
 
+// Detection spawns ~15 helper processes (powershell, pwsh, node, docker, …),
+// which is far too heavy to repeat on every 30-second heartbeat on someone's
+// workstation. cachedCapabilities() serves a recent result instead; newly
+// installed tools still show up within CAPABILITIES_TTL_MS.
+const CAPABILITIES_TTL_MS = 5 * 60 * 1000;
+let _capsCache = null;
+let _capsCacheAt = 0;
+
+function cachedCapabilities(maxAgeMs = CAPABILITIES_TTL_MS) {
+  if (_capsCache && Date.now() - _capsCacheAt < maxAgeMs) return _capsCache;
+  return detectCapabilities();
+}
+
 function detectCapabilities() {
   refreshLivePath();
   const has = commandExists;
@@ -181,7 +194,7 @@ function detectCapabilities() {
   if (adb) labels.push('adb', 'android');
   if (playwright) labels.push('playwright');
 
-  return {
+  const capabilities = {
     schemaVersion: 1,
     protocol: CONNECTOR_PROTOCOL,
     detectedAt: new Date().toISOString(),
@@ -227,8 +240,12 @@ function detectCapabilities() {
       pwsh: { available: !!pwsh },
       python: { available: !!python },
     },
+    feedback: { available: true },
     labels: [...new Set(labels)],
   };
+  _capsCache = capabilities;
+  _capsCacheAt = Date.now();
+  return capabilities;
 }
 
 function printPreflight(capabilities, json) {
@@ -787,7 +804,7 @@ function connect(home, config) {
           at: Date.now(),
           hostname: os.hostname(),
           version: VERSION,
-          capabilities: detectCapabilities(),
+          capabilities: cachedCapabilities(),
         });
       }, 30000);
     });
@@ -896,6 +913,7 @@ module.exports = {
   main,
   VERSION,
   detectCapabilities,
+  cachedCapabilities,
   connectorHome,
   getStatus,
   shutdown,
