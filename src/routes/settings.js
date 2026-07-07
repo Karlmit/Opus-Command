@@ -81,7 +81,7 @@ function pickLatestSemver(names) {
 // Selectable theme ids (see client/src/lib/themes.js). Legacy values from
 // older clients are normalized onto current ids rather than rejected.
 const THEME_IDS = [
-  'opus-dark', 'opus-light',
+  'opus-dark', 'opus-light', 'opus-purple',
   'catppuccin-latte', 'catppuccin-frappe', 'catppuccin-macchiato', 'catppuccin-mocha',
 ];
 const LEGACY_THEMES = { dark: 'opus-dark', light: 'opus-light', system: 'opus-dark' };
@@ -145,7 +145,8 @@ router.get('/workspace-env', requireAuth, (req, res) => {
   try {
     const raw = getSetting('workspace_env_vars');
     const vars = raw ? JSON.parse(raw) : [];
-    // Never return values — client gets keys only for display; values shown masked
+    // Values are returned so Settings can prefill the Azure fields and detect a
+    // stored GH_TOKEN. This endpoint is admin-session only.
     res.json({ vars });
   } catch {
     res.json({ vars: [] });

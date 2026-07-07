@@ -193,8 +193,8 @@ async function createSession(projectId, io) {
 }
 
 // ── Shared output handling ────────────────────────────────────────────────────
-// Used by both the Docker agent WebSocket proxy and the LXC SSH PTY proxy so
-// scrollback, mobile snapshots, and AI-state detection behave identically.
+// Central sink for agent WebSocket output (Docker and LXC take the same path)
+// so scrollback, mobile snapshots, and AI-state detection behave identically.
 function _ingestOutput(sessionId, entry, data, ioRef) {
   entry.lastOutputTime = Date.now();
   // Raw terminal output is a noisy status signal: TUI agents (Claude Code,
@@ -262,7 +262,7 @@ function _connectProxy(projectId, sessionId, io, host) {
     lastSnapTime: 0,
   };
   activeProxies.set(sessionId, entry);
-  _emitProjectAgentSummary(projectId, io);
+  _emitProjectAISummary(projectId, io);
 
   ws.on('open', () => {
     console.log(`[terminal] proxy WS open for session ${sessionId.slice(0, 8)}`);
@@ -302,6 +302,7 @@ function _connectProxy(projectId, sessionId, io, host) {
       activeProxies.delete(sessionId);
       sessionClients.delete(sessionId);
       viewerClients.delete(sessionId);
+      _clearSessionTimers(sessionId);
       ioRef?.to(`session:${sessionId}`).emit('terminal:exit', { sessionId });
 
     } else if (msg.type === 'error') {
@@ -419,6 +420,16 @@ function _sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// Drop every per-session timer so a killed/exited session leaves nothing behind.
+function _clearSessionTimers(sessionId) {
+  for (const timers of [_persistTimers, _waitingTimers, _idleTimers]) {
+    if (timers[sessionId]) {
+      clearTimeout(timers[sessionId]);
+      delete timers[sessionId];
+    }
+  }
+}
+
 // ── I/O operations ───────────────────────────────────────────────────────────
 
 function _doWrite(sessionId, data) {
@@ -493,9 +504,12 @@ function killSession(sessionId) {
       }).catch(() => {});
     }
     proxy.ws?.close();
+    _disposeHeadless(proxy);
     activeProxies.delete(sessionId);
   }
   sessionClients.delete(sessionId);
+  viewerClients.delete(sessionId);
+  _clearSessionTimers(sessionId);
   _deleteSessionRecord(sessionId);
   if (projectId) _emitProjectAISummary(projectId, _io);
 }
@@ -703,15 +717,22 @@ function getSnapshot(sessionId) {
 const _persistTimers = {};
 
 function _persistScrollback(sessionId, proxy, immediate = false) {
-  if (_persistTimers[sessionId]) clearTimeout(_persistTimers[sessionId]);
-  const delay = immediate ? 0 : 2000;
-  _persistTimers[sessionId] = setTimeout(() => {
+  if (_persistTimers[sessionId]) {
+    clearTimeout(_persistTimers[sessionId]);
+    delete _persistTimers[sessionId];
+  }
+  const write = () => {
     try {
       getDB().update(terminalSessions)
         .set({ scrollback: proxy.buffer.slice(-250_000) })
         .where(eq(terminalSessions.id, sessionId)).run();
     } catch (_) {}
-  }, delay);
+  };
+  if (immediate) return write(); // e.g. session exit — must not be cancellable
+  _persistTimers[sessionId] = setTimeout(() => {
+    delete _persistTimers[sessionId];
+    write();
+  }, 2000);
 }
 
 function _deleteSessionRecord(sessionId) {
@@ -930,7 +951,7 @@ function _setSessionAgentStatus(sessionId, status, io, options = {}) {
   const rowProjectId = proxy?.projectId || _getSessionProjectId(sessionId);
   const payload = _sessionAgentStatusPayload(sessionId, rowProjectId ? { id: sessionId, projectId: rowProjectId } : null, proxy);
   (io || _io)?.emit('terminal:agent-status', payload);
-  if (rowProjectId) _emitProjectAgentSummary(rowProjectId, io || _io);
+  if (rowProjectId) _emitProjectAISummary(rowProjectId, io || _io);
 }
 
 // Future CLI hooks should call this adapter instead of adding CLI-specific
@@ -1014,10 +1035,6 @@ function _emitProjectAISummary(projectId, io) {
       ...payload.agentStatus,
     });
   } catch (_) {}
-}
-
-function _emitProjectAgentSummary(projectId, io) {
-  _emitProjectAISummary(projectId, io);
 }
 
 // ── Exports ──────────────────────────────────────────────────────────────────

@@ -228,8 +228,6 @@ function runWhenIdle(fn) {
 }
 
 /* ── Terminal instance ─────────────────────────── */
-let _xtermInstanceCounter = 0;
-
 // Build the xterm theme from the active CSS theme tokens. The base colors come
 // from `--color-terminal-*` custom properties so the terminal tracks whatever
 // theme is on <html>. ANSI (16-color) palettes are applied for Catppuccin
@@ -269,8 +267,6 @@ function TerminalInstance({
   useEffect(() => {
     if (!divRef.current || termRefs.current[sessionId]) return;
     let cancelled = false;
-    const instanceId = ++_xtermInstanceCounter;
-    console.log(`[xterm:${instanceId}] Opening for session ${sessionId.slice(0,8)}`);
 
     const term = new XTerm({
       fontFamily: '"Cascadia Mono", monospace',
@@ -626,7 +622,6 @@ function TerminalInstance({
     return () => {
       cancelled = true;
       if (fitFrame) cancelAnimationFrame(fitFrame);
-      console.log(`[xterm:${instanceId}] Disposing for session ${sessionId.slice(0,8)}`);
       themeObserver.disconnect();
       ro?.disconnect();
       window.removeEventListener('resize', onWinResize);
@@ -1525,157 +1520,6 @@ function TasksPanel({
   );
 }
 
-/* ── Git panel ─────────────────────────────────── */
-function gitRepoLabel(path) {
-  if (!path) return '';
-  if (path === '/workspace') return 'workspace';
-  return path.split('/').filter(Boolean).pop();
-}
-
-function GitPanel({ projectId, csrfToken, addToast }) {
-  const [status, setStatus] = useState(null);
-  const [staged, setStaged] = useState(new Set());
-  const [msg, setMsg] = useState('');
-  const [diff, setDiff] = useState('');
-  const [snapshots, setSnaps] = useState([]);
-  const [repos, setRepos] = useState([]);
-  const [activeRepo, setActiveRepo] = useState(null);
-
-  useEffect(() => { loadStatus(); loadRepos(); loadSnaps(); const t = setInterval(loadStatus, 3000); return () => clearInterval(t); }, [projectId]);
-
-  async function loadStatus() {
-    try { const r = await fetch(`/api/projects/${projectId}/git/status`); setStatus(await r.json()); } catch (_) {}
-  }
-  async function loadRepos() {
-    try { const r = await fetch(`/api/projects/${projectId}/git/repos`); const d = await r.json(); setRepos(d.repos || []); setActiveRepo(d.active || null); } catch (_) {}
-  }
-  async function selectRepo(path) {
-    if (!path || path === activeRepo) return;
-    const r = await fetch(`/api/projects/${projectId}/git/repos/active`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: JSON.stringify({ path }) });
-    const d = await r.json();
-    if (d.success) { setActiveRepo(d.active); setStaged(new Set()); setDiff(''); addToast(`Switched to ${gitRepoLabel(d.active)}.`); loadStatus(); loadSnaps(); }
-    else addToast(d.error || 'Could not switch repository.', 'error');
-  }
-  async function loadSnaps() {
-    try { const r = await fetch(`/api/projects/${projectId}/git/snapshots`); const d = await r.json(); setSnaps(d.snapshots || []); } catch (_) {}
-  }
-  async function loadDiff(path) {
-    const r = await fetch(`/api/projects/${projectId}/git/diff?path=${encodeURIComponent(path)}`);
-    const d = await r.json(); setDiff(d.diff || '');
-  }
-  async function stage(path, doStage) {
-    await fetch(`/api/projects/${projectId}/git/stage`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: JSON.stringify({ files: [path], unstage: !doStage }) });
-    setStaged(prev => { const n = new Set(prev); doStage ? n.add(path) : n.delete(path); return n; });
-  }
-  async function commit() {
-    if (!msg.trim()) { addToast('Commit message required.', 'error'); return; }
-    const r = await fetch(`/api/projects/${projectId}/git/commit`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: JSON.stringify({ message: msg }) });
-    const d = await r.json();
-    if (d.success) { addToast('Committed.'); setMsg(''); setStaged(new Set()); loadStatus(); }
-    else addToast(d.error || 'Commit failed.', 'error');
-  }
-  async function snapshot() {
-    const label = prompt('Snapshot label (optional):');
-    if (label === null) return;
-    const r = await fetch(`/api/projects/${projectId}/git/snapshot`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: JSON.stringify({ label }) });
-    const d = await r.json();
-    if (d.success) { addToast(`Snapshot: ${d.tag}`); loadSnaps(); }
-    else addToast(d.error, 'error');
-  }
-  async function restore(tag) {
-    if (!confirm(`Restore workspace to ${tag}? This resets the current branch to the snapshot and removes file changes made after it.`)) return;
-    const r = await fetch(`/api/projects/${projectId}/git/restore`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: JSON.stringify({ tag }) });
-    const d = await r.json();
-    if (d.success) { addToast(`Workspace restored to ${tag}`); loadStatus(); } else addToast(d.error, 'error');
-  }
-
-  if (!status) return <div className="panel-content"><p className="panel-loading">Loading…</p></div>;
-  if (!status.initialized) return <div className="panel-content"><p className="panel-hint">Git not initialized. Run <code>git init</code> in the terminal.</p></div>;
-
-  const unstaged = (status.files || []).filter(f => !staged.has(f.path));
-  const stagedFiles = (status.files || []).filter(f => staged.has(f.path));
-
-  return (
-    <div className="panel-content">
-      <div className="panel-section">
-        <div className="panel-section-header">
-          <div className="panel-section-title">
-            {repos.length > 1 && (
-              <select
-                className="git-repo-select"
-                value={activeRepo || ''}
-                onChange={e => selectRepo(e.target.value)}
-                title={activeRepo || 'Active repository'}
-              >
-                {repos.map(r => (
-                  <option key={r.path} value={r.path}>{gitRepoLabel(r.path)}{r.clean ? '' : ' •'}</option>
-                ))}
-              </select>
-            )}
-            ⎇ {status.branch}
-          </div>
-          <div style={{ display:'flex', gap: 4 }}>
-            <button className="btn btn-ghost" style={{fontSize:'var(--font-size-xs)'}} onClick={snapshot}>Snapshot</button>
-          </div>
-        </div>
-        {status.clean ? <p className="panel-hint">Working tree clean.</p> : (
-          <>
-            {unstaged.length > 0 && (
-              <div className="git-file-list">
-                <div className="git-list-label">Unstaged</div>
-                {unstaged.map(f => (
-                  <div key={f.path} className="git-file-row" onClick={() => loadDiff(f.path)}>
-                    <input type="checkbox" checked={false} onChange={() => stage(f.path, true)} onClick={e => e.stopPropagation()} />
-                    <span className={`git-badge badge-${f.status}`}>{f.status}</span>
-                    <span className="git-file-name">{f.path}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-            {stagedFiles.length > 0 && (
-              <div className="git-file-list">
-                <div className="git-list-label">Staged</div>
-                {stagedFiles.map(f => (
-                  <div key={f.path} className="git-file-row staged" onClick={() => loadDiff(f.path)}>
-                    <input type="checkbox" checked onChange={() => stage(f.path, false)} onClick={e => e.stopPropagation()} />
-                    <span className={`git-badge badge-${f.status}`}>{f.status}</span>
-                    <span className="git-file-name">{f.path}</span>
-                  </div>
-                ))}
-                <div className="git-commit-area">
-                  <textarea className="git-commit-input" placeholder="Commit message…" value={msg} onChange={e => setMsg(e.target.value)} />
-                  <button className="btn btn-primary" onClick={commit}>Commit</button>
-                </div>
-              </div>
-            )}
-            {diff && (
-              <div className="git-diff">
-                {diff.split('\n').map((line, i) => (
-                  <div key={i} className={`diff-line${line.startsWith('+') && !line.startsWith('+++') ? ' added' : line.startsWith('-') && !line.startsWith('---') ? ' removed' : line.startsWith('@@') ? ' hunk' : ''}`}>
-                    <code>{line || ' '}</code>
-                  </div>
-                ))}
-              </div>
-            )}
-          </>
-        )}
-      </div>
-      <div className="panel-section">
-        <div className="panel-section-title">SNAPSHOTS</div>
-        {snapshots.length === 0 ? <p className="panel-hint">No snapshots. Create one before an AI session.</p> : snapshots.map(s => (
-          <div key={s.tag} className="snapshot-row">
-            <div>
-              <div className="snapshot-tag">{s.tag}</div>
-              {s.label && <div className="snapshot-label">{s.label}</div>}
-            </div>
-            <button className="btn btn-ghost" style={{fontSize:'var(--font-size-xs)'}} onClick={() => restore(s.tag)}>Restore</button>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 /* ── Cockpit ───────────────────────────────────── */
 export default function ProjectCockpit() {
   const { id: projectId } = useParams();
@@ -1976,12 +1820,10 @@ export default function ProjectCockpit() {
       // tracking so activateTerm will re-emit terminal:join (with scrollback).
       joinedSessions.current.clear();
       historyReplayed.current.clear();
-      console.log('[socket] Connected/reconnected — cleared join & history state');
 
       // Re-join active session with scrollback (server sees this as a new client)
       if (activeRef.current?.startsWith('term-')) {
         const sid = activeRef.current.slice(5);
-        console.log(`[socket] Re-joining session ${sid.slice(0,8)} after reconnect`);
         sock.emit('terminal:join', { sessionId: sid });
         joinedSessions.current.add(sid);
         // historyReplayed stays clear so onScrollback will accept the replay
@@ -1991,7 +1833,6 @@ export default function ProjectCockpit() {
     function onDisconnect() {
       setRecon(true);
       setReconSecs(0);
-      console.log('[socket] Disconnected');
     }
 
     function onData({ sessionId, data }) {
@@ -1999,12 +1840,7 @@ export default function ProjectCockpit() {
     }
 
     function onScrollback({ sessionId, data }) {
-      if (historyReplayed.current.has(sessionId)) {
-        console.log(`[terminal] SKIPPED duplicate scrollback for session ${sessionId.slice(0,8)}`);
-        return;
-      }
-      const bytes = typeof data === 'string' ? data.length : 0;
-      console.log(`[terminal] Replaying ${bytes} bytes history for session ${sessionId.slice(0,8)}`);
+      if (historyReplayed.current.has(sessionId)) return;
       const ref = termRefs.current[sessionId];
       if (ref) {
         // Terminal already open — apply immediately.
@@ -2032,7 +1868,6 @@ export default function ProjectCockpit() {
       setTermTabs(p => p.map(t => t.id === sessionId ? { ...t, aiState: state } : t));
     }
 
-    console.log(`[socket] Attaching listeners for project ${projectId}`);
     sock.on('connect',           onConnect);
     sock.on('disconnect',        onDisconnect);
     sock.on('terminal:data',     onData);
@@ -2041,7 +1876,6 @@ export default function ProjectCockpit() {
     sock.on('terminal:ai-state', onAi);
 
     return () => {
-      console.log(`[socket] Removing listeners for project ${projectId}`);
       sock.off('connect',           onConnect);
       sock.off('disconnect',        onDisconnect);
       sock.off('terminal:data',     onData);
@@ -2450,12 +2284,10 @@ export default function ProjectCockpit() {
       if (!alreadyJoined) {
         // First time joining this session — server will send scrollback
         joinedSessions.current.add(sessionId);
-        console.log(`[terminal] terminal:join session ${sessionId.slice(0,8)} (will receive scrollback)`);
         sock.emit('terminal:join', { sessionId });
       } else {
         // Already joined this session in this browser session — reattach to live
         // output stream but do NOT replay scrollback (xterm already has the content)
-        console.log(`[terminal] terminal:reattach session ${sessionId.slice(0,8)} (no scrollback)`);
         sock.emit('terminal:reattach', { sessionId });
       }
       doFitFocus();

@@ -61,7 +61,7 @@ function lxcTemplateFor(project) {
 // ── helper invocation ─────────────────────────────────────────────────────────
 
 function shq(v) {
-  return `'${String(v).replace(/'/g, `'\\''`)}'`;
+  return `'${String(v == null ? '' : v).replace(/'/g, `'\\''`)}'`;
 }
 
 function helperEnvPrefix(cfg) {
@@ -272,9 +272,6 @@ function b64(str) {
 function b64File(p) {
   try { return Buffer.from(fs.readFileSync(p)).toString('base64'); } catch { return ''; }
 }
-function shSingleQuote(v) {
-  return `'${String(v == null ? '' : v).replace(/'/g, `'\\''`)}'`;
-}
 
 // Managed agent-instruction content (LXC-appropriate — the container is
 // persistent, unlike a Docker workspace whose system dirs are wiped on recreate).
@@ -377,13 +374,13 @@ function managedEnvLines(vars, { isAzure = false } = {}) {
     '# Opus Command — managed workspace environment (regenerated on update; do not edit)',
     'export PATH="$HOME/bin:$HOME/.local/bin:$PATH"',
     'export IS_SANDBOX=1',
-    `export OPUS_COMMAND_URL=${shSingleQuote(resolveWorkspaceCommandUrl())}`,
-    `export OPUS_WORKSPACE_TOKEN=${shSingleQuote(getWorkspaceAccessToken())}`,
+    `export OPUS_COMMAND_URL=${shq(resolveWorkspaceCommandUrl())}`,
+    `export OPUS_WORKSPACE_TOKEN=${shq(getWorkspaceAccessToken())}`,
   ];
   for (const { key, value } of vars) {
     if (!key) continue;
     envMap[key] = value;
-    lines.push(`export ${key}=${shSingleQuote(value)}`);
+    lines.push(`export ${key}=${shq(value)}`);
   }
   if (isAzure && envMap.ANTHROPIC_FOUNDRY_RESOURCE) {
     lines.push('export CLAUDE_CODE_USE_FOUNDRY=1');

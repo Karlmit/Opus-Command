@@ -131,6 +131,11 @@ CREATE TABLE IF NOT EXISTS __migrations (
   name TEXT NOT NULL UNIQUE,
   applied_at INTEGER NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_terminal_sessions_project ON terminal_sessions(project_id);
+CREATE INDEX IF NOT EXISTS idx_activity_log_project ON activity_log(project_id, id);
+CREATE INDEX IF NOT EXISTS idx_connector_jobs_connector ON connector_jobs(connector_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires);
 `;
 
 function runMigrations(sqliteDb) {

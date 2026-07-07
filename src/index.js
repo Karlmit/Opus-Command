@@ -8,7 +8,7 @@ const path = require('path');
 const fs = require('fs');
 
 const { PORT, SESSION_SECRET, NODE_ENV, DATA_DIR, AGENT_PATTERNS_PATH, HOST_PROJECTS_DIR, PROJECTS_DIR } = require('./config');
-const { initDB, getSQLite } = require('./db');
+const { initDB } = require('./db');
 const SQLiteSessionStore = require('./middleware/sessionStore');
 const { csrfMiddleware } = require('./middleware/csrf');
 const { registerRoutes } = require('./routes');
@@ -46,7 +46,7 @@ async function main() {
 
   // Pre-pull the fallback workspace image in the background so it's
   // ready when the user creates their first project.
-  const { docker: dockerClient } = require('./services/docker.service');
+  const dockerClient = dockerService.docker;
   const FALLBACK = 'node:20-slim';
   dockerClient.getImage(FALLBACK).inspect()
     .catch(() => {

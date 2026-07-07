@@ -4,7 +4,7 @@ const { requireAuth } = require('../middleware/auth');
 const { getDB } = require('../db');
 const { projects } = require('../db/schema');
 const { eq } = require('drizzle-orm');
-const { docker } = require('../services/docker.service');
+const { docker, containerName } = require('../services/docker.service');
 const lxc = require('../services/unraid-lxc.service');
 
 function getProjectInfo(projectId) {
@@ -14,10 +14,8 @@ function getProjectInfo(projectId) {
   return rows[0];
 }
 
-function containerName(projectId) {
-  return `opus-workspace-${projectId}`;
-}
-
+// POSIX-safe single-quoting. Inside single quotes a backslash is literal, so
+// the only correct escape for an embedded quote is '\'' — never \'.
 function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
@@ -121,15 +119,15 @@ router.get('/status', requireAuth, async (req, res) => {
 
   try {
     const root = await getActiveRepoRoot(project);
-    const repoResult = await execInWorkspace(project, `git -C '${root}' rev-parse --is-inside-work-tree 2>/dev/null || echo false`);
+    const repoResult = await execInWorkspace(project, `git -C ${shellQuote(root)} rev-parse --is-inside-work-tree 2>/dev/null || echo false`);
     if (repoResult.stdout.trim() !== 'true') {
       return res.json({ initialized: false });
     }
 
-    const branchResult = await execInWorkspace(project, `git -C '${root}' branch --show-current 2>/dev/null || echo ""`);
+    const branchResult = await execInWorkspace(project, `git -C ${shellQuote(root)} branch --show-current 2>/dev/null || echo ""`);
     const branch = branchResult.stdout.trim();
 
-    const statusResult = await execInWorkspace(project, `git -C '${root}' status --porcelain 2>/dev/null`);
+    const statusResult = await execInWorkspace(project, `git -C ${shellQuote(root)} status --porcelain 2>/dev/null`);
     const files = statusResult.stdout
       .split('\n')
       .filter(Boolean)
@@ -163,8 +161,8 @@ router.get('/repos', requireAuth, async (req, res) => {
     const repos = await Promise.all(paths.map(async (path) => {
       try {
         const [branchRes, statusRes] = await Promise.all([
-          execInWorkspace(project, `git -C '${path}' branch --show-current 2>/dev/null || echo ""`),
-          execInWorkspace(project, `git -C '${path}' status --porcelain 2>/dev/null`),
+          execInWorkspace(project, `git -C ${shellQuote(path)} branch --show-current 2>/dev/null || echo ""`),
+          execInWorkspace(project, `git -C ${shellQuote(path)} status --porcelain 2>/dev/null`),
         ]);
         const dirty = statusRes.stdout.split('\n').filter(Boolean).length;
         return { path, branch: branchRes.stdout.trim() || 'HEAD', dirty, clean: dirty === 0 };
@@ -213,9 +211,9 @@ router.get('/diff', requireAuth, async (req, res) => {
 
   try {
     const root = await getActiveRepoRoot(project);
-    const safe = filePath.replace(/'/g, "\\'");
+    const safe = shellQuote(filePath);
     const result = await execInWorkspace(project,
-      `git -C '${root}' diff -- '${safe}' 2>/dev/null; git -C '${root}' diff --cached -- '${safe}' 2>/dev/null`
+      `git -C ${shellQuote(root)} diff -- ${safe} 2>/dev/null; git -C ${shellQuote(root)} diff --cached -- ${safe} 2>/dev/null`
     );
     res.json({ diff: result.stdout });
   } catch (err) {
@@ -233,10 +231,10 @@ router.post('/stage', requireAuth, async (req, res) => {
 
   try {
     const root = await getActiveRepoRoot(project);
-    const safePaths = files.map(f => `'${f.replace(/'/g, "\\'")}'`).join(' ');
+    const safePaths = files.map(shellQuote).join(' ');
     const cmd = unstage
-      ? `git -C '${root}' reset HEAD -- ${safePaths}`
-      : `git -C '${root}' add -- ${safePaths}`;
+      ? `git -C ${shellQuote(root)} reset HEAD -- ${safePaths}`
+      : `git -C ${shellQuote(root)} add -- ${safePaths}`;
     await execInWorkspace(project, cmd);
     res.json({ success: true });
   } catch (err) {
@@ -252,11 +250,10 @@ router.post('/commit', requireAuth, async (req, res) => {
   const { message } = req.body;
   if (!message || !message.trim()) return res.status(400).json({ error: 'Commit message is required.' });
 
-  const safeMsg = message.replace(/'/g, "\\'");
   try {
     const root = await getActiveRepoRoot(project);
     const result = await execInWorkspace(project,
-      `git -C '${root}' -c user.email="opus@command" -c user.name="Opus Command" commit -m '${safeMsg}' 2>&1`
+      `git -C ${shellQuote(root)} -c user.email="opus@command" -c user.name="Opus Command" commit -m ${shellQuote(message)} 2>&1`
     );
     if (result.stdout.includes('nothing to commit')) {
       return res.status(400).json({ error: 'Nothing to commit. Stage files first.' });
@@ -277,11 +274,10 @@ router.post('/revert', requireAuth, async (req, res) => {
     const root = await getActiveRepoRoot(project);
     let cmd;
     if (all) {
-      cmd = `git -C '${root}' checkout -- . && git -C '${root}' clean -fd 2>&1`;
+      cmd = `git -C ${shellQuote(root)} checkout -- . && git -C ${shellQuote(root)} clean -fd 2>&1`;
     } else {
       if (!filePath) return res.status(400).json({ error: 'File path required.' });
-      const safe = filePath.replace(/'/g, "\\'");
-      cmd = `git -C '${root}' checkout -- '${safe}' 2>&1`;
+      cmd = `git -C ${shellQuote(root)} checkout -- ${shellQuote(filePath)} 2>&1`;
     }
     await execInWorkspace(project, cmd);
     res.json({ success: true });
@@ -298,10 +294,9 @@ router.post('/branch', requireAuth, async (req, res) => {
   const { name } = req.body;
   if (!name || !name.trim()) return res.status(400).json({ error: 'Branch name required.' });
 
-  const safe = name.trim().replace(/'/g, "\\'");
   try {
     const root = await getActiveRepoRoot(project);
-    const result = await execInWorkspace(project, `git -C '${root}' checkout -b '${safe}' 2>&1`);
+    const result = await execInWorkspace(project, `git -C ${shellQuote(root)} checkout -b ${shellQuote(name.trim())} 2>&1`);
     if (result.stdout.includes('fatal') || result.stderr.includes('fatal')) {
       return res.status(400).json({ error: result.stdout || result.stderr });
     }
@@ -322,12 +317,10 @@ router.post('/snapshot', requireAuth, async (req, res) => {
   const tag = `snapshot/${ts}`;
   const msg = label ? `${ts}: ${label}` : ts;
 
-  const safeTag = tag.replace(/'/g, "\\'");
-  const safeMsg = msg.replace(/'/g, "\\'");
   try {
     const root = await getActiveRepoRoot(project);
     await execInWorkspace(project,
-      `git -C '${root}' -c user.email="opus@command" -c user.name="Opus Command" tag -a '${safeTag}' -m '${safeMsg}' 2>&1`
+      `git -C ${shellQuote(root)} -c user.email="opus@command" -c user.name="Opus Command" tag -a ${shellQuote(tag)} -m ${shellQuote(msg)} 2>&1`
     );
     res.json({ success: true, tag });
   } catch (err) {
@@ -343,7 +336,7 @@ router.get('/snapshots', requireAuth, async (req, res) => {
   try {
     const root = await getActiveRepoRoot(project);
     const result = await execInWorkspace(project,
-      `git -C '${root}' tag -l "snapshot/*" --sort=-creatordate --format="%(refname:short)|%(creatordate:iso)|%(subject)" 2>/dev/null`
+      `git -C ${shellQuote(root)} tag -l "snapshot/*" --sort=-creatordate --format="%(refname:short)|%(creatordate:iso)|%(subject)" 2>/dev/null`
     );
     const snapshots = result.stdout.split('\n').filter(Boolean).map(line => {
       const [tag, date, ...msgParts] = line.split('|');
@@ -397,7 +390,7 @@ router.get('/log', requireAuth, async (req, res) => {
   try {
     const root = await getActiveRepoRoot(project);
     const result = await execInWorkspace(project,
-      `git -C '${root}' log --all --date-order --format="%H%x1f%h%x1f%s%x1f%an%x1f%ar%x1f%D%x1f%P" -60 2>/dev/null`
+      `git -C ${shellQuote(root)} log --all --date-order --format="%H%x1f%h%x1f%s%x1f%an%x1f%ar%x1f%D%x1f%P" -60 2>/dev/null`
     );
     const commits = result.stdout.split('\n').filter(Boolean).map(line => {
       const p = line.split('\x1f');
@@ -425,15 +418,15 @@ router.get('/remote', requireAuth, async (req, res) => {
   try {
     const root = await getActiveRepoRoot(project);
     const urlResult = await execInWorkspace(project,
-      `git -C '${root}' remote get-url origin 2>/dev/null || echo ""`
+      `git -C ${shellQuote(root)} remote get-url origin 2>/dev/null || echo ""`
     );
     const remoteUrl = urlResult.stdout.trim();
     if (!remoteUrl) return res.json({ hasRemote: false });
 
     const [trackingResult, aheadResult, behindResult] = await Promise.all([
-      execInWorkspace(project, `git -C '${root}' rev-parse --abbrev-ref HEAD@{upstream} 2>/dev/null || echo ""`),
-      execInWorkspace(project, `git -C '${root}' rev-list HEAD@{upstream}..HEAD --count 2>/dev/null || echo "0"`),
-      execInWorkspace(project, `git -C '${root}' rev-list HEAD..HEAD@{upstream} --count 2>/dev/null || echo "0"`),
+      execInWorkspace(project, `git -C ${shellQuote(root)} rev-parse --abbrev-ref HEAD@{upstream} 2>/dev/null || echo ""`),
+      execInWorkspace(project, `git -C ${shellQuote(root)} rev-list HEAD@{upstream}..HEAD --count 2>/dev/null || echo "0"`),
+      execInWorkspace(project, `git -C ${shellQuote(root)} rev-list HEAD..HEAD@{upstream} --count 2>/dev/null || echo "0"`),
     ]);
 
     res.json({
@@ -455,7 +448,7 @@ router.post('/fetch', requireAuth, async (req, res) => {
 
   try {
     const root = await getActiveRepoRoot(project);
-    const result = await execInWorkspace(project, `git -C '${root}' fetch --prune 2>&1`);
+    const result = await execInWorkspace(project, `git -C ${shellQuote(root)} fetch --prune 2>&1`);
     const output = (result.stdout + ' ' + result.stderr).trim();
     if (output.includes('fatal:') || output.includes('error:')) {
       return res.status(400).json({ error: output });
@@ -473,7 +466,7 @@ router.post('/pull', requireAuth, async (req, res) => {
 
   try {
     const root = await getActiveRepoRoot(project);
-    const result = await execInWorkspace(project, `git -C '${root}' pull 2>&1`);
+    const result = await execInWorkspace(project, `git -C ${shellQuote(root)} pull 2>&1`);
     const output = (result.stdout + ' ' + result.stderr).trim();
     if (output.includes('fatal:') || output.includes('error:')) {
       return res.status(400).json({ error: output });
@@ -491,7 +484,7 @@ router.post('/push', requireAuth, async (req, res) => {
 
   try {
     const root = await getActiveRepoRoot(project);
-    const result = await execInWorkspace(project, `git -C '${root}' push 2>&1`);
+    const result = await execInWorkspace(project, `git -C ${shellQuote(root)} push 2>&1`);
     const output = (result.stdout + ' ' + result.stderr).trim();
     if (output.includes('fatal:') || output.includes('error:')) {
       return res.status(400).json({ error: output });

@@ -2,7 +2,7 @@ const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const { getDB, getSQLite } = require('../db');
+const { getDB } = require('../db');
 const { users, settings } = require('../db/schema');
 const { eq } = require('drizzle-orm');
 
@@ -143,12 +143,6 @@ function getTerminalAgentToken(projectId) {
   return token;
 }
 
-function rotateTerminalAgentToken(projectId) {
-  const token = `opus_ta_${crypto.randomBytes(32).toString('base64url')}`;
-  setSetting(terminalAgentTokenKey(projectId), token);
-  return token;
-}
-
 function timingSafeEqual(a, b) {
   const left = Buffer.from(String(a || ''));
   const right = Buffer.from(String(b || ''));
@@ -185,6 +179,5 @@ module.exports = {
   resetWorkspaceInstructionTemplate,
   getWorkspaceAccessToken,
   getTerminalAgentToken,
-  rotateTerminalAgentToken,
   isWorkspaceTokenRequest,
 };

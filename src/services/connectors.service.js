@@ -699,7 +699,6 @@ function completeJob(message) {
     WHERE id = ?
   `).run(status, message.exitCode, endedAt, endedAt, message.jobId);
 
-  const row = sqlite.prepare('SELECT * FROM connector_jobs WHERE id = ?').get(message.jobId);
   const pending = pendingJobs.get(message.jobId);
   if (pending) {
     clearTimeout(pending.timeout);

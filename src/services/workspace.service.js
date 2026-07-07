@@ -124,11 +124,6 @@ async function getLogs(project, tail = 200) {
   return docker.getContainerLogs(project.id, tail);
 }
 
-async function getBinds(project) {
-  if (isLxc(project)) return [];
-  return docker.getContainerBinds(project.id);
-}
-
 module.exports = {
   BACKEND_DOCKER,
   BACKEND_LXC,
@@ -147,5 +142,4 @@ module.exports = {
   stopDockerContainer,
   stopAllDockerContainers,
   getLogs,
-  getBinds,
 };

@@ -2,7 +2,7 @@
   "$schema": "https://unpkg.com/knip@5/schema.json",
   "workspaces": {
     ".": {
-      "entry": ["src/index.js", "src/workspace/opus-cli.js"],
+      "entry": ["src/index.js", "src/workspace/*.js"],
       "project": ["src/**/*.js"]
     },
     "client": {

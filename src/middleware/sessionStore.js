@@ -4,8 +4,9 @@ class SQLiteSessionStore extends session.Store {
   constructor(sqlite) {
     super();
     this.db = sqlite;
-    // Clean expired sessions every 15 minutes
-    setInterval(() => this._cleanup(), 15 * 60 * 1000);
+    // Clean expired sessions every 15 minutes; unref so the timer never keeps
+    // the process alive on shutdown.
+    setInterval(() => this._cleanup(), 15 * 60 * 1000).unref();
   }
 
   get(sid, callback) {

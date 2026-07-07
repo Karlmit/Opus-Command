@@ -328,7 +328,11 @@ async function _connectToInternalNetwork(containerId) {
 
 // ────────────────────────────────────────────────────────────────────────────
 
-async function createWorkspaceContainer(projectId, folderPath, template = 'claude-code', volumes = []) {
+// Shared container (re)creation: build env, ensure the planning area, replace
+// any existing container with the same name, create, and join the internal
+// network. Used by createWorkspaceContainer and recreateContainer so the two
+// paths can never drift apart.
+async function _createContainer(projectId, folderPath, template, volumes) {
   const templateId = normalizeTemplate(template);
   const image = await getWorkspaceImage(templateId);
   const name = containerName(projectId);
@@ -346,12 +350,6 @@ async function createWorkspaceContainer(projectId, folderPath, template = 'claud
   ];
 
   ensurePlanningArea(localProjectPath);
-
-  try {
-    await docker.getVolume(homeVol).inspect();
-  } catch {
-    await docker.createVolume({ Name: homeVol });
-  }
 
   try {
     const existing = docker.getContainer(name);
@@ -374,6 +372,18 @@ async function createWorkspaceContainer(projectId, folderPath, template = 'claud
   // Connect to internal network so opus-command can reach the terminal-agent by name
   await _connectToInternalNetwork(container.id);
 
+  return { container, homeVol };
+}
+
+async function createWorkspaceContainer(projectId, folderPath, template = 'claude-code', volumes = []) {
+  const homeVol = homeVolumeName(projectId);
+  try {
+    await docker.getVolume(homeVol).inspect();
+  } catch {
+    await docker.createVolume({ Name: homeVol });
+  }
+
+  const { container } = await _createContainer(projectId, folderPath, template, volumes);
   return { containerId: container.id, homeVolume: homeVol };
 }
 
@@ -396,43 +406,7 @@ async function restartContainer(projectId) {
 }
 
 async function recreateContainer(projectId, folderPath, template = 'claude-code', volumes = []) {
-  const templateId = normalizeTemplate(template);
-  const homeVol = homeVolumeName(projectId);
-  const image = await getWorkspaceImage(templateId);
-  const name = containerName(projectId);
-  const projectHostPath = path.join(HOST_PROJECTS_DIR, folderPath);
-  const localProjectPath = path.join(PROJECTS_DIR, folderPath);
-  const extraBinds = buildExtraBinds(volumes);
-
-  const { getWorkspaceEnvVars, getWorkspaceAccessToken, getTerminalAgentToken } = require('./auth.service');
-  const userEnv = [
-    ...getWorkspaceEnvVars().map(({ key, value }) => `${key}=${value}`),
-    `OPUS_COMMAND_URL=${process.env.OPUS_WORKSPACE_COMMAND_URL || `http://opus-command:${PORT}`}`,
-    `OPUS_WORKSPACE_TOKEN=${getWorkspaceAccessToken()}`,
-    `TERMINAL_AGENT_TOKEN=${getTerminalAgentToken(projectId)}`,
-  ];
-
-  ensurePlanningArea(localProjectPath);
-
-  try {
-    const existing = docker.getContainer(name);
-    await existing.stop().catch(() => {});
-    await existing.remove();
-  } catch (_) {}
-
-  const container = await docker.createContainer({
-    name,
-    Image: image,
-    Cmd: buildWorkspaceCmd(image, templateId),
-    Env: userEnv,
-    HostConfig: {
-      Binds: [`${projectHostPath}:/workspace`, `${homeVol}:/root`, ...extraBinds],
-      RestartPolicy: { Name: 'unless-stopped' },
-    },
-    WorkingDir: '/workspace',
-  });
-
-  await _connectToInternalNetwork(container.id);
+  const { container } = await _createContainer(projectId, folderPath, template, volumes);
   await container.start();
   return { containerId: container.id };
 }

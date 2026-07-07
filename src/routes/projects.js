@@ -1,11 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const path = require('path');
-const fs = require('fs');
 const { requireAuth } = require('../middleware/auth');
 const { getDB } = require('../db');
-const { projects, projectTasks, terminalSessions, activityLog } = require('../db/schema');
-const { eq, asc } = require('drizzle-orm');
+const { projects, projectTasks, activityLog } = require('../db/schema');
+const { eq, asc, desc } = require('drizzle-orm');
 const { PROJECTS_DIR } = require('../config');
 const docker = require('../services/docker.service');
 const workspace = require('../services/workspace.service');
@@ -80,6 +79,16 @@ function parseStoredVolumes(value) {
   } catch {
     return [];
   }
+}
+
+// True when the live container's extra binds match the saved volume config.
+// A stopped container keeps its original binds, so a mismatch means the
+// container must be recreated for the saved config to take effect.
+async function extraBindsMatch(projectId, volumes) {
+  const desired = docker.buildExtraBinds(volumes);
+  const current = (await docker.getContainerBinds(projectId))
+    .filter(b => !b.endsWith(':/workspace') && !b.endsWith(':/root'));
+  return JSON.stringify([...desired].sort()) === JSON.stringify([...current].sort());
 }
 
 // GET /api/projects/templates — list workspace templates
@@ -170,7 +179,7 @@ router.post('/', requireAuth, async (req, res) => {
     // remotely, so no local folder is created here.
     if (backend === 'docker') {
       const resolved = path.resolve(PROJECTS_DIR, folderPath);
-      if (!resolved.startsWith(PROJECTS_DIR)) {
+      if (resolved !== PROJECTS_DIR && !resolved.startsWith(PROJECTS_DIR + path.sep)) {
         return res.status(403).json({ error: 'Access denied. The path is outside the project folder.' });
       }
       ensurePlanningArea(resolved);
@@ -179,8 +188,8 @@ router.post('/', requireAuth, async (req, res) => {
     const db = getDB();
     const now = Date.now();
     // Place new projects at the end of the current ordering.
-    const maxOrder = db.select().from(projects).all()
-      .reduce((max, p) => Math.max(max, p.sortOrder || 0), 0);
+    const maxOrder = db.select({ sortOrder: projects.sortOrder }).from(projects)
+      .orderBy(desc(projects.sortOrder)).limit(1).all()[0]?.sortOrder || 0;
     const inserted = db.insert(projects).values({
       name: name.trim(),
       folderPath,
@@ -291,12 +300,12 @@ router.get('/:id', requireAuth, async (req, res) => {
     const p = rows[0];
     const status = await workspace.getStatus(p).catch(() => 'stopped');
 
-    // Get recent activity
+    // Get recent activity (newest first)
     const activity = db.select().from(activityLog)
       .where(eq(activityLog.projectId, p.id))
-      .all()
-      .slice(-20)
-      .reverse();
+      .orderBy(desc(activityLog.id))
+      .limit(20)
+      .all();
 
     const aiSummary = terminal.getProjectAISummary(p.id, { workspaceStatus: status });
 
@@ -426,10 +435,7 @@ router.get('/:id/volumes', requireAuth, async (req, res) => {
     const status = await docker.getContainerStatus(projectId).catch(() => 'stopped');
 
     // Tell the UI whether the live container already reflects the saved config.
-    const desired = docker.buildExtraBinds(parseStoredVolumes(rows[0].volumes));
-    const current = (await docker.getContainerBinds(projectId))
-      .filter(b => !b.endsWith(':/workspace') && !b.endsWith(':/root'));
-    const applied = JSON.stringify([...desired].sort()) === JSON.stringify([...current].sort());
+    const applied = await extraBindsMatch(projectId, parseStoredVolumes(rows[0].volumes));
 
     res.json({ volumes, status, applied });
   } catch (err) {
@@ -638,11 +644,7 @@ router.post('/:id/lifecycle', requireAuth, async (req, res) => {
         // A stopped container keeps its original binds, so if the saved volume
         // config no longer matches the existing container we recreate it to
         // apply the change ("apply on next start").
-        const desired = docker.buildExtraBinds(volumes);
-        const current = (await docker.getContainerBinds(projectId))
-          .filter(b => !b.endsWith(':/workspace') && !b.endsWith(':/root'));
-        const matches = JSON.stringify([...desired].sort()) === JSON.stringify([...current].sort());
-        if (matches) {
+        if (await extraBindsMatch(projectId, volumes)) {
           await docker.startContainer(projectId);
         } else {
           const { containerId: startedId } = await docker.recreateContainer(projectId, project.folderPath, project.template, volumes);

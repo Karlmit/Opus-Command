@@ -13,5 +13,16 @@ export default defineConfig({
   build: {
     outDir: '../public',
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        // Long-lived vendor chunks: app code changes every release, these don't,
+        // so returning browsers only re-download the (much smaller) app chunk.
+        manualChunks: {
+          react: ['react', 'react-dom', 'react-router-dom'],
+          xterm: ['@xterm/xterm', '@xterm/addon-fit', '@xterm/addon-web-links'],
+          socket: ['socket.io-client'],
+        },
+      },
+    },
   },
 });

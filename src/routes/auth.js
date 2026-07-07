@@ -47,7 +47,7 @@ router.post('/login', loginLimiter, async (req, res) => {
 router.post('/logout', requireAuth, (req, res) => {
   req.session.destroy((err) => {
     if (err) return res.status(500).json({ error: 'Logout failed.' });
-    res.clearCookie('connect.sid');
+    res.clearCookie('oc.sid'); // must match the session cookie name in src/index.js
     res.json({ success: true });
   });
 });
