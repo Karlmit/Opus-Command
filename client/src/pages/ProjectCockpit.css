@@ -438,6 +438,16 @@
 }
 .cockpit-tabs::-webkit-scrollbar { display: none; }
 
+/* Current-project chip — pinned to the left of the tabs so the active
+   project is always visible here, even when the tab strip scrolls or the
+   file tree (which also shows the project name) is collapsed. Not
+   interactive: no hover/active state, just an identity marker. */
+.cockpit-project-chip {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
 .cockpit-tab {
   display: flex;
   align-items: center;

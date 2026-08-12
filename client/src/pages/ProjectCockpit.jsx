@@ -1553,7 +1553,6 @@ export default function ProjectCockpit() {
   const [deleting, setDeleting]   = useState(false);
   const [showDelete, setShowDelete] = useState(false);
   const [treeCollapsed, setTreeCollapsed] = useState(false);
-  const [hoveredTreeProject, setHoveredTreeProject] = useState(false);
   const [commandMenu, setCommandMenu] = useState(null); // { x, y }
   const [fileContextMenu, setFileContextMenu] = useState(null); // { node, x, y }
   const [renameDialog, setRenameDialog] = useState(null); // { node, value }
@@ -2661,10 +2660,7 @@ export default function ProjectCockpit() {
       >
         <div className="filetree-header">
           {!treeCollapsed && (
-            <div className="filetree-project"
-                 onMouseEnter={() => setHoveredTreeProject(true)}
-                 onMouseLeave={() => setHoveredTreeProject(false)}>
-              {project && <ProjectAvatar project={project} size={24} playing={hoveredTreeProject} />}
+            <div className="filetree-project">
               <span className="filetree-project-name">{project?.name}</span>
             </div>
           )}
@@ -2771,6 +2767,14 @@ export default function ProjectCockpit() {
       <div className="cockpit-main" ref={cockpitMainRef}>
         {/* Tab bar */}
         <div className="cockpit-tabs" role="tablist">
+          {/* Current project — pinned so it never scrolls out of view or
+              disappears when the file tree is collapsed */}
+          {project && (
+            <div className="cockpit-project-chip">
+              <ProjectAvatar project={project} size={20} />
+            </div>
+          )}
+          {project && <div className="tab-divider" />}
           {/* Terminal tabs */}
           {termTabs.map(t => (
             <div key={t.id} className={`cockpit-tab${activeTab === `term-${t.id}` ? ' active' : ''}${t.aiState === 'waiting' ? ' ai-waiting' : t.aiState === 'active' ? ' ai-active' : ''}`}

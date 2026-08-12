@@ -519,16 +519,23 @@ body.mobile-device .projects-sidebar { display: none; }
   background: var(--color-success);
 }
 
-/* Collapsed: center the avatar, no gap for missing name */
+/* Collapsed: center the avatar, no gap for missing name. Padding (rather
+   than margin alone) leaves room around the avatar for the .active
+   background wash to actually show — without it, the avatar's own opaque
+   fill covers the item's full box and the selection wash is invisible
+   underneath it. Margin is trimmed by the same amount so the total offset
+   from the sidebar edge — and therefore the minimum usable rail width —
+   is unchanged. */
 .projects-sidebar.collapsed .sidebar-project-item {
   justify-content: center;
-  padding: 4px 0;
-  margin: 1px 6px;
+  padding: 4px 3px;
+  margin: 1px 4px;
 }
 
 /* Collapsed (icons only): the name is gone, so the selection has to read at a
-   glance. Give the active item a thicker, fully-opaque accent ring around the
-   avatar plus a stronger left bar. */
+   glance. The .active background wash (line ~460) now has room to frame the
+   avatar; reinforce it with a thicker, fully-opaque accent ring plus a
+   stronger left bar. */
 .projects-sidebar.collapsed .sidebar-project-item.active .project-avatar {
   box-shadow:
     0 0 0 2px var(--color-background),
@@ -536,9 +543,9 @@ body.mobile-device .projects-sidebar { display: none; }
     0 0 12px color-mix(in srgb, var(--color-accent) 60%, transparent);
 }
 .projects-sidebar.collapsed .sidebar-project-item.active::before {
-  width: 5px;
+  width: 4px;
   height: 72%;
-  left: 2px;
+  left: 1px;
 }
 
 /* ── Avatar ────────────────────────────────────── */
