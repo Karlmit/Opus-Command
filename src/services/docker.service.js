@@ -349,9 +349,16 @@ async function _createContainer(projectId, folderPath, template, volumes) {
   const localProjectPath = path.join(PROJECTS_DIR, folderPath);
   const extraBinds = buildExtraBinds(volumes);
 
-  const { getWorkspaceEnvVars, getWorkspaceAccessToken, getTerminalAgentToken } = require('./auth.service');
+  const { getWorkspaceEnvVars, getWorkspaceAccessToken, getTerminalAgentToken, isAzureOnlyEnvKey } = require('./auth.service');
+  const isAzure = getWorkspaceTemplate(templateId).azureClaude;
+  // workspace_env_vars is a single global admin setting shared by every
+  // project — only forward the Azure-only keys into containers whose own
+  // template is Azure-enabled, so switching one project's template never
+  // affects another project's Azure access (see auth.service.isAzureOnlyEnvKey).
   const userEnv = [
-    ...getWorkspaceEnvVars().map(({ key, value }) => `${key}=${value}`),
+    ...getWorkspaceEnvVars()
+      .filter(({ key }) => isAzure || !isAzureOnlyEnvKey(key))
+      .map(({ key, value }) => `${key}=${value}`),
     `OPUS_COMMAND_URL=${process.env.OPUS_WORKSPACE_COMMAND_URL || `http://opus-command:${PORT}`}`,
     `OPUS_WORKSPACE_TOKEN=${getWorkspaceAccessToken()}`,
     `TERMINAL_AGENT_TOKEN=${getTerminalAgentToken(projectId)}`,

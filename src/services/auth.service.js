@@ -113,6 +113,18 @@ function getWorkspaceEnvVars() {
   }
 }
 
+// workspace_env_vars is a single global admin setting (Settings → Claude →
+// Azure fields), shared by every project. It is NOT per-project. Callers that
+// inject these into a specific workspace must filter out the Azure-only keys
+// themselves when that project's template isn't Azure-enabled — otherwise a
+// non-Azure workspace ends up with the org's Azure API key sitting in its
+// environment, and clearing this setting from one project would strip Azure
+// access from every other Azure-templated project too.
+function isAzureOnlyEnvKey(key) {
+  const k = String(key || '').toUpperCase();
+  return k === 'CLAUDE_CODE_USE_FOUNDRY' || k.startsWith('ANTHROPIC_');
+}
+
 function getWorkspaceAccessToken() {
   let token = getSetting('workspace_access_token');
   if (!token) {
@@ -173,6 +185,7 @@ module.exports = {
   setSetting,
   deleteSetting,
   getWorkspaceEnvVars,
+  isAzureOnlyEnvKey,
   getDefaultWorkspaceInstructionTemplate,
   getWorkspaceInstructionTemplate,
   setWorkspaceInstructionTemplate,

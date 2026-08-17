@@ -398,10 +398,15 @@ function managedEnvLines(vars, { isAzure = false } = {}) {
 }
 
 function buildProvisionScript(project, { envVars } = {}) {
-  const { getWorkspaceEnvVars, getWorkspaceInstructionTemplate } = require('./auth.service');
-  const vars = Array.isArray(envVars) ? envVars : getWorkspaceEnvVars();
+  const { getWorkspaceEnvVars, getWorkspaceInstructionTemplate, isAzureOnlyEnvKey } = require('./auth.service');
+  const rawVars = Array.isArray(envVars) ? envVars : getWorkspaceEnvVars();
   const template = lxcTemplateFor(project);
   const isAzure = isAzureTemplate(template);
+  // workspace_env_vars is global (shared by every project) — only forward the
+  // Azure-only keys (ANTHROPIC_*, CLAUDE_CODE_USE_FOUNDRY) into workspaces
+  // whose own template is Azure-enabled, so switching one project's template
+  // never affects another project's Azure access.
+  const vars = isAzure ? rawVars : rawVars.filter(v => !isAzureOnlyEnvKey(v.key));
 
   const { getTerminalAgentToken } = require('./auth.service');
   const opusCliB64 = b64File(OPUS_CLI_PATH);
@@ -429,13 +434,17 @@ function buildProvisionScript(project, { envVars } = {}) {
   const envLines = managedEnvLines(vars, { isAzure });
   const envB64 = b64(envLines.join('\n') + '\n');
 
-  // settings.json: create if missing; for Azure-enabled templates also (re)write
-  // when an older settings file lacks the azure marketplace, matching the
-  // Docker backend.
+  // settings.json: create if missing. For Azure-enabled templates, also (re)write
+  // when an older settings file lacks the azure marketplace. For non-Azure
+  // templates, downgrade it back when an existing file still has the azure
+  // marketplace from a previous Azure template switch — matching the Docker
+  // backend, and keeping this in sync with the env-var scoping above so
+  // switching a project off Azure actually removes Azure from that workspace.
   const settingsStep = isAzure
     ? `[ -f /root/.claude/settings.json ] || printf '%s' '${settingsB64}' | base64 -d > /root/.claude/settings.json
 grep -q "azure-skills" /root/.claude/settings.json 2>/dev/null || printf '%s' '${settingsB64}' | base64 -d > /root/.claude/settings.json`
-    : `[ -f /root/.claude/settings.json ] || printf '%s' '${settingsB64}' | base64 -d > /root/.claude/settings.json`;
+    : `[ -f /root/.claude/settings.json ] || printf '%s' '${settingsB64}' | base64 -d > /root/.claude/settings.json
+grep -q "azure-skills" /root/.claude/settings.json 2>/dev/null && printf '%s' '${settingsB64}' | base64 -d > /root/.claude/settings.json || true`;
 
   return (
 `export DEBIAN_FRONTEND=noninteractive
@@ -576,13 +585,15 @@ echo "[opus] provisioning complete."
 }
 
 function buildAgentStatusIntegrationScript(project, { envVars } = {}) {
-  const { getWorkspaceEnvVars, getTerminalAgentToken } = require('./auth.service');
-  const vars = Array.isArray(envVars) ? envVars : getWorkspaceEnvVars();
+  const { getWorkspaceEnvVars, getTerminalAgentToken, isAzureOnlyEnvKey } = require('./auth.service');
+  const rawVars = Array.isArray(envVars) ? envVars : getWorkspaceEnvVars();
   const agentHookB64 = b64File(OPUS_AGENT_HOOK_PATH);
   const configureHooksB64 = b64File(CONFIGURE_AGENT_HOOKS_PATH);
   const agentB64 = b64File(TERMINAL_AGENT_PATH);
   const agentTokenB64 = b64(getTerminalAgentToken(project.id));
   const isAzure = isAzureTemplate(lxcTemplateFor(project));
+  // Same global-setting scoping as buildProvisionScript — see comment there.
+  const vars = isAzure ? rawVars : rawVars.filter(v => !isAzureOnlyEnvKey(v.key));
 
   // Same managed env as the full-provision path (see managedEnvLines) so a status
   // refresh never rewrites /etc/profile.d with a different set of exports.

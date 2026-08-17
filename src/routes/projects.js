@@ -10,24 +10,9 @@ const docker = require('../services/docker.service');
 const workspace = require('../services/workspace.service');
 const lxcConfig = require('../services/unraid-lxc.config');
 const terminal = require('../services/terminal.service');
-const { getSetting, setSetting } = require('../services/auth.service');
 const { ensurePlanningArea } = require('../services/project-files.service');
 
 const WORKSPACE_BACKENDS = new Set(['docker', 'unraid_lxc']);
-
-const CLAUDE_AZURE_ENV_KEYS = new Set([
-  'CLAUDE_CODE_USE_FOUNDRY',
-]);
-
-function clearClaudeAzureEnvSettings() {
-  let existing = [];
-  try { existing = JSON.parse(getSetting('workspace_env_vars') || '[]'); } catch {}
-  const filtered = existing.filter(v => {
-    const key = String(v.key || '').toUpperCase();
-    return !CLAUDE_AZURE_ENV_KEYS.has(key) && !key.startsWith('ANTHROPIC_');
-  });
-  setSetting('workspace_env_vars', JSON.stringify(filtered));
-}
 
 // Container paths the workspace owns — user volumes may not target these.
 const RESERVED_CONTAINER_PATHS = new Set(['/workspace', '/root', '/']);
@@ -356,7 +341,11 @@ router.patch('/:id', requireAuth, (req, res) => {
       const templateId = docker.normalizeTemplate(template);
       if (templateId !== template) return res.status(400).json({ error: 'Invalid workspace template.' });
       updates.template = templateId;
-      if (!docker.WORKSPACE_TEMPLATES[templateId].azureClaude) clearClaudeAzureEnvSettings();
+      // Claude Azure settings (Settings → Claude) are a single global config
+      // shared by every project — switching this project's template must not
+      // touch it. Whether Azure env vars actually reach a workspace is decided
+      // per-project at provision time from the template's azureClaude flag
+      // (see docker.service._createContainer / unraid-lxc.service.buildProvisionScript).
     }
     if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'Nothing to update.' });
     db.update(projects).set(updates).where(eq(projects.id, projectId)).run();
