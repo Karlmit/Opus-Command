@@ -1032,9 +1032,11 @@ function WorkspacePanel({ projectId, project, csrfToken, addToast, onDelete, onP
         return;
       }
       onProjectUpdated?.(d.project);
-      addToast(template === 'private'
-        ? 'Template set to Private. Claude Azure settings were cleared; Rebuild to apply.'
-        : 'Template set to Work. Rebuild to apply.');
+      const chosen = templates.find(t => t.id === template);
+      const label = chosen?.label || template;
+      addToast(chosen && !chosen.azureClaude
+        ? `Template set to ${label}. Claude Azure settings were cleared; Rebuild to apply.`
+        : `Template set to ${label}. Rebuild to apply.`);
     } catch (e) {
       addToast(e.message || 'Template update failed.', 'error');
     } finally {
@@ -1110,7 +1112,8 @@ function WorkspacePanel({ projectId, project, csrfToken, addToast, onDelete, onP
           disabled={templateBusy}
         >
           {(templates.length ? templates : [
-            { id: 'claude-code', label: 'Work' },
+            { id: 'claude-code', label: 'Work-AzureAI' },
+            { id: 'work-login', label: 'Work-Login' },
             { id: 'private', label: 'Private' },
           ]).map(template => (
             <option key={template.id} value={template.id}>{template.label}</option>
@@ -1119,7 +1122,7 @@ function WorkspacePanel({ projectId, project, csrfToken, addToast, onDelete, onP
         <div className="panel-hint">
           {isLxc
             ? 'Update applies the selected template inside the LXC (installs/updates tools). It does not recreate the container.'
-            : 'Rebuild applies the selected template. Private removes Claude Azure AI Foundry settings.'}
+            : 'Rebuild applies the selected template. Work-Login and Private remove Claude Azure AI Foundry settings (manual sign-in).'}
         </div>
       </div>
 

@@ -54,8 +54,17 @@ function projectPathFor(project, cfg = lxcConfig.getConfig()) {
 }
 
 function lxcTemplateFor(project) {
-  // Reuse the existing template ids; the helper maps claude-code→work provisioning.
+  // Reuse the existing template ids; the helper maps claude-code→Azure provisioning.
   return project.lxcTemplate || project.template || 'claude-code';
+}
+
+// Single source of truth for which templates get Azure AI Foundry provisioning —
+// shared with the Docker backend's WORKSPACE_TEMPLATES so a new non-Azure
+// template (e.g. work-login) is never mistakenly treated as Azure here just
+// because it isn't literally 'private'.
+function isAzureTemplate(templateId) {
+  const { WORKSPACE_TEMPLATES } = require('./docker.service');
+  return !!WORKSPACE_TEMPLATES[templateId]?.azureClaude;
 }
 
 // ── helper invocation ─────────────────────────────────────────────────────────
@@ -392,7 +401,7 @@ function buildProvisionScript(project, { envVars } = {}) {
   const { getWorkspaceEnvVars, getWorkspaceInstructionTemplate } = require('./auth.service');
   const vars = Array.isArray(envVars) ? envVars : getWorkspaceEnvVars();
   const template = lxcTemplateFor(project);
-  const isAzure = template !== 'private';
+  const isAzure = isAzureTemplate(template);
 
   const { getTerminalAgentToken } = require('./auth.service');
   const opusCliB64 = b64File(OPUS_CLI_PATH);
@@ -420,8 +429,9 @@ function buildProvisionScript(project, { envVars } = {}) {
   const envLines = managedEnvLines(vars, { isAzure });
   const envB64 = b64(envLines.join('\n') + '\n');
 
-  // settings.json: create if missing; for the work template also (re)write when an
-  // older settings file lacks the azure marketplace, matching the Docker backend.
+  // settings.json: create if missing; for Azure-enabled templates also (re)write
+  // when an older settings file lacks the azure marketplace, matching the
+  // Docker backend.
   const settingsStep = isAzure
     ? `[ -f /root/.claude/settings.json ] || printf '%s' '${settingsB64}' | base64 -d > /root/.claude/settings.json
 grep -q "azure-skills" /root/.claude/settings.json 2>/dev/null || printf '%s' '${settingsB64}' | base64 -d > /root/.claude/settings.json`
@@ -491,7 +501,7 @@ for f in /root/.claude/CLAUDE.md /workspace/CLAUDE.md /workspace/AGENTS.md; do
   grep -q "Opus Command's Git menu" "$f" 2>/dev/null || printf '%s' '${gitGuidanceB64}' | base64 -d >> "$f"
 done
 
-# Claude settings (model + Azure marketplace for the work template)
+# Claude settings (model + Azure marketplace for Azure-enabled templates)
 ${settingsStep}
 
 # managed environment / auth (foundry, GH_TOKEN, PATH, IS_SANDBOX) for all shells
@@ -572,7 +582,7 @@ function buildAgentStatusIntegrationScript(project, { envVars } = {}) {
   const configureHooksB64 = b64File(CONFIGURE_AGENT_HOOKS_PATH);
   const agentB64 = b64File(TERMINAL_AGENT_PATH);
   const agentTokenB64 = b64(getTerminalAgentToken(project.id));
-  const isAzure = lxcTemplateFor(project) !== 'private';
+  const isAzure = isAzureTemplate(lxcTemplateFor(project));
 
   // Same managed env as the full-provision path (see managedEnvLines) so a status
   // refresh never rewrites /etc/profile.d with a different set of exports.

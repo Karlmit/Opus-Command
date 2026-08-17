@@ -94,10 +94,11 @@ async function extraBindsMatch(projectId, volumes) {
 // GET /api/projects/templates — list workspace templates
 router.get('/templates', requireAuth, (req, res) => {
   res.json({
-    templates: Object.values(docker.WORKSPACE_TEMPLATES).map(({ id, label, description }) => ({
+    templates: Object.values(docker.WORKSPACE_TEMPLATES).map(({ id, label, description, azureClaude }) => ({
       id,
       label,
       description,
+      azureClaude,
     })),
   });
 });
@@ -355,7 +356,7 @@ router.patch('/:id', requireAuth, (req, res) => {
       const templateId = docker.normalizeTemplate(template);
       if (templateId !== template) return res.status(400).json({ error: 'Invalid workspace template.' });
       updates.template = templateId;
-      if (templateId === 'private') clearClaudeAzureEnvSettings();
+      if (!docker.WORKSPACE_TEMPLATES[templateId].azureClaude) clearClaudeAzureEnvSettings();
     }
     if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'Nothing to update.' });
     db.update(projects).set(updates).where(eq(projects.id, projectId)).run();

@@ -232,13 +232,14 @@ function NewProjectForm({ csrfToken, onClose, onCreated }) {
         <select className="input" value={form.template}
           onChange={e => setForm(f => ({ ...f, template: e.target.value }))}>
           {(templates.length ? templates : [
-            { id: 'claude-code', label: 'Work' },
+            { id: 'claude-code', label: 'Work-AzureAI' },
+            { id: 'work-login', label: 'Work-Login' },
             { id: 'private', label: 'Private' },
           ]).map(t => (
             <option key={t.id} value={t.id}>{t.label}</option>
           ))}
         </select>
-        <p className="form-hint">Private omits Claude Azure AI Foundry settings.</p>
+        <p className="form-hint">Work-Login and Private omit Claude Azure AI Foundry settings and use manual sign-in.</p>
       </div>
 
       {error && <p className="error-message">{error}</p>}

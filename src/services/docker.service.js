@@ -44,11 +44,19 @@ for review in the Opus Command Git menu.
 const WORKSPACE_TEMPLATES = {
   'claude-code': {
     id: 'claude-code',
-    label: 'Work',
+    label: 'Work-AzureAI',
     description: 'Claude Code with Azure AI Foundry settings.',
     image: 'ghcr.io/karlmit/opus-command-workspace-claude-code:latest',
     fallbackPackages: ['@anthropic-ai/claude-code'],
     azureClaude: true,
+  },
+  'work-login': {
+    id: 'work-login',
+    label: 'Work-Login',
+    description: 'Claude Code and Codex CLI with manual sign-in — no Azure AI Foundry settings.',
+    image: 'ghcr.io/karlmit/opus-command-workspace-private:latest',
+    fallbackPackages: ['@anthropic-ai/claude-code', '@openai/codex'],
+    azureClaude: false,
   },
   private: {
     id: 'private',
@@ -254,7 +262,7 @@ function buildWorkspaceCmd(image, template) {
 
   const fallbackInit = image === FALLBACK_IMAGE
     ? 'command -v claude >/dev/null 2>&1 || ' + fallbackInstall + '; ' +
-      (workspaceTemplate.id === 'private' ? 'command -v codex >/dev/null 2>&1 || npm install -g @openai/codex --quiet 2>&1 | tail -1 || true; ' : '') +
+      (workspaceTemplate.fallbackPackages.includes('@openai/codex') ? 'command -v codex >/dev/null 2>&1 || npm install -g @openai/codex --quiet 2>&1 | tail -1 || true; ' : '') +
       'grep -q "Opus Command" /etc/bash.bashrc 2>/dev/null || ' +
       'printf \'\\nexport PATH="$HOME/bin:$HOME/.npm-global/bin:$HOME/.local/bin:$PATH"\\n' +
       'export NPM_CONFIG_PREFIX="$HOME/.npm-global"\\n' +

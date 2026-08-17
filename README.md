@@ -146,7 +146,7 @@ Open **http://localhost:3000**. First startup shows a setup screen to create you
 
 #### Workspace Containers
 - Isolated Docker containers per project, provisioned automatically on creation
-- Workspace templates: Work (Claude Code + Azure AI Foundry) and Private (Claude Code + Codex)
+- Workspace templates: Work-AzureAI (Claude Code + Azure AI Foundry), Work-Login (Claude Code + Codex, manual sign-in), and Private (Claude Code + Codex, manual sign-in)
 - Full lifecycle controls: Start, Stop, Restart, Update, Recreate, Rebuild, Reset Environment
 - Each action has a confirmation modal describing exactly what will and won't be deleted
 - Container logs viewer (live tail)
@@ -364,12 +364,13 @@ Workspace containers are isolated Docker environments per project:
 
 | Template | Image | Pre-installed |
 |----------|-------|--------------|
-| Work | `ghcr.io/karlmit/opus-command-workspace-claude-code:latest` | Node.js, npm, Git, GitHub CLI, Claude Code, Opus CLI, Azure AI Foundry Claude settings |
-| Private | `ghcr.io/karlmit/opus-command-workspace-private:latest` | Node.js, npm, Git, GitHub CLI, Claude Code, Codex CLI, Opus CLI |
+| Work-AzureAI | `ghcr.io/karlmit/opus-command-workspace-claude-code:latest` | Node.js, npm, Git, GitHub CLI, Claude Code, Opus CLI, Azure AI Foundry Claude settings |
+| Work-Login | `ghcr.io/karlmit/opus-command-workspace-private:latest` | Node.js, npm, Git, GitHub CLI, Claude Code, Codex CLI, Opus CLI (manual `claude login`, no Azure AI Foundry) |
+| Private | `ghcr.io/karlmit/opus-command-workspace-private:latest` | Node.js, npm, Git, GitHub CLI, Claude Code, Codex CLI, Opus CLI (manual `claude login`, no Azure AI Foundry) |
 
-Template changes are made from the project Workspace panel and require Rebuild to apply. Switching a project to Private clears Claude API environment settings from Opus Command and removes Azure AI Foundry startup exports on the next rebuild.
+Template changes are made from the project Workspace panel and require Rebuild to apply. Switching a project to Work-Login or Private clears Claude API environment settings from Opus Command and removes Azure AI Foundry startup exports on the next rebuild.
 
-The same Work / Private templates are reused by the Unraid LXC backend, where they map to provisioning scripts run inside the LXC by **Update Workspace** (installing Node.js, Git, Claude Code, and — for Private — Codex).
+The same templates are reused by the Unraid LXC backend, where they map to provisioning scripts run inside the LXC by **Update Workspace** (installing Node.js, Git, Claude Code, and — for Work-Login/Private — Codex). Only Work-AzureAI gets the Azure AI Foundry env exports.
 
 ## Unraid LXC Workspaces (optional backend)
 
