@@ -54,8 +54,12 @@ function projectPathFor(project, cfg = lxcConfig.getConfig()) {
 }
 
 function lxcTemplateFor(project) {
-  // Reuse the existing template ids; the helper maps claude-code→Azure provisioning.
-  return project.lxcTemplate || project.template || 'claude-code';
+  // `template` is the field the whole app treats as canonical (shown in the
+  // UI, kept current by the template PATCH route). `lxcTemplate` is only ever
+  // written once, at project creation, as a mirror of `template` — nothing
+  // else updates it — so prefer `template` first and fall back to the mirror
+  // only for old rows that predate `template` being populated.
+  return project.template || project.lxcTemplate || 'claude-code';
 }
 
 // Single source of truth for which templates get Azure AI Foundry provisioning —

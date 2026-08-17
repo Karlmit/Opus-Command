@@ -341,6 +341,12 @@ router.patch('/:id', requireAuth, (req, res) => {
       const templateId = docker.normalizeTemplate(template);
       if (templateId !== template) return res.status(400).json({ error: 'Invalid workspace template.' });
       updates.template = templateId;
+      // lxcTemplate is a separate column, set once at project creation and
+      // otherwise never synced — unraid-lxc.service.lxcTemplateFor() prefers
+      // it over `template`, so without this an LXC project's template PATCH
+      // updates the dropdown/DB but every provisioning call keeps reading the
+      // original template forever (Update Workspace re-applies the old one).
+      updates.lxcTemplate = templateId;
       // Claude Azure settings (Settings → Claude) are a single global config
       // shared by every project — switching this project's template must not
       // touch it. Whether Azure env vars actually reach a workspace is decided
