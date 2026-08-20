@@ -13,6 +13,7 @@ import { getSocket } from '../lib/socket';
 import { TERMINAL_ANSI } from '../lib/themes';
 import MobileTerminalView, { MobileTermTabs } from '../components/MobileTerminalView';
 import SyntaxHighlightedEditor from '../components/SyntaxHighlightedEditor';
+import MarkdownPreview from '../components/MarkdownPreview';
 import { FilePlainIcon, FileDocIcon, FileImageIcon, FolderIcon, FolderOpenIcon } from '../components/FileTreeIcons';
 import GitPage from './Git';
 import '@xterm/xterm/css/xterm.css';
@@ -1200,6 +1201,35 @@ function collectPlanningMarkdownFiles(nodes, files = []) {
   return files;
 }
 
+function isMarkdownFile(name = '') {
+  return /\.(md|mdx)$/i.test(name);
+}
+
+// Recursively collects every file path (not directories) present in a file tree,
+// used to reconcile open editor tabs against the live tree (e.g. a file deleted
+// or renamed outside the UI, such as from a terminal command).
+function collectFilePaths(nodes, set = new Set()) {
+  for (const node of nodes || []) {
+    if (node.type === 'dir') collectFilePaths(node.children || [], set);
+    else set.add(node.path);
+  }
+  return set;
+}
+
+// Renames the keys of a path-keyed state object (fileContent, dirtyFiles, ...)
+// that fall under oldPath (itself or a descendant) to their newPath equivalent.
+function remapPathKeyedState(obj, oldPath, newPath) {
+  const prefix = `${oldPath}/`;
+  let changed = false;
+  const next = {};
+  for (const [key, val] of Object.entries(obj)) {
+    if (key === oldPath) { next[newPath] = val; changed = true; }
+    else if (key.startsWith(prefix)) { next[`${newPath}/${key.slice(prefix.length)}`] = val; changed = true; }
+    else next[key] = val;
+  }
+  return changed ? next : obj;
+}
+
 function normalizeTaskSections(savedSections) {
   const sections = Array.isArray(savedSections) ? savedSections : [];
   const cleanSections = sections
@@ -1540,6 +1570,10 @@ export default function ProjectCockpit() {
   const [fileTabs, setFileTabs]   = useState([]);
   const [fileContent, setFileContent] = useState({});
   const [dirtyFiles, setDirty]    = useState({});
+  // Per-file view mode for the text editor: 'text' (raw source) or 'markdown'
+  // (rendered preview). Only meaningful for .md/.mdx files; defaults to
+  // 'markdown' for those and is toggleable from the editor toolbar.
+  const [fileEditorMode, setFileEditorMode] = useState({});
   const [activeTab, setActiveTab] = useState(null); // 'term-{id}' | 'file-{path}' | 'settings' | 'git'
   const [lastActiveTermId, setLastActiveTermId] = useState(null);
   const [tasks, setTasks] = useState([]);
@@ -1788,6 +1822,7 @@ export default function ProjectCockpit() {
     setFileTabs([]);
     setFileContent({});
     setDirty({});
+    setFileEditorMode({});
     setPlanningTree([]);
     setTaskDraft('');
     setTaskSectionDraft('');
@@ -1889,6 +1924,23 @@ export default function ProjectCockpit() {
   }, [projectId]);
 
   useEffect(() => { if (!reconnecting) return; const t = setInterval(() => setReconSecs(n=>n+1), 1000); return () => clearInterval(t); }, [reconnecting]);
+
+  // Reconcile open file tabs against the live tree on every tree refresh. A file
+  // that disappears — deleted (or renamed) from a terminal, another client, etc. —
+  // gets its tab closed automatically. In-app renames are relinked directly in
+  // submitRenameDialog before this ever runs; this is the fallback for changes
+  // this UI didn't make itself. Reads fileTabs via a ref (rather than depending
+  // on it) so relinking a tab can't race this effect against a stale tree
+  // snapshot fetched just before the rename landed server-side.
+  const fileTabsRef = useRef(fileTabs);
+  useEffect(() => { fileTabsRef.current = fileTabs; }, [fileTabs]);
+
+  useEffect(() => {
+    if (!fileTabsRef.current.length) return;
+    const validPaths = collectFilePaths(tree, collectFilePaths(planningTree));
+    const stale = fileTabsRef.current.filter(t => !validPaths.has(t.path));
+    stale.forEach(t => closeFile(t.path));
+  }, [tree, planningTree]);
 
   async function loadProject() { try { const r = await fetch(`/api/projects/${projectId}`); if (r.ok) setProject(await r.json()); } catch (_) {} }
   async function loadTree() {
@@ -2563,12 +2615,35 @@ export default function ProjectCockpit() {
       headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
       body: JSON.stringify({ oldPath: node.path, newPath }),
     });
-    if ((await r.json()).success) loadTree();
+    if ((await r.json()).success) { relinkFileTabs(node.path, newPath); loadTree(); }
     else addToast('Rename failed.', 'error');
+  }
+
+  // Points any open tab for oldPath (or a descendant, for a renamed folder) at
+  // newPath instead of closing it, so an in-app rename doesn't orphan the tab.
+  function relinkFileTabs(oldPath, newPath) {
+    const prefix = `${oldPath}/`;
+    const remap = p => (p === oldPath ? newPath : p.startsWith(prefix) ? `${newPath}${p.slice(oldPath.length)}` : p);
+    let nextActivePath = null;
+
+    setFileTabs(prev => prev.map(t => {
+      if (t.path !== oldPath && !t.path.startsWith(prefix)) return t;
+      const nextPath = remap(t.path);
+      if (activeTab === `file-${t.path}`) nextActivePath = nextPath;
+      return { ...t, path: nextPath, name: nextPath.split('/').pop() };
+    }));
+    setFileContent(prev => remapPathKeyedState(prev, oldPath, newPath));
+    setDirty(prev => remapPathKeyedState(prev, oldPath, newPath));
+    setFileEditorMode(prev => remapPathKeyedState(prev, oldPath, newPath));
+    if (nextActivePath) { setActiveTab(`file-${nextActivePath}`); activeRef.current = `file-${nextActivePath}`; }
   }
 
   function closeFile(path) {
     setFileTabs(p => p.filter(t => t.path !== path));
+    setFileContent(p => { if (!(path in p)) return p; const { [path]: _, ...rest } = p; return rest; });
+    setDirty(p => { if (!(path in p)) return p; const { [path]: _, ...rest } = p; return rest; });
+    setFileEditorMode(p => { if (!(path in p)) return p; const { [path]: _, ...rest } = p; return rest; });
+    if (autosaveTimers.current[path]) { clearTimeout(autosaveTimers.current[path]); delete autosaveTimers.current[path]; }
     if (activeTab === `file-${path}`) { const first = termTabs[0]; if (first) activateTerm(first.id); else setActiveTab(null); }
   }
 
@@ -2616,23 +2691,45 @@ export default function ProjectCockpit() {
     if (!activeFileTab) return null;
 
     if (activeFileTab.type === 'text') {
+      const isMd = isMarkdownFile(activeFileTab.name);
+      const mode = isMd ? (fileEditorMode[activeFileTab.path] || 'markdown') : 'text';
       return (
         <div className="file-editor" onKeyDown={e => { if ((e.ctrlKey||e.metaKey) && e.key==='s') { e.preventDefault(); saveFile(activeFileTab.path); } }}>
           <div className="file-editor-toolbar">
             <button className="btn btn-ghost" onClick={() => { const t = termTabs.find(tab => tab.id === activeTermId) || termTabs[0]; if (t) activateTerm(t.id); else setActiveTab(null); if (isMobile) setMobileTab('files'); }}>← Files</button>
             <span className="file-editor-name">{activeFileTab.name}</span>
+            {isMd && (
+              <div className="md-mode-toggle" role="tablist" aria-label="Editor view">
+                <button
+                  role="tab"
+                  aria-selected={mode === 'text'}
+                  className={`md-mode-btn${mode === 'text' ? ' active' : ''}`}
+                  onClick={() => setFileEditorMode(p => ({ ...p, [activeFileTab.path]: 'text' }))}
+                >Text</button>
+                <button
+                  role="tab"
+                  aria-selected={mode === 'markdown'}
+                  className={`md-mode-btn${mode === 'markdown' ? ' active' : ''}`}
+                  onClick={() => setFileEditorMode(p => ({ ...p, [activeFileTab.path]: 'markdown' }))}
+                >Markdown</button>
+              </div>
+            )}
             <button className="btn btn-primary" onClick={() => saveFile(activeFileTab.path)}>Save</button>
           </div>
-          <SyntaxHighlightedEditor
-            fileName={activeFileTab.name}
-            spellCheck={false}
-            value={fileContent[activeFileTab.path] || ''}
-            onChange={e => {
-              const nextContent = e.target.value;
-              setFileContent(p=>({...p,[activeFileTab.path]:nextContent}));
-              setDirty(p=>({...p,[activeFileTab.path]:true}));
-              scheduleAutosave(activeFileTab.path, nextContent);
-            }} />
+          {mode === 'markdown' ? (
+            <MarkdownPreview value={fileContent[activeFileTab.path] || ''} />
+          ) : (
+            <SyntaxHighlightedEditor
+              fileName={activeFileTab.name}
+              spellCheck={false}
+              value={fileContent[activeFileTab.path] || ''}
+              onChange={e => {
+                const nextContent = e.target.value;
+                setFileContent(p=>({...p,[activeFileTab.path]:nextContent}));
+                setDirty(p=>({...p,[activeFileTab.path]:true}));
+                scheduleAutosave(activeFileTab.path, nextContent);
+              }} />
+          )}
         </div>
       );
     }
