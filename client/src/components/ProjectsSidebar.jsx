@@ -21,7 +21,9 @@ const MAX_WIDTH       = 360;
 const GROUP_COLLAPSE_KEY = 'sidebar-collapsed-project-groups';
 const GROUP_ORDER_KEY = 'sidebar-project-group-order';
 const GROUP_APPEARANCE_KEY = 'sidebar-project-group-appearance';
-const FAVORITE_PROJECTS_KEY = 'sidebar-favorite-projects';
+// Favorites used to live here, per browser. They are now stored on the project
+// row (account-wide); this key is only read once to migrate an old browser.
+const LEGACY_FAVORITE_PROJECTS_KEY = 'sidebar-favorite-projects';
 
 /* ── Avatar helpers ─────────────────────────────── */
 const COLORS = ['#6366f1','#8b5cf6','#ec4899','#ef4444','#f59e0b','#22c55e','#06b6d4','#3b82f6','#64748b','#92400e'];
@@ -657,10 +659,6 @@ export default function ProjectsSidebar() {
     try { return JSON.parse(localStorage.getItem(GROUP_APPEARANCE_KEY) || '{}'); }
     catch { return {}; }
   });
-  const [favoriteProjectIds, setFavoriteProjectIds] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(FAVORITE_PROJECTS_KEY) || '[]').map(String); }
-    catch { return []; }
-  });
 
   // Drag-to-reorder state
   const [dragId, setDragId]   = useState(null);
@@ -774,6 +772,34 @@ export default function ProjectsSidebar() {
     return () => sock.off('project:status', onProjectStatus);
   }, []);
 
+  // One-time: lift favorites that were saved in this browser onto the account.
+  useEffect(() => {
+    if (!localStorage.getItem(LEGACY_FAVORITE_PROJECTS_KEY)) return;
+    let legacyIds = [];
+    try {
+      legacyIds = JSON.parse(localStorage.getItem(LEGACY_FAVORITE_PROJECTS_KEY) || '[]').map(String);
+    } catch (_) { legacyIds = []; }
+    if (!legacyIds.length) {
+      localStorage.removeItem(LEGACY_FAVORITE_PROJECTS_KEY);
+      return;
+    }
+    if (!csrfToken) return;
+
+    (async () => {
+      for (const id of legacyIds) {
+        try {
+          await fetch(`/api/projects/${id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+            body: JSON.stringify({ favorite: true }),
+          });
+        } catch (_) { /* a since-deleted project just 404s — skip it */ }
+      }
+      localStorage.removeItem(LEGACY_FAVORITE_PROJECTS_KEY);
+      load();
+    })();
+  }, [csrfToken]);
+
   async function load() {
     // Don't clobber the optimistic order mid-drag.
     if (draggingRef.current) return;
@@ -872,15 +898,22 @@ export default function ProjectsSidebar() {
     setAppearanceTarget(null);
   }
 
-  function toggleFavoriteProject(project) {
-    const projectId = String(project.id);
-    setFavoriteProjectIds(prev => {
-      const next = prev.includes(projectId)
-        ? prev.filter(id => id !== projectId)
-        : [...prev, projectId];
-      localStorage.setItem(FAVORITE_PROJECTS_KEY, JSON.stringify(next));
-      return next;
-    });
+  async function toggleFavoriteProject(project) {
+    const favorite = !project.favorite;
+    // Optimistic — the sidebar re-sorts immediately, the PATCH makes it stick.
+    setProjects(prev => prev.map(p => (p.id === project.id ? { ...p, favorite } : p)));
+    try {
+      const r = await fetch(`/api/projects/${project.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ favorite }),
+      });
+      const d = await r.json();
+      if (!r.ok || !d.success) throw new Error(d.error || 'Could not update favorite.');
+    } catch (e) {
+      addToast(e.message || 'Could not update favorite.', 'error');
+      await load();
+    }
   }
 
   function handleCreated(p) { setProjects(prev => [...prev, p]); navigate(`/project/${p.id}`); }
@@ -951,8 +984,7 @@ export default function ProjectsSidebar() {
   }
 
   const [hoveredId, setHoveredId] = useState(null);
-  const favoriteIdSet = new Set(favoriteProjectIds);
-  const isFavoriteProject = project => favoriteIdSet.has(String(project.id));
+  const isFavoriteProject = project => !!project.favorite;
   // Pinned to the top, in this order: running favorites, other running
   // workspaces, then favorites that are currently off.
   const runningProjects = [
@@ -1226,7 +1258,7 @@ export default function ProjectsSidebar() {
           project={contextMenu.project}
           position={{ x: contextMenu.x, y: contextMenu.y }}
           lifecycleBusy={lifecycleBusy}
-          isFavorite={favoriteIdSet.has(String(contextMenu.project.id))}
+          isFavorite={!!contextMenu.project.favorite}
           onClose={() => setContext(null)}
           onOpenAvatar={() => setAvatarTarget({ project: contextMenu.project })}
           onOpenGroup={project => setGroupTarget(project)}

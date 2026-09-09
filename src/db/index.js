@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS projects (
   status TEXT DEFAULT 'stopped',
   avatar TEXT DEFAULT '',
   group_name TEXT DEFAULT '',
+  favorite INTEGER DEFAULT 0,
   sort_order INTEGER DEFAULT 0,
   workspace_backend TEXT DEFAULT 'docker',
   lxc_container_name TEXT,
@@ -175,6 +176,8 @@ function initDB() {
     sqlite.exec("UPDATE projects SET sort_order = id WHERE sort_order = 0");
   } catch (_) {}
   try { sqlite.exec("ALTER TABLE projects ADD COLUMN volumes TEXT DEFAULT '[]'"); } catch (_) {}
+  // Sidebar favorites moved from each browser's localStorage to the account.
+  try { sqlite.exec("ALTER TABLE projects ADD COLUMN favorite INTEGER DEFAULT 0"); } catch (_) {}
   // Unraid LXC workspace backend support — additive columns, existing Docker
   // projects keep workspace_backend = 'docker'.
   try { sqlite.exec("ALTER TABLE projects ADD COLUMN workspace_backend TEXT DEFAULT 'docker'"); } catch (_) {}

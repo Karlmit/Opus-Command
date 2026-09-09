@@ -26,6 +26,9 @@ const projects = sqliteTable('projects', {
   status: text('status').default('stopped'),
   avatar: text('avatar').default(''),
   groupName: text('group_name').default(''),
+  // Sidebar favorite (0/1). Account-level, not per-browser: the sidebar pins
+  // favorites above the folder list on every device.
+  favorite: integer('favorite').default(0),
   sortOrder: integer('sort_order').default(0),
   // Workspace backend — 'docker' (default) or 'unraid_lxc'. Docker workspaces
   // remain the portable default; unraid_lxc is the optional SSH-managed backend.
