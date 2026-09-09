@@ -135,6 +135,18 @@ body.mobile-device .projects-sidebar { display: none; }
   white-space: nowrap;
 }
 
+/* Running workspaces get a live dot on their section label. */
+.sidebar-running .sidebar-favorites-label span:first-child::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--color-success);
+  vertical-align: 1px;
+}
+
 .projects-sidebar.collapsed .sidebar-favorites {
   align-items: center;
   padding: 2px 0 4px;

@@ -375,7 +375,7 @@ function ProjectContextMenu({ project, position, lifecycleBusy, isFavorite, onCl
   }
 
   const isBusy = lifecycleBusy === project.id;
-  const isRunning = project.status === 'running' || project.status === 'starting';
+  const isRunning = isWorkspaceRunning(project);
 
   return createPortal(
     <div ref={ref} className="project-context-menu" style={{ left: pos.left, top: pos.top }} role="menu">
@@ -408,6 +408,11 @@ function ProjectContextMenu({ project, position, lifecycleBusy, isFavorite, onCl
 
 function shouldShowWorkspaceStatus(status) {
   return !['stopped', 'not_installed', 'offline'].includes(String(status || '').toLowerCase());
+}
+
+// A workspace counts as "on" while it is up or on its way up.
+function isWorkspaceRunning(project) {
+  return ['running', 'starting', 'restarting'].includes(String(project?.status || '').toLowerCase());
 }
 
 function buildProjectGroups(projects) {
@@ -828,7 +833,7 @@ export default function ProjectsSidebar() {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
 
-    const currentNames = groups.map(group => group.name);
+    const currentNames = allGroups.map(group => group.name);
     const orderedNames = [
       ...groupOrder.filter(name => currentNames.includes(name)),
       ...currentNames.filter(name => !groupOrder.includes(name)),
@@ -947,10 +952,30 @@ export default function ProjectsSidebar() {
 
   const [hoveredId, setHoveredId] = useState(null);
   const favoriteIdSet = new Set(favoriteProjectIds);
-  const favoriteProjects = projects.filter(project => favoriteIdSet.has(String(project.id)));
-  const { groups: rawGroups, ungrouped } = buildProjectGroups(projects);
-  const groups = orderProjectGroups(rawGroups, groupOrder);
-  const groupPickerGroups = groups;
+  const isFavoriteProject = project => favoriteIdSet.has(String(project.id));
+  // Pinned to the top, in this order: running favorites, other running
+  // workspaces, then favorites that are currently off.
+  const runningProjects = [
+    ...projects.filter(project => isWorkspaceRunning(project) && isFavoriteProject(project)),
+    ...projects.filter(project => isWorkspaceRunning(project) && !isFavoriteProject(project)),
+  ];
+  const offlineFavoriteProjects = projects.filter(
+    project => isFavoriteProject(project) && !isWorkspaceRunning(project)
+  );
+  // Pinned projects live only at the top — they are not repeated in their
+  // folder or in the ungrouped list below.
+  const pinnedIdSet = new Set(
+    [...runningProjects, ...offlineFavoriteProjects].map(project => String(project.id))
+  );
+  const isPinnedProject = project => pinnedIdSet.has(String(project.id));
+  const { groups: rawGroups, ungrouped: rawUngrouped } = buildProjectGroups(projects);
+  const allGroups = orderProjectGroups(rawGroups, groupOrder);
+  const groups = allGroups
+    .map(group => ({ ...group, projects: group.projects.filter(project => !isPinnedProject(project)) }))
+    .filter(group => group.projects.length > 0);
+  const ungrouped = rawUngrouped.filter(project => !isPinnedProject(project));
+  // The picker must offer every folder, including ones whose projects are all pinned.
+  const groupPickerGroups = allGroups;
 
   function renderProject(project) {
     const isActive = String(project.id) === String(activeId);
@@ -1095,15 +1120,26 @@ export default function ProjectsSidebar() {
 
       <div className="sidebar-projects">
         {projects.length === 0 && !isCollapsed && <p className="sidebar-empty">No projects yet</p>}
-        {favoriteProjects.length > 0 && (
+        {runningProjects.length > 0 && (
+          <div className="sidebar-favorites sidebar-running">
+            {!isCollapsed && (
+              <div className="sidebar-favorites-label">
+                <span>Running</span>
+                <span className="sidebar-group-count">{runningProjects.length}</span>
+              </div>
+            )}
+            {runningProjects.map(renderProject)}
+          </div>
+        )}
+        {offlineFavoriteProjects.length > 0 && (
           <div className="sidebar-favorites">
             {!isCollapsed && (
               <div className="sidebar-favorites-label">
                 <span>Favorites</span>
-                <span className="sidebar-group-count">{favoriteProjects.length}</span>
+                <span className="sidebar-group-count">{offlineFavoriteProjects.length}</span>
               </div>
             )}
-            {favoriteProjects.map(renderProject)}
+            {offlineFavoriteProjects.map(renderProject)}
           </div>
         )}
         {groups.map(renderGroup)}
