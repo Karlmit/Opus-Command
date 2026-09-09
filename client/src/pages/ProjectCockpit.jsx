@@ -351,6 +351,33 @@ function TerminalInstance({
       } catch (_) {}
       fitActive();
     };
+    // Manual "resize now" — triggered by the project chip in the tab bar.
+    // Re-measures the font and refits, then makes sure the PTY really gets a
+    // SIGWINCH: Linux drops the signal when the new window size equals the old
+    // one, so when the fit turns out to be a no-op we resize one column
+    // narrower and immediately back. That is exactly what collapsing the file
+    // tree does by accident, which is why that has been the manual workaround.
+    const forceResize = () => {
+      if (!activeStateRef.current || cancelled || !divRef.current) return;
+      if (isDeviceMobile()) return;
+      const before = `${term.cols}x${term.rows}`;
+      forceRemeasureFit();
+      try { term.refresh(0, term.rows - 1); } catch (_) {}
+      if (`${term.cols}x${term.rows}` !== before) return;
+
+      const sock = getSocket();
+      if (!term.cols || !term.rows || !sock.connected) return;
+      sock.emit('terminal:resize', {
+        sessionId,
+        cols: Math.max(2, term.cols - 1),
+        rows: term.rows,
+      });
+      lastEmittedSize = null;
+      setTimeout(() => {
+        if (cancelled) return;
+        doResizeEmit();
+      }, 90);
+    };
     const getSize = () => {
       if (!activeStateRef.current) return null;
       return term.cols ? { cols: term.cols, rows: term.rows } : null;
@@ -559,6 +586,7 @@ function TerminalInstance({
         reset:   () => term.reset(),
         focus:   () => term.focus(),
         fit:     fitActive,
+        forceResize,
         getSize,
         emitResize,
       };
@@ -1576,6 +1604,7 @@ export default function ProjectCockpit() {
   const [fileEditorMode, setFileEditorMode] = useState({});
   const [activeTab, setActiveTab] = useState(null); // 'term-{id}' | 'file-{path}' | 'settings' | 'git'
   const [lastActiveTermId, setLastActiveTermId] = useState(null);
+  const [chipPulse, setChipPulse] = useState(false); // brief feedback on the resize chip
   const [tasks, setTasks] = useState([]);
   const [taskSections, setTaskSections] = useState([{ id: DEFAULT_TASK_SECTION_ID, title: 'Open' }]);
   const [taskDraft, setTaskDraft] = useState('');
@@ -2669,6 +2698,20 @@ export default function ProjectCockpit() {
     ?? termTabs[0]?.id
     ?? null;
 
+  // Force the visible terminal to re-fit + re-sync its PTY size. xterm normally
+  // does this on its own via ResizeObserver, but a container that changes size
+  // without a layout event (or a fit measured before the font settled) can leave
+  // the PTY a few columns off — the shortcut so far was collapsing the file tree.
+  function forceTerminalResize() {
+    const sessionId = activeTermId;
+    const ref = sessionId ? termRefs.current[sessionId] : null;
+    if (!ref) return;
+    setChipPulse(true);
+    setTimeout(() => setChipPulse(false), 420);
+    ref.forceResize?.();
+    ref.focus?.();
+  }
+
   function mergeTerminalCommand(command) {
     return (command?.commands || [])
       .map(line => String(line || '').trim())
@@ -2871,9 +2914,15 @@ export default function ProjectCockpit() {
           {/* Current project — pinned so it never scrolls out of view or
               disappears when the file tree is collapsed */}
           {project && (
-            <div className="cockpit-project-chip">
+            <button
+              type="button"
+              className={`cockpit-project-chip${chipPulse ? ' pulsing' : ''}`}
+              onClick={forceTerminalResize}
+              title="Resize terminal to fit"
+              aria-label="Resize terminal to fit"
+            >
               <ProjectAvatar project={project} size={20} />
-            </div>
+            </button>
           )}
           {project && <div className="tab-divider" />}
           {/* Terminal tabs */}

@@ -442,10 +442,45 @@
    project is always visible here, even when the tab strip scrolls or the
    file tree (which also shows the project name) is collapsed. Not
    interactive: no hover/active state, just an identity marker. */
+/* Doubles as the manual "resize the terminal" button. */
 .cockpit-project-chip {
   display: flex;
   align-items: center;
   flex-shrink: 0;
+  padding: 2px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  cursor: pointer;
+  transition: background var(--motion-hover), transform var(--motion-press);
+}
+
+.cockpit-project-chip:hover {
+  background: color-mix(in srgb, var(--color-surface) 55%, transparent);
+}
+
+.cockpit-project-chip:active {
+  transform: scale(0.92);
+}
+
+.cockpit-project-chip:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+/* Confirms the click landed even when the fit itself changes nothing visible. */
+.cockpit-project-chip.pulsing {
+  animation: chipResizePulse 420ms ease;
+}
+
+@keyframes chipResizePulse {
+  0%   { transform: scale(0.92); }
+  45%  { transform: scale(1.12); }
+  100% { transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cockpit-project-chip.pulsing { animation: none; }
 }
 
 .cockpit-tab {
