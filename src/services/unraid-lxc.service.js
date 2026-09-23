@@ -233,11 +233,14 @@ async function createWorkspace(project) {
   const name = containerNameFor(project);
   const projectPath = projectPathFor(project, cfg);
   await installHelper(); // ensure helper present before first use
+  // A first create downloads a full rootfs tarball. At 300s a slow link left
+  // lxc-create still running on the host after we had given up, and the retry
+  // then tripped over its lock ("Ongoing container creation detected").
   await runHelper('create', [
     '--name', name,
     '--project-path', projectPath,
     '--template', lxcTemplateFor(project),
-  ], { timeoutMs: 300_000 });
+  ], { timeoutMs: 900_000 });
   return { lxcContainerName: name, lxcProjectPath: projectPath, lxcTemplate: lxcTemplateFor(project) };
 }
 

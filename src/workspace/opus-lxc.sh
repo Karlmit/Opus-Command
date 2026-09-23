@@ -75,6 +75,51 @@ container_state() {
 }
 
 config_path() { echo "$OPUS_LXC_BASE/$ARG_NAME/config"; }
+partial_path() { echo "$OPUS_LXC_BASE/$ARG_NAME/partial"; }
+
+# lxc-create drops a `partial` file in the container dir and holds an fcntl
+# write lock on it for the whole download/build. The dir and config exist from
+# the very start, so `container_exists` is already true while the container is
+# still unusable — and stays true if the create is interrupted. Without this
+# check cmd_create reports RESULT=exists for a half-built container and the
+# following cmd_start fails with LXC's cryptic "Ongoing container creation
+# detected".
+#
+# Prints: none | ongoing | stale
+partial_state() {
+  local p; p="$(partial_path)"
+  [ -f "$p" ] || { echo none; return; }
+  # Read the lock out of /proc/locks rather than trying to take it. flock(1) is
+  # useless here: BSD flock(2) locks and the POSIX record lock LXC uses do not
+  # conflict with each other on Linux, so flock would always succeed and we
+  # would delete containers that are still being built.
+  [ -r /proc/locks ] || { echo ongoing; return; }
+
+  # /proc/locks identifies the locked file as "<major>:<minor>:<inode>", device
+  # numbers in hex and inode in decimal. Build the same key rather than matching
+  # the inode alone, so an inode-number collision on another filesystem cannot
+  # read as a live lock and wedge the workspace forever.
+  local maj min ino key
+  maj="$(stat -c %Hd "$p" 2>/dev/null || true)"
+  min="$(stat -c %Ld "$p" 2>/dev/null || true)"
+  ino="$(stat -c %i  "$p" 2>/dev/null || true)"
+  case "$maj$min$ino" in
+    ''|*[!0-9]*) echo ongoing; return ;;  # cannot identify the file — assume in flight
+  esac
+  key="$(printf '%02x:%02x:%s' "$maj" "$min" "$ino")"
+
+  # e.g. "29: POSIX  ADVISORY  WRITE 1637 00:36:15559518 0 EOF". FLOCK rows are
+  # a different, non-conflicting lock type and are never LXC's; rows for blocked
+  # waiters start "-> " and shift the fields, so they fall out of this match too
+  # — a waiter is not a holder.
+  if awk -v key="$key" '
+        ($2 == "POSIX" || $2 == "OFDLCK") && $4 == "WRITE" && $6 == key { found = 1 }
+        END { exit !found }' /proc/locks; then
+    echo ongoing
+  else
+    echo stale
+  fi
+}
 
 # ── subcommands ───────────────────────────────────────────────────────────────
 
@@ -122,10 +167,26 @@ cmd_create() {
   fi
 
   if container_exists; then
-    ensure_mount_entry
-    echo "RESULT=exists"
-    echo "NAME=$ARG_NAME"
-    return 0
+    case "$(partial_state)" in
+      ongoing)
+        die "container $ARG_NAME is still being created by another process (rootfs download in progress) — wait for it to finish, then start it"
+        ;;
+      stale)
+        # An earlier lxc-create died partway through. Nothing of the user's
+        # lives in the rootfs (the project dir is a bind mount from outside),
+        # so clear it out and build again — the same thing LXC itself does
+        # when it finds an unlocked `partial`.
+        err "container $ARG_NAME was left half-created by an interrupted lxc-create — removing it and rebuilding…"
+        lxc-stop -n "$ARG_NAME" -k >/dev/null 2>&1 || true
+        lxc-destroy -n "$ARG_NAME" >/dev/null 2>&1 || rm -rf "${OPUS_LXC_BASE:?}/${ARG_NAME:?}"
+        ;;
+      *)
+        ensure_mount_entry
+        echo "RESULT=exists"
+        echo "NAME=$ARG_NAME"
+        return 0
+        ;;
+    esac
   fi
 
   err "creating container $ARG_NAME ($OPUS_LXC_DIST $OPUS_LXC_RELEASE $OPUS_LXC_ARCH)…"
@@ -142,6 +203,16 @@ cmd_create() {
 cmd_start() {
   require_name
   container_exists || die "container $ARG_NAME does not exist"
+  # Fail with something readable instead of lxc-start's "Ongoing container
+  # creation detected" / "Failed to create container".
+  case "$(partial_state)" in
+    ongoing)
+      die "container $ARG_NAME is still being created (rootfs download in progress) — wait for creation to finish, then start it"
+      ;;
+    stale)
+      die "container $ARG_NAME was left half-created by an interrupted lxc-create and cannot start — recreate the workspace to rebuild it"
+      ;;
+  esac
   local state; state="$(container_state)"
   if [ "$state" = "RUNNING" ]; then echo "STATE=RUNNING"; return 0; fi
   lxc-start -n "$ARG_NAME" >&2 || die "lxc-start failed"
@@ -212,8 +283,11 @@ cmd_status() {
 cmd_destroy() {
   require_name
   if ! container_exists; then echo "RESULT=absent"; return 0; fi
+  [ "$(partial_state)" = "ongoing" ] && die "container $ARG_NAME is still being created — wait for creation to finish before destroying it"
   lxc-stop -n "$ARG_NAME" -k >/dev/null 2>&1 || true
-  lxc-destroy -n "$ARG_NAME" >&2 || die "lxc-destroy failed"
+  # A half-created container can defeat lxc-destroy; its dir is still just a
+  # partial rootfs, so remove it directly rather than leaving the name wedged.
+  lxc-destroy -n "$ARG_NAME" >&2 || rm -rf "${OPUS_LXC_BASE:?}/${ARG_NAME:?}" || die "lxc-destroy failed"
   echo "RESULT=destroyed"
 }
 
