@@ -88,6 +88,48 @@ function ContextMenuPortal({ x, y, className, children, ...rest }) {
 // tinted by FILE_COLORS (known type → lined document icon, unknown → plain file).
 const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico', 'bmp', 'avif']);
 
+const isArchiveName = (name) => /\.(zip|rar)$/i.test(name);
+// "site.zip" → "site", "movie.part01.rar" → "movie"
+const archiveBaseName = (name) => name.replace(/(\.part\d+)?\.(zip|rar)$/i, '');
+
+function formatSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let v = bytes / 1024;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1; }
+  return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[i]}`;
+}
+
+function UnpackProgress({ job }) {
+  const known = job.total > 0;
+  const ratio = job.totalBytes > 0 ? job.bytesDone / job.totalBytes : known ? job.done / job.total : 0;
+  const pct = Math.min(100, Math.round(ratio * 100));
+  return (
+    <div className="unpack-job" title={job.current || job.name}>
+      <div className="unpack-job-row">
+        <span className="unpack-job-name">Unpacking {job.name}</span>
+        <span className="unpack-job-pct">{known ? `${pct}%` : '…'}</span>
+      </div>
+      <div
+        className={`unpack-bar${known ? '' : ' indeterminate'}`}
+        role="progressbar"
+        aria-label={`Unpacking ${job.name}`}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={known ? pct : undefined}
+      >
+        <div className="unpack-bar-fill" style={known ? { width: `${pct}%` } : undefined} />
+      </div>
+      <div className="unpack-job-meta">
+        {known
+          ? `${job.done.toLocaleString()} / ${job.total.toLocaleString()} files${job.totalBytes ? ` · ${formatSize(job.bytesDone)} of ${formatSize(job.totalBytes)}` : ''}`
+          : 'Reading archive…'}
+      </div>
+    </div>
+  );
+}
+
 function FileIcon({ name, isDir, open }) {
   if (isDir) {
     // Folders keep the icon set's own amber palette; .fi-dir drives the hover glow.
@@ -1643,6 +1685,7 @@ export default function ProjectCockpit() {
   const uploadInputRef = useRef(null);
   const uploadTargetRef = useRef('');
   const uploadLabelRef = useRef('Project Files');
+  const [unpackJobs, setUnpackJobs] = useState([]);
   const autosaveTimers = useRef({});
   const fileContentRef = useRef({});
   const treeSignatureRef = useRef('');
@@ -2540,18 +2583,54 @@ export default function ProjectCockpit() {
     }
   }
 
-  async function unzipNode(node, targetPath) {
+  async function unpackNode(node, targetPath, password) {
+    const id = `${node.path}:${Date.now()}`;
+    const patchJob = (patch) => setUnpackJobs(jobs => jobs.map(j => (j.id === id ? { ...j, ...patch } : j)));
+    setUnpackJobs(jobs => [...jobs, { id, name: node.name, done: 0, total: 0, bytesDone: 0, totalBytes: 0 }]);
+
+    let result = null;
     try {
-      const r = await fetch(`/api/projects/${projectId}/files/unzip`, {
+      const r = await fetch(`/api/projects/${projectId}/files/unpack`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-        body: JSON.stringify({ zipPath: node.path, targetPath }),
+        body: JSON.stringify({ archivePath: node.path, targetPath, password }),
       });
-      const d = await r.json();
-      if (d.success) { addToast(`Unpacked “${node.name}”.`); loadTree(); }
-      else addToast(d.error || 'Unpack failed.', 'error');
+      if (!r.ok || !r.body || !(r.headers.get('content-type') || '').includes('ndjson')) {
+        const d = await r.json().catch(() => ({}));
+        result = { type: 'error', error: d.error || 'Unpack failed.' };
+      } else {
+        const reader = r.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let nl;
+          while ((nl = buf.indexOf('\n')) >= 0) {
+            const line = buf.slice(0, nl).trim();
+            buf = buf.slice(nl + 1);
+            if (!line) continue;
+            const msg = JSON.parse(line);
+            if (msg.type === 'progress') patchJob(msg);
+            else result = msg;
+          }
+        }
+      }
     } catch {
-      addToast('Unpack failed.', 'error');
+      result = { type: 'error', error: 'Unpack failed.' };
+    }
+
+    setUnpackJobs(jobs => jobs.filter(j => j.id !== id));
+    if (result?.type === 'done') {
+      addToast(`Unpacked “${node.name}”.`);
+      loadTree();
+    } else if (result?.reason === 'password-required' || result?.reason === 'bad-password') {
+      const pw = prompt(`${result.error} Enter password for “${node.name}”:`);
+      if (pw) await unpackNode(node, targetPath, pw);
+    } else {
+      addToast(result?.error || 'Unpack failed.', 'error');
+      loadTree(); // a partial extract may have written files
     }
   }
 
@@ -2605,15 +2684,15 @@ export default function ProjectCockpit() {
     else if (action === 'upload-planning') triggerUpload('.planning', 'Planning Files');
     else if (action === 'paste') await pasteClipboard(node?.type === 'dir' ? node.path : parentPath(node));
     else if (!node) return;
-    else if (action === 'unpack-here') await unzipNode(node, parentPath(node));
+    else if (action === 'unpack-here') await unpackNode(node, parentPath(node));
     else if (action === 'unpack-folder') {
-      const base = node.name.replace(/\.zip$/i, '');
+      const base = archiveBaseName(node.name);
       const parent = parentPath(node);
-      await unzipNode(node, parent ? `${parent}/${base}` : base);
+      await unpackNode(node, parent ? `${parent}/${base}` : base);
     }
     else if (action === 'unpack-to') {
       const dest = prompt('Unpack to folder (relative to project root):', parentPath(node));
-      if (dest !== null) await unzipNode(node, dest.trim());
+      if (dest !== null) await unpackNode(node, dest.trim());
     }
     else if (action === 'rename') openRenameDialog(node);
     else if (action === 'reference') await referenceFileNode(node);
@@ -2896,6 +2975,11 @@ export default function ProjectCockpit() {
           ))}
           </div>
         </div>
+        {!treeCollapsed && unpackJobs.length > 0 && (
+          <div className="unpack-tray" aria-live="polite">
+            {unpackJobs.map(job => <UnpackProgress key={job.id} job={job} />)}
+          </div>
+        )}
         {!treeCollapsed && (
           <div
             className="filetree-resize-handle"
@@ -3156,10 +3240,10 @@ export default function ProjectCockpit() {
           {!fileContextMenu.node && <button role="menuitem" onClick={() => handleFileContextAction('upload-project')}>Upload to Project Files</button>}
           {!fileContextMenu.node && <button role="menuitem" onClick={() => handleFileContextAction('upload-planning')}>Upload to Planning Files</button>}
           <button role="menuitem" onClick={() => handleFileContextAction('paste')}>Paste</button>
-          {fileContextMenu.node?.type === 'file' && fileContextMenu.node.name.toLowerCase().endsWith('.zip') && <>
+          {fileContextMenu.node?.type === 'file' && isArchiveName(fileContextMenu.node.name) && <>
             <div className="context-separator" />
             <button role="menuitem" onClick={() => handleFileContextAction('unpack-here')}>Unpack here</button>
-            <button role="menuitem" onClick={() => handleFileContextAction('unpack-folder')}>Unpack to “{fileContextMenu.node.name.replace(/\.zip$/i, '')}/”</button>
+            <button role="menuitem" onClick={() => handleFileContextAction('unpack-folder')}>Unpack to “{archiveBaseName(fileContextMenu.node.name)}/”</button>
             <button role="menuitem" onClick={() => handleFileContextAction('unpack-to')}>Unpack…</button>
           </>}
           {fileContextMenu.node && <div className="context-separator" />}

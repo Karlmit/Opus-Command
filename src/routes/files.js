@@ -3,7 +3,6 @@ const router = express.Router({ mergeParams: true });
 const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
-const AdmZip = require('adm-zip');
 const { requireAuth } = require('../middleware/auth');
 const { PROJECTS_DIR } = require('../config');
 const { getDB } = require('../db');
@@ -14,6 +13,7 @@ const {
   planningPathFor,
   ensurePlanningArea,
 } = require('../services/project-files.service');
+const { extractArchive, archiveType, ArchiveError } = require('../services/archive.service');
 
 const DEFAULT_UPLOAD_LIMIT_MB = 512;
 const uploadLimitMb = Number.parseInt(process.env.OPUS_UPLOAD_FILE_LIMIT_MB || `${DEFAULT_UPLOAD_LIMIT_MB}`, 10);
@@ -393,39 +393,63 @@ router.post('/upload', requireAuth, (req, res) => {
   });
 });
 
-// POST /api/projects/:projectId/files/unzip — extract a .zip archive
-router.post('/unzip', requireAuth, (req, res) => {
+// POST /api/projects/:projectId/files/unpack — extract a .zip or .rar archive.
+// Validation failures return plain JSON with an error status. Once extraction
+// starts, the response streams NDJSON lines:
+//   { type: 'progress', done, total, bytesDone, totalBytes, current }
+//   { type: 'done', target } | { type: 'error', error, reason }
+async function unpackHandler(req, res) {
   const projectRoot = getProjectRoot(req.params.projectId);
   if (!projectRoot) return res.status(404).json({ error: 'Project not found.' });
 
-  const { zipPath: reqZip, targetPath: reqTarget = '' } = req.body;
-  const zipPath = validatePath(projectRoot, reqZip);
+  const { archivePath: reqArchive, zipPath: legacyZip, targetPath: reqTarget = '', password } = req.body;
+  const archivePath = validatePath(projectRoot, reqArchive || legacyZip);
   const targetDir = validatePath(projectRoot, reqTarget);
-  if (!zipPath || !targetDir) {
+  if (!archivePath || !targetDir) {
     return res.status(403).json({ error: 'Access denied. The path is outside the project folder.' });
   }
-  if (!fs.existsSync(zipPath) || !fs.statSync(zipPath).isFile()) {
+  if (!fs.existsSync(archivePath) || !fs.statSync(archivePath).isFile()) {
     return res.status(404).json({ error: 'Archive not found.' });
   }
-
-  try {
-    const zip = new AdmZip(zipPath);
-    const targetWithSep = targetDir.endsWith(path.sep) ? targetDir : targetDir + path.sep;
-
-    // Guard against zip-slip: every entry must resolve inside the target dir.
-    for (const entry of zip.getEntries()) {
-      const resolved = path.resolve(targetDir, entry.entryName);
-      if (resolved !== targetDir && !resolved.startsWith(targetWithSep)) {
-        return res.status(400).json({ error: 'Archive contains unsafe paths.' });
-      }
-    }
-
-    fs.mkdirSync(targetDir, { recursive: true });
-    zip.extractAllTo(targetDir, /* overwrite */ true);
-    res.json({ success: true, target: path.relative(projectRoot, targetDir) });
-  } catch (err) {
-    res.status(500).json({ error: `Unpack failed: ${err.message}` });
+  if (!archiveType(archivePath)) {
+    return res.status(400).json({ error: 'Only .zip and .rar archives can be unpacked.' });
   }
-});
+
+  res.status(200);
+  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('X-Accel-Buffering', 'no');
+  const send = (msg) => {
+    if (res.writableEnded) return;
+    res.write(`${JSON.stringify(msg)}\n`);
+    if (typeof res.flush === 'function') res.flush(); // compression middleware buffers otherwise
+  };
+
+  let cancelled = false;
+  res.on('close', () => { if (!res.writableEnded) cancelled = true; });
+
+  let lastSent = 0;
+  try {
+    await extractArchive({
+      archivePath,
+      targetDir,
+      password,
+      isCancelled: () => cancelled,
+      onProgress: (p, force) => {
+        const now = Date.now();
+        if (!force && now - lastSent < 100) return;
+        lastSent = now;
+        send({ type: 'progress', ...p });
+      },
+    });
+    send({ type: 'done', target: path.relative(projectRoot, targetDir) });
+  } catch (err) {
+    send({ type: 'error', error: err instanceof ArchiveError ? err.message : `Unpack failed: ${err.message}`, reason: err.reason });
+  }
+  res.end();
+}
+
+router.post('/unpack', requireAuth, unpackHandler);
+router.post('/unzip', requireAuth, unpackHandler); // legacy name
 
 module.exports = router;
