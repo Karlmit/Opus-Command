@@ -906,7 +906,38 @@ function VolumesSection({ projectId, project, csrfToken, addToast }) {
 }
 
 /* ── Docker containers (LXC workspaces only) ──────── */
-function DockerSection({ projectId, project, csrfToken, addToast }) {
+
+// Host ports published by a container, parsed from `docker ps` Ports, e.g.
+// "0.0.0.0:3000->3000/tcp, [::]:3000->3000/tcp, 5432/tcp" → [3000]. Unpublished
+// (container-only) ports aren't reachable from the LAN, so they're skipped.
+function publishedPorts(portsStr) {
+  const out = [];
+  for (const m of String(portsStr || '').matchAll(/:(\d+)(?:-\d+)?->/g)) {
+    const port = Number(m[1]);
+    if (!out.includes(port)) out.push(port);
+  }
+  return out;
+}
+
+// navigator.clipboard needs a secure context; the app is usually served over
+// plain HTTP on the LAN, so fall back to a hidden textarea + execCommand.
+function copyToClipboard(text) {
+  if (navigator.clipboard?.writeText && window.isSecureContext) {
+    return navigator.clipboard.writeText(text);
+  }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  const ok = document.execCommand('copy');
+  document.body.removeChild(ta);
+  return ok ? Promise.resolve() : Promise.reject(new Error('Copy failed.'));
+}
+
+function DockerSection({ projectId, project, ip, csrfToken, addToast }) {
   const [state, setState] = useState({ available: false, containers: [], reason: null });
   const [loading, setLoading] = useState(false);
   const [stopping, setStopping] = useState(null); // container id, or 'all'
@@ -956,6 +987,13 @@ function DockerSection({ projectId, project, csrfToken, addToast }) {
     finally { setStopping(null); load(); }
   }
 
+  function copyAddress(port) {
+    const addr = `${ip}:${port}`;
+    copyToClipboard(addr)
+      .then(() => addToast(`Copied ${addr}`))
+      .catch(() => addToast(`Couldn't copy — ${addr}`, 'error'));
+  }
+
   const containers = state.containers || [];
   const reasonText = {
     workspace_stopped: 'Start the workspace to see and manage Docker containers.',
@@ -999,6 +1037,22 @@ function DockerSection({ projectId, project, csrfToken, addToast }) {
                 <span className="dk-image">{c.image}</span>
               </div>
               <div className="vol-desc">{c.status}{c.ports ? ` · ${c.ports}` : ''}</div>
+              {up && publishedPorts(c.ports).length > 0 && (
+                <div className="dk-ports">
+                  {publishedPorts(c.ports).map(port => (
+                    <button key={port} type="button"
+                      className="btn btn-ghost dk-copy"
+                      onClick={() => copyAddress(port)}
+                      disabled={!ip}
+                      title={ip ? `Copy ${ip}:${port}` : 'Workspace IP not resolved yet'}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                      </svg>
+                      <code>{ip || '…'}:{port}</code>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="vol-row-actions">
               <button className="btn btn-ghost ws-danger"
@@ -1217,6 +1271,7 @@ function WorkspacePanel({ projectId, project, csrfToken, addToast, onDelete, onP
         <DockerSection
           projectId={projectId}
           project={project}
+          ip={ip}
           csrfToken={csrfToken}
           addToast={addToast}
         />
