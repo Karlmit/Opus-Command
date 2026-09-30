@@ -15,12 +15,15 @@ const {
 } = require('../services/project-files.service');
 const { extractArchive, archiveType, ArchiveError } = require('../services/archive.service');
 
-const DEFAULT_UPLOAD_LIMIT_MB = 512;
+// Uploads stream straight to disk (multer diskStorage), so a large cap doesn't
+// cost memory. Override with OPUS_UPLOAD_FILE_LIMIT_MB.
+const DEFAULT_UPLOAD_LIMIT_MB = 10 * 1024;
 const uploadLimitMb = Number.parseInt(process.env.OPUS_UPLOAD_FILE_LIMIT_MB || `${DEFAULT_UPLOAD_LIMIT_MB}`, 10);
 const MAX_UPLOAD_FILE_SIZE_BYTES = (Number.isFinite(uploadLimitMb) && uploadLimitMb > 0 ? uploadLimitMb : DEFAULT_UPLOAD_LIMIT_MB) * 1024 * 1024;
 
 function formatBytes(bytes) {
   const mib = bytes / (1024 * 1024);
+  if (mib >= 1024) return `${Math.round((mib / 1024) * 10) / 10} GiB`;
   return `${Math.round(mib)} MiB`;
 }
 
@@ -374,6 +377,12 @@ const storage = multer.diskStorage({
   filename: (req, file, cb) => cb(null, file.originalname),
 });
 const upload = multer({ storage, limits: { fileSize: MAX_UPLOAD_FILE_SIZE_BYTES } });
+
+// GET /api/projects/:projectId/files/upload-limit — lets the client reject
+// oversize files before sending hundreds of MB it would only get a 413 for.
+router.get('/upload-limit', requireAuth, (req, res) => {
+  res.json({ maxFileBytes: MAX_UPLOAD_FILE_SIZE_BYTES, label: formatBytes(MAX_UPLOAD_FILE_SIZE_BYTES) });
+});
 
 router.post('/upload', requireAuth, (req, res) => {
   upload.array('files', 50)(req, res, (err) => {

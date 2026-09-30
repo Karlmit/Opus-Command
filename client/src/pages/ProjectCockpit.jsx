@@ -130,6 +130,34 @@ function UnpackProgress({ job }) {
   );
 }
 
+function UploadProgress({ job, onCancel }) {
+  const pct = job.totalBytes > 0 ? Math.min(100, Math.round((job.bytesDone / job.totalBytes) * 100)) : 0;
+  const finishing = job.totalBytes > 0 && job.bytesDone >= job.totalBytes;
+  const rate = job.rate > 0 ? ` · ${formatSize(job.rate)}/s` : '';
+  return (
+    <div className="unpack-job" title={job.name}>
+      <div className="unpack-job-row">
+        <span className="unpack-job-name">Uploading {job.name}</span>
+        <span className="unpack-job-pct">{pct}%</span>
+        <button type="button" className="unpack-job-cancel" aria-label={`Cancel upload of ${job.name}`} title="Cancel upload" onClick={onCancel}>×</button>
+      </div>
+      <div
+        className={`unpack-bar${finishing ? ' indeterminate' : ''}`}
+        role="progressbar"
+        aria-label={`Uploading ${job.name}`}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={pct}
+      >
+        <div className="unpack-bar-fill" style={finishing ? undefined : { width: `${pct}%` }} />
+      </div>
+      <div className="unpack-job-meta">
+        {finishing ? 'Finishing…' : `${formatSize(job.bytesDone)} of ${formatSize(job.totalBytes)}${rate}`}
+      </div>
+    </div>
+  );
+}
+
 function FileIcon({ name, isDir, open }) {
   if (isDir) {
     // Folders keep the icon set's own amber palette; .fi-dir drives the hover glow.
@@ -1741,6 +1769,9 @@ export default function ProjectCockpit() {
   const uploadTargetRef = useRef('');
   const uploadLabelRef = useRef('Project Files');
   const [unpackJobs, setUnpackJobs] = useState([]);
+  const [uploadJobs, setUploadJobs] = useState([]);
+  const uploadXhrsRef = useRef(new Map());
+  const uploadLimitRef = useRef(null);
   const autosaveTimers = useRef({});
   const fileContentRef = useRef({});
   const treeSignatureRef = useRef('');
@@ -2616,25 +2647,88 @@ export default function ProjectCockpit() {
     uploadInputRef.current?.click();
   }
 
+  async function getUploadLimit() {
+    if (uploadLimitRef.current) return uploadLimitRef.current;
+    try {
+      const r = await fetch(`/api/projects/${projectId}/files/upload-limit`);
+      if (r.ok) uploadLimitRef.current = await r.json();
+    } catch {}
+    return uploadLimitRef.current;
+  }
+
+  // XHR rather than fetch: fetch has no upload-progress events.
+  function sendUpload(id, url, fd, onProgress) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      uploadXhrsRef.current.set(id, xhr);
+      xhr.open('POST', url);
+      xhr.setRequestHeader('X-CSRF-Token', csrfToken);
+      xhr.upload.onprogress = (ev) => { if (ev.lengthComputable) onProgress(ev.loaded, ev.total); };
+      xhr.onload = () => {
+        let d = {};
+        try { d = JSON.parse(xhr.responseText); } catch {}
+        if (xhr.status >= 200 && xhr.status < 300) resolve(d);
+        else reject(new Error(d.error || 'Upload failed.'));
+      };
+      xhr.onerror = () => reject(new Error('Upload failed. The connection was interrupted.'));
+      xhr.onabort = () => reject(Object.assign(new Error('Upload cancelled.'), { cancelled: true }));
+      xhr.send(fd);
+    });
+  }
+
+  function cancelUpload(id) {
+    uploadXhrsRef.current.get(id)?.abort();
+  }
+
   async function handleUploadInputChange(e) {
     const files = Array.from(e.target.files || []);
     e.target.value = ''; // reset so the same file can be picked again
     if (!files.length) return;
     const target = uploadTargetRef.current;
+    const label = uploadLabelRef.current;
+
+    const limit = await getUploadLimit();
+    if (limit?.maxFileBytes) {
+      const tooBig = files.filter(f => f.size > limit.maxFileBytes);
+      if (tooBig.length) {
+        const names = tooBig.map(f => `“${f.name}” (${formatSize(f.size)})`).join(', ');
+        addToast(`Upload failed. Files must be ${limit.label} or smaller: ${names}.`, 'error');
+        return;
+      }
+    }
+
     const fd = new FormData();
     for (const f of files) fd.append('files', f);
+    const id = `upload:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+    const name = files.length === 1 ? files[0].name : `${files.length} files`;
+    const totalBytes = files.reduce((sum, f) => sum + f.size, 0);
+    const started = Date.now();
+    setUploadJobs(jobs => [...jobs, { id, name, bytesDone: 0, totalBytes, rate: 0 }]);
+
+    let lastPaint = 0;
     try {
-      const r = await fetch(
+      const d = await sendUpload(
+        id,
         `/api/projects/${projectId}/files/upload?targetPath=${encodeURIComponent(target)}`,
-        { method: 'POST', headers: { 'X-CSRF-Token': csrfToken }, body: fd },
+        fd,
+        (loaded, total) => {
+          const now = Date.now();
+          if (now - lastPaint < 100 && loaded < total) return;
+          lastPaint = now;
+          const secs = (now - started) / 1000;
+          setUploadJobs(jobs => jobs.map(j => (j.id === id
+            ? { ...j, bytesDone: loaded, totalBytes: total, rate: secs > 0.5 ? loaded / secs : 0 }
+            : j)));
+        },
       );
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(d.error || 'Upload failed.');
       const n = d.uploaded?.length ?? files.length;
-      addToast(`Uploaded ${n} file${n === 1 ? '' : 's'} to ${uploadLabelRef.current}.`);
-      loadTree();
+      addToast(`Uploaded ${n} file${n === 1 ? '' : 's'} to ${label}.`);
     } catch (err) {
-      addToast(err.message || 'Upload failed.', 'error');
+      addToast(err.message || 'Upload failed.', err.cancelled ? 'info' : 'error');
+    } finally {
+      uploadXhrsRef.current.delete(id);
+      setUploadJobs(jobs => jobs.filter(j => j.id !== id));
+      loadTree();
     }
   }
 
@@ -3030,8 +3124,9 @@ export default function ProjectCockpit() {
           ))}
           </div>
         </div>
-        {!treeCollapsed && unpackJobs.length > 0 && (
+        {!treeCollapsed && (uploadJobs.length > 0 || unpackJobs.length > 0) && (
           <div className="unpack-tray" aria-live="polite">
+            {uploadJobs.map(job => <UploadProgress key={job.id} job={job} onCancel={() => cancelUpload(job.id)} />)}
             {unpackJobs.map(job => <UnpackProgress key={job.id} job={job} />)}
           </div>
         )}

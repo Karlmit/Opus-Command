@@ -71,6 +71,9 @@ async function main() {
 
   const app = express();
   const server = http.createServer(app);
+  // Node's default requestTimeout (5 min) kills large file uploads on slower
+  // links. headersTimeout still guards against slow-header clients.
+  server.requestTimeout = 0;
   const io = new SocketIO(server, {
     cors: { origin: NODE_ENV === 'development' ? 'http://localhost:5173' : false }
   });

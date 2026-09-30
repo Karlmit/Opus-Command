@@ -167,6 +167,22 @@
   color: var(--color-text-secondary);
   flex-shrink: 0;
 }
+.unpack-job-cancel {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin: -2px -4px -2px 0;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 14px;
+  line-height: 18px;
+  cursor: pointer;
+}
+.unpack-job-cancel:hover { color: var(--color-text-primary); background: var(--color-surface-elevated); }
+.unpack-job-cancel:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
 .unpack-bar {
   position: relative;
   height: 4px;
