@@ -196,6 +196,7 @@ Opus Command supports a pluggable workspace backend, chosen per project at creat
 - Toolbar with New File and New Folder buttons (also available via right-click context menu)
 - Operations: create, rename, delete (with confirmation), download, copy absolute path
 - Drag-and-drop file upload — per-file progress toasts, error toasts per failed file
+- Upload button / context-menu upload with a live progress bar (bytes, speed, cancel) in the file tree tray; files up to 10 GiB by default (`OPUS_UPLOAD_FILE_LIMIT_MB`), oversize files rejected before sending
 - File name search — filters tree in real time as you type
 - Full-text content search across all text files
 
@@ -336,6 +337,7 @@ opus connector artifacts get <job-id>
 | `DATA_DIR` | `/app/data` | Override data directory path |
 | `PROJECTS_DIR` | `/projects` | Override projects directory path |
 | `PORT` | `3000` | HTTP port |
+| `OPUS_UPLOAD_FILE_LIMIT_MB` | `10240` | Max size per uploaded file, in MiB (uploads stream to disk, so large values don't use extra memory) |
 
 ### Unraid LXC backend (optional)
 
