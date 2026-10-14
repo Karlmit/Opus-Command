@@ -348,7 +348,7 @@ function AvatarPickerForm({ project, csrfToken, onSaved, onClose }) {
 }
 
 /* ── Context menu ───────────────────────────────── */
-function ProjectContextMenu({ project, position, lifecycleBusy, isFavorite, onClose, onOpenAvatar, onOpenGroup, onSetGroup, onToggleFavorite, onLifecycle, navigate }) {
+function ProjectContextMenu({ project, position, lifecycleBusy, isFavorite, onClose, onOpenRename, onOpenAvatar, onOpenGroup, onSetGroup, onToggleFavorite, onLifecycle, navigate }) {
   const ref = useRef(null);
   const [pos, setPos] = useState({ left: position.x, top: position.y });
   useEffect(() => {
@@ -396,6 +396,7 @@ function ProjectContextMenu({ project, position, lifecycleBusy, isFavorite, onCl
         {isBusy && isRunning ? 'Stopping…' : 'Stop Workspace'}
       </button>
       <div className="context-separator" />
+      <button role="menuitem" onClick={() => { onOpenRename(project); onClose(); }}>Rename…</button>
       <button role="menuitem" onClick={() => { onOpenAvatar(); onClose(); }}>Change Avatar</button>
       <button role="menuitem" onClick={() => { onOpenGroup(project); onClose(); }}>
         {project.groupName ? 'Change Group…' : 'Add to Group…'}
@@ -476,6 +477,50 @@ function GroupAvatarMosaic({ projects }) {
         <ProjectAvatar key={project.id} project={project} size={16} playing={false} />
       ))}
     </span>
+  );
+}
+
+function RenameProjectForm({ project, saving, onClose, onSave }) {
+  const [name, setName] = useState(project.name || '');
+  const trimmed = name.trim();
+  const unchanged = trimmed === project.name;
+
+  function submit(e) {
+    e.preventDefault();
+    if (!trimmed || unchanged) return;
+    onSave(project, trimmed);
+  }
+
+  return (
+    <form onSubmit={submit} className="popover-form">
+      <div className="popover-header">
+        <span className="popover-title">Rename Project</span>
+        <button type="button" className="popover-close" onClick={onClose} aria-label="Close">×</button>
+      </div>
+
+      <div className="form-group">
+        <label className="form-label" htmlFor="project-rename-name">Name</label>
+        <input
+          id="project-rename-name"
+          className="input"
+          value={name}
+          maxLength={80}
+          onChange={e => setName(e.target.value)}
+          onFocus={e => e.target.select()}
+          autoFocus
+        />
+        <p className="form-hint">
+          Only the display name changes. The folder <code>{project.folderPath}</code> and the workspace stay as they are.
+        </p>
+      </div>
+
+      <div className="popover-footer">
+        <button type="button" className="btn btn-ghost" onClick={onClose} disabled={saving}>Cancel</button>
+        <button type="submit" className="btn btn-primary" disabled={saving || !trimmed || unchanged}>
+          {saving ? 'Saving…' : 'Rename'}
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -670,6 +715,8 @@ export default function ProjectsSidebar() {
   const [newProjectAnchor, setNewProjectAnchor] = useState(null); // HTMLElement | null
   const [avatarTarget, setAvatarTarget]         = useState(null); // { project, anchor }
   const [groupTarget, setGroupTarget]           = useState(null);
+  const [renameTarget, setRenameTarget]         = useState(null);
+  const [renameSaving, setRenameSaving]         = useState(false);
   const [appearanceTarget, setAppearanceTarget] = useState(null);
   const [groupSaving, setGroupSaving]           = useState(false);
 
@@ -768,8 +815,19 @@ export default function ProjectsSidebar() {
       )));
     }
 
+    function onProjectUpdated({ id, name }) {
+      if (!name) return;
+      setProjects(prev => prev.map(project => (
+        String(project.id) === String(id) ? { ...project, name } : project
+      )));
+    }
+
     sock.on('project:status', onProjectStatus);
-    return () => sock.off('project:status', onProjectStatus);
+    sock.on('project:updated', onProjectUpdated);
+    return () => {
+      sock.off('project:status', onProjectStatus);
+      sock.off('project:updated', onProjectUpdated);
+    };
   }, []);
 
   // One-time: lift favorites that were saved in this browser onto the account.
@@ -949,6 +1007,28 @@ export default function ProjectsSidebar() {
       addToast(e.message || 'Could not update group.', 'error');
     } finally {
       setGroupSaving(false);
+    }
+  }
+
+  async function renameProject(project, name) {
+    setRenameSaving(true);
+    try {
+      const r = await fetch(`/api/projects/${project.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ name }),
+      });
+      const d = await r.json();
+      if (!r.ok || !d.success) {
+        addToast(d.error || 'Could not rename project.', 'error');
+        return;
+      }
+      setProjects(prev => prev.map(p => p.id === project.id ? { ...p, name: d.project.name } : p));
+      setRenameTarget(null);
+    } catch (e) {
+      addToast(e.message || 'Could not rename project.', 'error');
+    } finally {
+      setRenameSaving(false);
     }
   }
 
@@ -1226,6 +1306,18 @@ export default function ProjectsSidebar() {
         </SidebarPopover>
       )}
 
+      {/* Rename project */}
+      {renameTarget && (
+        <SidebarPopover onClose={() => setRenameTarget(null)} width={390}>
+          <RenameProjectForm
+            project={renameTarget}
+            saving={renameSaving}
+            onSave={renameProject}
+            onClose={() => setRenameTarget(null)}
+          />
+        </SidebarPopover>
+      )}
+
       {/* Project group picker */}
       {groupTarget && (
         <SidebarPopover onClose={() => setGroupTarget(null)} width={390}>
@@ -1260,6 +1352,7 @@ export default function ProjectsSidebar() {
           lifecycleBusy={lifecycleBusy}
           isFavorite={!!contextMenu.project.favorite}
           onClose={() => setContext(null)}
+          onOpenRename={project => setRenameTarget(project)}
           onOpenAvatar={() => setAvatarTarget({ project: contextMenu.project })}
           onOpenGroup={project => setGroupTarget(project)}
           onSetGroup={setProjectGroup}

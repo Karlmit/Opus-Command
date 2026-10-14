@@ -2007,6 +2007,17 @@ export default function ProjectCockpit() {
     };
   }, [projectId]);
 
+  // Pick up renames made elsewhere (sidebar, another tab/device).
+  useEffect(() => {
+    const sock = getSocket();
+    function onProjectUpdated({ id, name }) {
+      if (String(id) !== String(projectId) || !name) return;
+      setProject(prev => (prev ? { ...prev, name } : prev));
+    }
+    sock.on('project:updated', onProjectUpdated);
+    return () => sock.off('project:updated', onProjectUpdated);
+  }, [projectId]);
+
   useEffect(() => {
     const sock = getSocket();
 

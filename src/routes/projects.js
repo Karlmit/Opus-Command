@@ -336,7 +336,14 @@ router.patch('/:id', requireAuth, (req, res) => {
 
     const { name, avatar, template, groupName, favorite } = req.body;
     const updates = {};
-    if (name !== undefined) updates.name = name.trim();
+    if (name !== undefined) {
+      // Display name only — the folder and container names are keyed off
+      // folderPath / project id, so renaming never touches the workspace.
+      const trimmed = String(name || '').trim();
+      if (!trimmed) return res.status(400).json({ error: 'Project name is required.' });
+      if (trimmed.length > 80) return res.status(400).json({ error: 'Project name must be 80 characters or fewer.' });
+      updates.name = trimmed;
+    }
     if (avatar !== undefined) updates.avatar = avatar;
     if (groupName !== undefined) updates.groupName = String(groupName || '').trim().slice(0, 64);
     if (favorite !== undefined) updates.favorite = favorite ? 1 : 0;
@@ -359,6 +366,10 @@ router.patch('/:id', requireAuth, (req, res) => {
     if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'Nothing to update.' });
     db.update(projects).set(updates).where(eq(projects.id, projectId)).run();
     const updated = db.select().from(projects).where(eq(projects.id, projectId)).all()[0];
+    if (updates.name !== undefined && updates.name !== rows[0].name) {
+      const io = req.app.get('io');
+      if (io) io.emit('project:updated', { id: projectId, name: updated.name });
+    }
     res.json({ success: true, project: updated });
   } catch (err) {
     res.status(500).json({ error: 'Update failed.' });
