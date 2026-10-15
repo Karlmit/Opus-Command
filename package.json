@@ -1,6 +1,6 @@
 {
   "name": "opus-command",
-  "version": "0.34.2",
+  "version": "0.35.0",
   "description": "Self-hosted Docker web app and AI project cockpit",
   "main": "src/index.js",
   "scripts": {
@@ -12,6 +12,7 @@
   "dependencies": {
     "@xterm/headless": "^6.0.0",
     "adm-zip": "^0.5.17",
+    "archiver": "^7.0.1",
     "bcrypt": "^5.1.1",
     "better-sqlite3": "^9.6.0",
     "compression": "^1.7.4",

@@ -13,7 +13,7 @@ const {
   planningPathFor,
   ensurePlanningArea,
 } = require('../services/project-files.service');
-const { extractArchive, archiveType, ArchiveError } = require('../services/archive.service');
+const { extractArchive, compressFolder, archiveType, ArchiveError } = require('../services/archive.service');
 
 // Uploads stream straight to disk (multer diskStorage), so a large cap doesn't
 // cost memory. Override with OPUS_UPLOAD_FILE_LIMIT_MB.
@@ -460,5 +460,54 @@ async function unpackHandler(req, res) {
 
 router.post('/unpack', requireAuth, unpackHandler);
 router.post('/unzip', requireAuth, unpackHandler); // legacy name
+
+// POST /api/projects/:projectId/files/compress — zip a folder into a sibling
+// "<name>.zip" (or "<name> copy.zip" if taken). Streams NDJSON like /unpack:
+//   { type: 'progress', ... } then { type: 'done', path } | { type: 'error', error }
+router.post('/compress', requireAuth, async (req, res) => {
+  const projectRoot = getProjectRoot(req.params.projectId);
+  if (!projectRoot) return res.status(404).json({ error: 'Project not found.' });
+
+  const folderPath = validatePath(projectRoot, req.body.path);
+  if (!folderPath || folderPath === projectRoot) {
+    return res.status(403).json({ error: 'Access denied. The path is outside the project folder.' });
+  }
+  if (!fs.existsSync(folderPath) || !fs.statSync(folderPath).isDirectory()) {
+    return res.status(404).json({ error: 'Folder not found.' });
+  }
+  const zipPath = uniqueDestination(`${folderPath}.zip`);
+
+  res.status(200);
+  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('X-Accel-Buffering', 'no');
+  const send = (msg) => {
+    if (res.writableEnded) return;
+    res.write(`${JSON.stringify(msg)}\n`);
+    if (typeof res.flush === 'function') res.flush();
+  };
+
+  let cancelled = false;
+  res.on('close', () => { if (!res.writableEnded) cancelled = true; });
+
+  let lastSent = 0;
+  try {
+    await compressFolder({
+      folderPath,
+      zipPath,
+      isCancelled: () => cancelled,
+      onProgress: (p, force) => {
+        const now = Date.now();
+        if (!force && now - lastSent < 100) return;
+        lastSent = now;
+        send({ type: 'progress', ...p });
+      },
+    });
+    send({ type: 'done', path: path.relative(projectRoot, zipPath) });
+  } catch (err) {
+    send({ type: 'error', error: err instanceof ArchiveError ? err.message : `Compress failed: ${err.message}`, reason: err.reason });
+  }
+  res.end();
+});
 
 module.exports = router;

@@ -126,4 +126,78 @@ async function extractArchive({ archivePath, targetDir, password, onProgress = (
   return state;
 }
 
-module.exports = { extractArchive, archiveType, ArchiveError, ARCHIVE_EXTENSIONS };
+function listFolderFiles(dir, base = dir, out = []) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      const before = out.length;
+      listFolderFiles(full, base, out);
+      // Keep empty folders in the archive.
+      if (out.length === before) out.push({ full, name: `${path.relative(base, full)}/`, size: 0, dir: true });
+    } else if (entry.isFile()) {
+      out.push({ full, name: path.relative(base, full), size: fs.statSync(full).size });
+    }
+  }
+  return out;
+}
+
+/**
+ * Zip folderPath into zipPath, streaming so large folders don't sit in memory.
+ * Entries are rooted at the folder's own name ("site/index.html").
+ * Writes to a temp file and renames on success so a cancelled or failed run
+ * never leaves a half-written archive behind.
+ * onProgress receives { done, total, bytesDone, totalBytes, current }.
+ */
+async function compressFolder({ folderPath, zipPath, onProgress = () => {}, isCancelled = () => false }) {
+  const archiver = require('archiver');
+  const rootName = path.basename(folderPath);
+  const files = listFolderFiles(folderPath);
+  const state = {
+    done: 0,
+    total: files.length,
+    bytesDone: 0,
+    totalBytes: files.reduce((sum, f) => sum + f.size, 0),
+    current: '',
+  };
+  onProgress({ ...state }, true);
+
+  const tmpPath = path.join(path.dirname(zipPath), `.${path.basename(zipPath)}.${process.pid}.${Date.now()}.tmp`);
+  const output = fs.createWriteStream(tmpPath);
+  const archive = archiver('zip', { zlib: { level: 6 } });
+
+  const finished = new Promise((resolve, reject) => {
+    output.on('close', resolve);
+    output.on('error', reject);
+    archive.on('error', reject);
+    archive.on('warning', err => { if (err.code !== 'ENOENT') reject(err); });
+  });
+  archive.on('entry', entry => {
+    state.done += 1;
+    state.bytesDone += entry.stats?.size || 0;
+    state.current = entry.name;
+    onProgress({ ...state }, state.done === state.total);
+  });
+  archive.pipe(output);
+
+  try {
+    for (const f of files) {
+      if (isCancelled()) throw new ArchiveError('Compression cancelled.', { reason: 'cancelled' });
+      const name = `${rootName}/${f.name.split(path.sep).join('/')}`;
+      if (f.dir) archive.append('', { name });
+      else archive.file(f.full, { name });
+    }
+    if (!files.length) archive.append('', { name: `${rootName}/` });
+    await archive.finalize();
+    await finished;
+    if (isCancelled()) throw new ArchiveError('Compression cancelled.', { reason: 'cancelled' });
+    fs.renameSync(tmpPath, zipPath);
+  } catch (err) {
+    archive.abort();
+    fs.rmSync(tmpPath, { force: true });
+    if (err instanceof ArchiveError) throw err;
+    throw new ArchiveError(err?.message || 'Compression failed.');
+  }
+  return state;
+}
+
+module.exports = { extractArchive, compressFolder, archiveType, ArchiveError, ARCHIVE_EXTENSIONS };

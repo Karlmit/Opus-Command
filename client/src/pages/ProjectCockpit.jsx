@@ -108,13 +108,13 @@ function UnpackProgress({ job }) {
   return (
     <div className="unpack-job" title={job.current || job.name}>
       <div className="unpack-job-row">
-        <span className="unpack-job-name">Unpacking {job.name}</span>
+        <span className="unpack-job-name">{job.verb || 'Unpacking'} {job.name}</span>
         <span className="unpack-job-pct">{known ? `${pct}%` : '…'}</span>
       </div>
       <div
         className={`unpack-bar${known ? '' : ' indeterminate'}`}
         role="progressbar"
-        aria-label={`Unpacking ${job.name}`}
+        aria-label={`${job.verb || 'Unpacking'} ${job.name}`}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={known ? pct : undefined}
@@ -124,10 +124,38 @@ function UnpackProgress({ job }) {
       <div className="unpack-job-meta">
         {known
           ? `${job.done.toLocaleString()} / ${job.total.toLocaleString()} files${job.totalBytes ? ` · ${formatSize(job.bytesDone)} of ${formatSize(job.totalBytes)}` : ''}`
-          : 'Reading archive…'}
+          : job.verb === 'Compressing' ? 'Scanning folder…' : 'Reading archive…'}
       </div>
     </div>
   );
+}
+
+// Read an NDJSON job stream (unpack/compress): progress lines go to onProgress,
+// the final done/error line is returned.
+async function readJobStream(r, onProgress, fallbackError) {
+  if (!r.ok || !r.body || !(r.headers.get('content-type') || '').includes('ndjson')) {
+    const d = await r.json().catch(() => ({}));
+    return { type: 'error', error: d.error || fallbackError };
+  }
+  const reader = r.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let result = null;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let nl;
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line) continue;
+      const msg = JSON.parse(line);
+      if (msg.type === 'progress') onProgress(msg);
+      else result = msg;
+    }
+  }
+  return result;
 }
 
 function UploadProgress({ job, onCancel }) {
@@ -2755,28 +2783,7 @@ export default function ProjectCockpit() {
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
         body: JSON.stringify({ archivePath: node.path, targetPath, password }),
       });
-      if (!r.ok || !r.body || !(r.headers.get('content-type') || '').includes('ndjson')) {
-        const d = await r.json().catch(() => ({}));
-        result = { type: 'error', error: d.error || 'Unpack failed.' };
-      } else {
-        const reader = r.body.getReader();
-        const decoder = new TextDecoder();
-        let buf = '';
-        for (;;) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buf += decoder.decode(value, { stream: true });
-          let nl;
-          while ((nl = buf.indexOf('\n')) >= 0) {
-            const line = buf.slice(0, nl).trim();
-            buf = buf.slice(nl + 1);
-            if (!line) continue;
-            const msg = JSON.parse(line);
-            if (msg.type === 'progress') patchJob(msg);
-            else result = msg;
-          }
-        }
-      }
+      result = await readJobStream(r, patchJob, 'Unpack failed.');
     } catch {
       result = { type: 'error', error: 'Unpack failed.' };
     }
@@ -2791,6 +2798,32 @@ export default function ProjectCockpit() {
     } else {
       addToast(result?.error || 'Unpack failed.', 'error');
       loadTree(); // a partial extract may have written files
+    }
+  }
+
+  async function compressNode(node) {
+    const id = `compress:${node.path}:${Date.now()}`;
+    const patchJob = (patch) => setUnpackJobs(jobs => jobs.map(j => (j.id === id ? { ...j, ...patch } : j)));
+    setUnpackJobs(jobs => [...jobs, { id, verb: 'Compressing', name: node.name, done: 0, total: 0, bytesDone: 0, totalBytes: 0 }]);
+
+    let result = null;
+    try {
+      const r = await fetch(`/api/projects/${projectId}/files/compress`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+        body: JSON.stringify({ path: node.path }),
+      });
+      result = await readJobStream(r, patchJob, 'Compress failed.');
+    } catch {
+      result = { type: 'error', error: 'Compress failed.' };
+    }
+
+    setUnpackJobs(jobs => jobs.filter(j => j.id !== id));
+    if (result?.type === 'done') {
+      addToast(`Compressed to “${result.path.split('/').pop()}”.`);
+      loadTree();
+    } else {
+      addToast(result?.error || 'Compress failed.', 'error');
     }
   }
 
@@ -2844,6 +2877,7 @@ export default function ProjectCockpit() {
     else if (action === 'upload-planning') triggerUpload('.planning', 'Planning Files');
     else if (action === 'paste') await pasteClipboard(node?.type === 'dir' ? node.path : parentPath(node));
     else if (!node) return;
+    else if (action === 'compress') await compressNode(node);
     else if (action === 'unpack-here') await unpackNode(node, parentPath(node));
     else if (action === 'unpack-folder') {
       const base = archiveBaseName(node.name);
@@ -3406,6 +3440,10 @@ export default function ProjectCockpit() {
             <button role="menuitem" onClick={() => handleFileContextAction('unpack-here')}>Unpack here</button>
             <button role="menuitem" onClick={() => handleFileContextAction('unpack-folder')}>Unpack to “{archiveBaseName(fileContextMenu.node.name)}/”</button>
             <button role="menuitem" onClick={() => handleFileContextAction('unpack-to')}>Unpack…</button>
+          </>}
+          {fileContextMenu.node?.type === 'dir' && ctxCount === 1 && !isPlanningRootNode(fileContextMenu.node) && <>
+            <div className="context-separator" />
+            <button role="menuitem" onClick={() => handleFileContextAction('compress')}>Compress to “{fileContextMenu.node.name}.zip”</button>
           </>}
           {fileContextMenu.node && <div className="context-separator" />}
           {fileContextMenu.node && !isPlanningRootNode(fileContextMenu.node) && <button role="menuitem" onClick={() => handleFileContextAction('rename')}>Rename</button>}
