@@ -404,6 +404,24 @@ function managedEnvLines(vars, { isAzure = false } = {}) {
   return lines;
 }
 
+// Point the container's clock at the configured timezone. LXC download images
+// ship with UTC; tzdata may be missing, so install it when the zone file isn't
+// there. Idempotent — cheap enough to run on every start.
+function timezoneStep() {
+  const tz = lxcConfig.getConfig().timezone;
+  if (!tz) return 'true';
+  return `if [ "$(cat /etc/timezone 2>/dev/null)" != ${shq(tz)} ] || [ "$(readlink /etc/localtime 2>/dev/null)" != ${shq(`/usr/share/zoneinfo/${tz}`)} ]; then
+  [ -f ${shq(`/usr/share/zoneinfo/${tz}`)} ] || { DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tzdata >/dev/null 2>&1 || { apt-get update -y >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tzdata >/dev/null 2>&1; } || true; }
+  if [ -f ${shq(`/usr/share/zoneinfo/${tz}`)} ]; then
+    ln -sf ${shq(`/usr/share/zoneinfo/${tz}`)} /etc/localtime
+    printf '%s\\n' ${shq(tz)} > /etc/timezone
+    echo "[opus] timezone set to ${tz}"
+  else
+    echo "[opus] WARNING: unknown timezone ${tz} — leaving clock as-is"
+  fi
+fi`;
+}
+
 function buildProvisionScript(project, { envVars } = {}) {
   const { getWorkspaceEnvVars, getWorkspaceInstructionTemplate, isAzureOnlyEnvKey } = require('./auth.service');
   const rawVars = Array.isArray(envVars) ? envVars : getWorkspaceEnvVars();
@@ -475,7 +493,10 @@ fi
 
 echo "[opus] apt update + base packages…"
 apt-get update -y || true
-apt-get install -y --no-install-recommends git curl wget ca-certificates gnupg gh python3-pip python3-venv pipx xvfb ffmpeg build-essential >/dev/null 2>&1 || true
+apt-get install -y --no-install-recommends git curl wget ca-certificates gnupg gh python3-pip python3-venv pipx xvfb ffmpeg build-essential tzdata >/dev/null 2>&1 || true
+
+# timezone
+${timezoneStep()}
 
 if ! command -v node >/dev/null 2>&1; then
   echo "[opus] installing Node.js 20…"
@@ -610,6 +631,7 @@ function buildAgentStatusIntegrationScript(project, { envVars } = {}) {
   return (
 `set -u
 mkdir -p /root/.claude /root/.codex /.codex /usr/local/bin /etc/opus /opt/terminal-agent
+${timezoneStep()}
 ${agentHookB64 ? `printf '%s' '${agentHookB64}' | base64 -d > /usr/local/bin/opus-agent-hook && chmod +x /usr/local/bin/opus-agent-hook` : 'true'}
 ${configureHooksB64 ? `printf '%s' '${configureHooksB64}' | base64 -d > /usr/local/bin/opus-configure-agent-hooks && chmod +x /usr/local/bin/opus-configure-agent-hooks` : 'true'}
 printf '%s' '${envB64}' | base64 -d > /etc/profile.d/opus-workspace.sh && chmod 0644 /etc/profile.d/opus-workspace.sh

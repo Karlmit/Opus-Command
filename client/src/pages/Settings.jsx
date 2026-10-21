@@ -1429,6 +1429,22 @@ function UnraidLxcSection({ csrfToken, addToast }) {
           </>
         )}
 
+        <div className="form-group">
+          <label className="form-label">
+            Workspace timezone
+            {envLocked.has('timezone') && <span className="panel-hint"> (set by environment)</span>}
+          </label>
+          <input
+            type="text"
+            className="input"
+            value={config.timezone ?? ''}
+            placeholder="Europe/Stockholm"
+            disabled={envLocked.has('timezone')}
+            onChange={e => setField('timezone', e.target.value)}
+          />
+          <span className="panel-hint">IANA name, e.g. Europe/Stockholm (CET/CEST). Applied on create, update and every start.</span>
+        </div>
+
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button type="button" className="btn btn-primary" onClick={save} disabled={saving}>
             {saving ? 'Saving…' : 'Save Settings'}

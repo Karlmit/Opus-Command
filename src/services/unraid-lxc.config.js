@@ -40,6 +40,9 @@ const DEFAULTS = {
   dist: 'ubuntu',
   release: 'noble',
   arch: 'amd64',
+  // IANA timezone applied inside every LXC workspace on create, update and
+  // start. Europe/Stockholm switches between CET and CEST automatically.
+  timezone: 'Europe/Stockholm',
 };
 
 // Map of config field → environment variable override.
@@ -58,6 +61,7 @@ const ENV_MAP = {
   dist: 'UNRAID_LXC_DIST',
   release: 'UNRAID_LXC_RELEASE',
   arch: 'UNRAID_LXC_ARCH',
+  timezone: 'UNRAID_LXC_TIMEZONE',
 };
 
 // Fields whose value the env override controls (so the UI can flag them as locked).
@@ -83,6 +87,12 @@ function coerce(field, value) {
   if (field === 'sshPort') {
     const n = parseInt(value, 10);
     return Number.isFinite(n) ? n : undefined;
+  }
+  if (field === 'timezone') {
+    // Only accept IANA-shaped names (Region/City, UTC, …) — the value ends up in
+    // a shell script, so anything else is rejected rather than escaped.
+    const tz = String(value).trim();
+    return /^[A-Za-z0-9_+-]+(\/[A-Za-z0-9_+-]+)*$/.test(tz) ? tz : undefined;
   }
   if (field === 'connectionMode') {
     return value === 'agent' || value === 'ssh' ? value : undefined;
